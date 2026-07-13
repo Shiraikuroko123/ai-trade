@@ -5,7 +5,7 @@ import html
 import json
 from pathlib import Path
 
-from .models import BacktestResult, EquityPoint
+from .models import BacktestResult
 
 
 def save_backtest_report(result: BacktestResult, output_dir: Path) -> dict[str, Path]:
@@ -42,7 +42,21 @@ def save_backtest_report(result: BacktestResult, output_dir: Path) -> dict[str, 
 
     with paths["trades"].open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["date", "symbol", "side", "quantity", "price", "notional", "commission", "reason"])
+        writer.writerow(
+            [
+                "date",
+                "symbol",
+                "side",
+                "quantity",
+                "price",
+                "notional",
+                "commission",
+                "stamp_duty",
+                "transfer_fee",
+                "slippage_cost",
+                "reason",
+            ]
+        )
         for trade in result.trades:
             writer.writerow(
                 [
@@ -53,6 +67,9 @@ def save_backtest_report(result: BacktestResult, output_dir: Path) -> dict[str, 
                     f"{trade.price:.6f}",
                     f"{trade.notional:.2f}",
                     f"{trade.commission:.2f}",
+                    f"{trade.stamp_duty:.2f}",
+                    f"{trade.transfer_fee:.2f}",
+                    f"{trade.slippage_cost:.2f}",
                     trade.reason,
                 ]
             )
@@ -88,6 +105,10 @@ def _build_html(result: BacktestResult) -> str:
             "max_drawdown", "calmar", "value_at_risk_95", "expected_shortfall_95",
             "worst_day", "monthly_win_ratio", "longest_drawdown_sessions", "turnover",
             "commissions",
+            "stamp_duty",
+            "transfer_fees",
+            "slippage_cost",
+            "transaction_costs",
         }
     )
     signal_html = "<p>No current position passed the filters.</p>"
@@ -153,7 +174,13 @@ def _format_metric(key: str, value: float) -> str:
         "expected_shortfall_95", "worst_day", "best_day", "monthly_win_ratio",
     }:
         return f"{value:.2%}"
-    if key in {"commissions"}:
+    if key in {
+        "commissions",
+        "stamp_duty",
+        "transfer_fees",
+        "slippage_cost",
+        "transaction_costs",
+    }:
         return f"{value:,.2f}"
     return f"{value:.2f}"
 

@@ -7,13 +7,13 @@ python -m ai_trade.cli paper-run
 python -m ai_trade.cli paper-audit
 ```
 
-`paper-run` refreshes the complete market snapshot, processes every missing benchmark session in order, simulates pending orders, applies portfolio risk controls, and writes state plus append-only trade/equity ledgers. Repeating a completed date is idempotent.
+`paper-run` refreshes the complete market snapshot, processes every missing benchmark session in order, simulates pending orders, applies portfolio risk controls, and writes state plus append-only trade, rejection, and equity ledgers. A blocked required sell cancels that session's buy phase. Repeating a completed date is idempotent.
 
-`paper-audit` checks schema, unique session IDs, strict date ordering, state-to-ledger reconciliation, configuration fingerprints, forward metrics, and promotion gates.
+`paper-audit` checks schema, unique session IDs, strict date ordering, state-to-ledger reconciliation, configuration fingerprints, forward metrics, and promotion gates. `state/paper_rejections.csv` remains available for execution-quality review even when an order never became a trade.
 
 ## Configuration Changes
 
-Changing the strategy, risk, costs, universe, provider, adjustment policy, or market close invalidates the active account fingerprint. Review the change, then explicitly archive the epoch:
+Changing the strategy, risk, dated fee tables, security-master contents, selected universe, provider, adjustment policy, or market close invalidates the active account fingerprint. Review the change, then explicitly archive the epoch:
 
 ```powershell
 python -m ai_trade.cli paper-init --overwrite

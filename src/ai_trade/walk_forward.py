@@ -110,6 +110,7 @@ def run_walk_forward(
         "oos_max_drawdown": continuous.metrics["max_drawdown"],
         "oos_turnover": continuous.metrics["turnover"],
         "oos_commissions": continuous.metrics["commissions"],
+        "oos_transaction_costs": continuous.metrics["transaction_costs"],
         "benchmark_total_return": continuous.benchmark_metrics["total_return"],
         "benchmark_sharpe": continuous.benchmark_metrics["sharpe"],
         "positive_segments": sum(

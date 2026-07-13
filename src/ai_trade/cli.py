@@ -22,7 +22,9 @@ from .walk_forward import run_walk_forward, save_walk_forward
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ai-trade", description="ETF research and paper trading")
+    parser = argparse.ArgumentParser(
+        prog="ai-trade", description="Auditable systematic research and paper trading"
+    )
     parser.add_argument("--config", default="config/default.json", help="Path to JSON configuration")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -56,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("paper-status", help="Show paper account state")
     subparsers.add_parser("paper-audit", help="Audit forward paper performance and promotion gates")
+    universe = subparsers.add_parser(
+        "universe-status", help="Inspect point-in-time universe eligibility"
+    )
+    universe.add_argument("--date", help="YYYY-MM-DD; defaults to today")
     subparsers.add_parser("doctor", help="Check configuration, cache, and latest market date")
     subparsers.add_parser("live-check", help="Verify the live-trading guard; does not submit orders")
     return parser
@@ -70,6 +76,18 @@ def main(argv: list[str] | None = None) -> int:
             return _initialize_workspace(Path(args.directory))
         config = load_config(_resolve_config_path(args.config))
         _configure_logging(config)
+        if args.command == "universe-status":
+            on_date = date.fromisoformat(args.date) if args.date else date.today()
+            print(
+                json.dumps(
+                    config.security_master.snapshot(
+                        config.universe_name, on_date, config.minimum_listing_days
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         if args.command == "download":
             paths = download_universe(config, force=args.force)
             print(json.dumps({key: str(value) for key, value in paths.items()}, ensure_ascii=False, indent=2))
@@ -189,6 +207,12 @@ def _initialize_workspace(directory: Path) -> int:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     resource = importlib.resources.files("ai_trade").joinpath("default_config.json")
     config_path.write_text(resource.read_text(encoding="utf-8"), encoding="utf-8")
+    master_resource = importlib.resources.files("ai_trade").joinpath(
+        "default_security_master.json"
+    )
+    (root / "config" / "security_master.json").write_text(
+        master_resource.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     for relative in ("data/cache", "reports", "state", "logs"):
         path = root / relative
         path.mkdir(parents=True, exist_ok=True)
@@ -225,6 +249,7 @@ def _signal_payload(signal) -> dict[str, object]:
         "date": signal.date.isoformat(),
         "target_weights": signal.target_weights,
         "reason": signal.reason,
+        "diagnostics": signal.diagnostics,
         "ranking": [item.__dict__ for item in signal.ranked],
     }
 
@@ -232,10 +257,14 @@ def _signal_payload(signal) -> dict[str, object]:
 def _doctor(config: AppConfig, market: MarketData) -> dict[str, object]:
     coverage = {}
     latest_dates = []
+    active_symbols = set(market.active_symbols(market.latest_date()))
+    active_symbols.add(config.strategy.benchmark)
     for symbol, item in market.symbols.items():
-        latest_dates.append(item.bars[-1].date)
+        if symbol in active_symbols:
+            latest_dates.append(item.bars[-1].date)
         coverage[symbol] = {
             "name": item.instrument.name,
+            "active": symbol in active_symbols,
             "rows": len(item.bars),
             "first": item.bars[0].date.isoformat(),
             "last": item.bars[-1].date.isoformat(),
@@ -245,12 +274,30 @@ def _doctor(config: AppConfig, market: MarketData) -> dict[str, object]:
             ],
         }
     aligned = len(set(latest_dates)) == 1
+    research_warnings = []
+    if config.security_master.metadata.get("selection_method") == "curated_static":
+        research_warnings.append(
+            "Default universe is curated_static and does not remove survivorship bias"
+        )
+    if config.raw["data"].get("adjustment") != "none":
+        research_warnings.append(
+            "Adjusted bars are still used for simulated execution; raw prices and corporate "
+            "actions are not yet separated"
+        )
     return {
         "status": "OK" if aligned else "WARNING",
         "config": str(config.path),
         "completed_session_cutoff": market.completed_through.isoformat(),
         "latest_market_date": market.latest_date().isoformat(),
         "universe_latest_dates_aligned": aligned,
+        "point_in_time_universe": {
+            "name": config.universe_name,
+            "active_count": len(market.active_symbols(market.latest_date())),
+            "loaded_instrument_count": len(config.instruments),
+            "selection_method": config.security_master.metadata.get("selection_method"),
+            "security_master_sha256": config.security_master.fingerprint(),
+        },
+        "research_warnings": research_warnings,
         "coverage": coverage,
         "live_trading": "DISABLED",
     }

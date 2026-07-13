@@ -49,6 +49,22 @@ class DataTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "strictly increasing"):
                 load_cached_bars(path)
 
+    def test_market_data_rejects_manifest_policy_mismatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = _write_config(root)
+            cache = root / "data/cache"
+            _write_bars(cache / "510300.csv")
+            _write_bars(cache / "510500.csv")
+            (cache / "manifest.json").write_text(
+                json.dumps(
+                    {"provider": "other", "adjustment": "forward", "files": {}}
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "provider"):
+                MarketData(load_config(config))
+
 
 def _write_config(root: Path) -> Path:
     path = root / "config/default.json"

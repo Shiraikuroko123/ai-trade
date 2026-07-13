@@ -116,9 +116,9 @@ def save_validation_report(report: dict[str, object], output_dir: Path) -> tuple
         "当前流动性阈值和风险模型已参考这些历史结果，样本外数据因此也属于开发证据；下一份独立证据只能来自未来模拟盘。",
         "",
         f"- 数据截止：{report['data_snapshot']['latest_common_session']}",
-        f"- 基准年化收益：{baseline['cagr']:.2%}",
-        f"- 基准 Sharpe：{baseline['sharpe']:.2f}",
-        f"- 基准最大回撤：{baseline['max_drawdown']:.2%}",
+        f"- 策略年化收益：{baseline['cagr']:.2%}",
+        f"- 策略 Sharpe：{baseline['sharpe']:.2f}",
+        f"- 策略最大回撤：{baseline['max_drawdown']:.2%}",
         f"- 研究状态：{gates['status']}",
         "- 实盘就绪：否",
         "",
@@ -138,7 +138,7 @@ def save_validation_report(report: dict[str, object], output_dir: Path) -> tuple
     for row in report["cost_stress"]:
         lines.append(
             f"| {row['multiplier']:.0f}x | {row['cagr']:.2%} | {row['sharpe']:.2f} | "
-            f"{row['max_drawdown']:.2%} | {row['commissions']:,.0f} |"
+            f"{row['max_drawdown']:.2%} | {row['transaction_costs']:,.0f} |"
         )
     lines.extend(
         [
@@ -184,12 +184,7 @@ def _cost_stress(
         if multiplier == 1.0:
             metrics = baseline.metrics
         else:
-            stressed_costs = replace(
-                config.costs,
-                commission_bps=config.costs.commission_bps * multiplier,
-                slippage_bps=config.costs.slippage_bps * multiplier,
-                minimum_commission=config.costs.minimum_commission * multiplier,
-            )
+            stressed_costs = config.costs.scaled(multiplier)
             metrics = BacktestEngine(replace(config, costs=stressed_costs), market).run().metrics
         results.append(
             {
@@ -200,6 +195,7 @@ def _cost_stress(
                 "max_drawdown": metrics["max_drawdown"],
                 "turnover": metrics["turnover"],
                 "commissions": metrics["commissions"],
+                "transaction_costs": metrics["transaction_costs"],
             }
         )
     return results

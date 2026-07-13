@@ -14,12 +14,22 @@ class CliTests(unittest.TestCase):
             (root / "src/ai_trade/default_config.json").read_text(encoding="utf-8")
         )
         self.assertEqual(packaged, repository)
+        repository_master = json.loads(
+            (root / "config/security_master.json").read_text(encoding="utf-8")
+        )
+        packaged_master = json.loads(
+            (root / "src/ai_trade/default_security_master.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(packaged_master, repository_master)
 
     def test_init_creates_standalone_workspace(self):
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "workspace"
             self.assertEqual(main(["init", "--directory", str(target)]), 0)
             self.assertTrue((target / "config/default.json").exists())
+            self.assertTrue((target / "config/security_master.json").exists())
             self.assertTrue((target / "data/cache/.gitkeep").exists())
             self.assertTrue((target / "state/.gitkeep").exists())
 

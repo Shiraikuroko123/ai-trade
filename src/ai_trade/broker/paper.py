@@ -33,7 +33,7 @@ def initialize_paper(
         if overwrite:
             _archive_existing_account(config)
         state = {
-            "version": 4,
+            "version": 5,
             "account_id": uuid4().hex,
             "config_fingerprint": _config_fingerprint(config),
             "cash": starting_cash,
@@ -97,6 +97,7 @@ def _process_session(
         high_water_mark=float(state["high_water_mark"]),
     )
     trades = []
+    rejections = []
     pending = state.get("pending_targets")
     signal_date = state.get("pending_signal_date")
     if pending is not None and signal_date and date.fromisoformat(str(signal_date)) < on_date:
@@ -108,6 +109,7 @@ def _process_session(
             config.costs,
             "Paper fill from prior signal",
             config.strategy.minimum_rebalance_weight,
+            rejections,
         )
 
     equity = portfolio_value(portfolio, market, on_date, "close")
@@ -143,7 +145,9 @@ def _process_session(
     else:
         sessions_since += 1
         if sessions_since >= config.strategy.rebalance_days:
-            signal = MomentumTrendStrategy(config.strategy).generate(market, on_date)
+            signal = MomentumTrendStrategy(config.strategy).generate(
+                market, on_date, equity
+            )
             next_targets = signal.target_weights
             next_signal_date = on_date.isoformat()
             reason = signal.reason
@@ -169,6 +173,9 @@ def _process_session(
     )
     snapshot_id = _market_snapshot_id(market)
     _append_trades(config.paper_trades_file, str(state["account_id"]), trades)
+    _append_rejections(
+        _paper_rejections_path(config), str(state["account_id"]), rejections
+    )
     _append_equity(
         config.paper_equity_file,
         state,
@@ -184,6 +191,7 @@ def _process_session(
         state,
         on_date,
         trades,
+        rejections,
         reason,
         drawdown,
         daily_return,
@@ -196,6 +204,7 @@ def _paper_report(
     state: dict[str, object],
     on_date: date,
     trades: list,
+    rejections: list,
     reason: str,
     drawdown: float,
     daily_return: float,
@@ -214,6 +223,15 @@ def _paper_report(
         "daily_return": daily_return,
         "market_snapshot_id": snapshot_id,
         "trades": [_trade_payload(str(state["account_id"]), trade) for trade in trades],
+        "order_rejections": [
+            {
+                "date": value.date.isoformat(),
+                "symbol": value.symbol,
+                "side": value.side,
+                "reason": value.reason,
+            }
+            for value in rejections
+        ],
         "reason": reason,
     }
     config.reports_dir.mkdir(parents=True, exist_ok=True)
@@ -241,6 +259,7 @@ def _existing_report(
             "cooldown_remaining": state.get("cooldown_remaining"),
             "sessions_since_rebalance": state.get("sessions_since_rebalance"),
             "trades": [],
+            "order_rejections": [],
             "reason": "Existing state; daily report is missing",
         }
     return report | {"status": "already_processed"}
@@ -277,7 +296,7 @@ def _load_state(path: Path) -> dict[str, object]:
 
 
 def _validate_state(state: dict[str, object], config: AppConfig) -> None:
-    if int(state.get("version", 0)) != 4:
+    if int(state.get("version", 0)) != 5:
         raise RuntimeError(
             "Unsupported paper state version. Reinitialize with paper-init --overwrite to archive it."
         )
@@ -297,17 +316,33 @@ def _validate_state(state: dict[str, object], config: AppConfig) -> None:
 
 
 def _config_fingerprint(config: AppConfig) -> str:
+    security_master = getattr(config, "security_master", None)
     payload = {
         "strategy": asdict(config.strategy),
         "risk": asdict(config.risk),
         "costs": asdict(config.costs),
         "universe": [asdict(item) for item in getattr(config, "instruments", ())],
+        "security_master": (
+            {
+                "fingerprint": security_master.fingerprint(),
+                "universe": getattr(config, "universe_name", None),
+                "minimum_listing_days": getattr(config, "minimum_listing_days", 0),
+            }
+            if security_master is not None
+            else None
+        ),
         "data": {
             key: config.raw.get("data", {}).get(key)
             for key in ("provider", "adjustment", "market_close_time")
         },
     }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    raw = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=lambda value: value.isoformat() if isinstance(value, date) else str(value),
+    )
     return hashlib.sha256(raw.encode("ascii")).hexdigest()
 
 
@@ -342,7 +377,8 @@ def _append_trades(path: Path, account_id: str, trades: list) -> None:
             writer.writerow(
                 [
                     "account_id", "trade_id", "date", "symbol", "side", "quantity",
-                    "price", "notional", "commission", "reason",
+                    "price", "notional", "commission", "stamp_duty", "transfer_fee",
+                    "slippage_cost", "reason",
                 ]
             )
         for trade in trades:
@@ -353,7 +389,54 @@ def _append_trades(path: Path, account_id: str, trades: list) -> None:
                 [
                     account_id, trade_id, trade.date.isoformat(), trade.symbol, trade.side,
                     trade.quantity, f"{trade.price:.6f}", f"{trade.notional:.2f}",
-                    f"{trade.commission:.2f}", trade.reason,
+                    f"{trade.commission:.2f}", f"{trade.stamp_duty:.2f}",
+                    f"{trade.transfer_fee:.2f}", f"{trade.slippage_cost:.2f}",
+                    trade.reason,
+                ]
+            )
+
+
+def _append_rejections(path: Path, account_id: str, rejections: list) -> None:
+    if not rejections:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing_ids: set[str] = set()
+    if path.exists():
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if not reader.fieldnames or "rejection_id" not in reader.fieldnames:
+                raise RuntimeError(
+                    f"Legacy rejection ledger must be archived before reuse: {path}"
+                )
+            existing_ids = {str(row["rejection_id"]) for row in reader}
+    exists = path.exists()
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        if not exists:
+            writer.writerow(
+                ["account_id", "rejection_id", "date", "symbol", "side", "reason"]
+            )
+        for value in rejections:
+            raw = "|".join(
+                [
+                    account_id,
+                    value.date.isoformat(),
+                    value.symbol,
+                    value.side,
+                    value.reason,
+                ]
+            )
+            rejection_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+            if rejection_id in existing_ids:
+                continue
+            writer.writerow(
+                [
+                    account_id,
+                    rejection_id,
+                    value.date.isoformat(),
+                    value.symbol,
+                    value.side,
+                    value.reason,
                 ]
             )
 
@@ -419,8 +502,17 @@ def _market_snapshot_id(market: MarketData) -> str:
 
 
 def _archive_existing_account(config: AppConfig) -> None:
-    paths = [config.paper_state_file, config.paper_trades_file, config.paper_equity_file]
+    paths = [
+        config.paper_state_file,
+        config.paper_trades_file,
+        config.paper_equity_file,
+        _paper_rejections_path(config),
+    ]
     paths.extend(config.reports_dir.glob("paper_????????.json"))
+    paths.extend(
+        config.reports_dir / name
+        for name in ("paper_audit.json", "paper_audit.md")
+    )
     existing = [path for path in paths if path.exists()]
     if not existing:
         return
@@ -429,6 +521,13 @@ def _archive_existing_account(config: AppConfig) -> None:
     archive.mkdir(parents=True, exist_ok=False)
     for path in existing:
         shutil.move(str(path), archive / path.name)
+
+
+def _paper_rejections_path(config: AppConfig) -> Path:
+    value = getattr(config, "paper_rejections_file", None)
+    if value is not None:
+        return Path(value)
+    return config.paper_trades_file.with_name("paper_rejections.csv")
 
 
 @contextmanager

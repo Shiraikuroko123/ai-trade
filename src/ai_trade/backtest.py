@@ -68,6 +68,7 @@ class BacktestEngine:
         pending_rebalance_band = 0.0
         cooldown_remaining = 0
         trades = []
+        order_rejections = []
         curve: list[EquityPoint] = []
         previous_equity = initial_cash
         active_settings = self.strategy_settings
@@ -88,6 +89,7 @@ class BacktestEngine:
                         self.config.costs,
                         pending_reason,
                         pending_rebalance_band,
+                        order_rejections,
                     )
                 )
                 pending_targets = None
@@ -127,7 +129,7 @@ class BacktestEngine:
             )
             if signal_due:
                 last_rebalance_signal = MomentumTrendStrategy(active_settings).generate(
-                    self.market, on_date
+                    self.market, on_date, equity
                 )
                 pending_targets = last_rebalance_signal.target_weights
                 pending_reason = last_rebalance_signal.reason
@@ -135,7 +137,7 @@ class BacktestEngine:
                 last_signal_index = index
 
         latest_signal = MomentumTrendStrategy(active_settings).generate(
-            self.market, calendar[-1]
+            self.market, calendar[-1], curve[-1].equity
         )
 
         benchmark_curve = _benchmark_curve(
@@ -165,6 +167,16 @@ class BacktestEngine:
                 "settings_schedule": [
                     {"date": value.isoformat(), "settings": settings_by_date[value].__dict__}
                     for value in sorted(settings_by_date)
+                ],
+                "order_rejection_count": len(order_rejections),
+                "order_rejections": [
+                    {
+                        "date": value.date.isoformat(),
+                        "symbol": value.symbol,
+                        "side": value.side,
+                        "reason": value.reason,
+                    }
+                    for value in order_rejections
                 ],
             },
         )

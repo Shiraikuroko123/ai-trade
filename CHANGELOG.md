@@ -2,6 +2,15 @@
 
 All notable changes are documented here. The project follows semantic versioning while it remains experimental.
 
+## 0.5.0 - 2026-07-13
+
+- Added a versioned security master with listing/delisting dates, dated universe memberships, trading-status periods, provenance, and a point-in-time inspection command.
+- Removed the common-latest-date universe bottleneck and verified that the engine supports more than eight instruments.
+- Added asset-class, risk-group, and average-amount capacity constraints to portfolio construction.
+- Added date-effective ETF/stock fee schedules with separately audited commission, stamp duty, transfer fees, and slippage.
+- Added suspension and price-limit order checks, sell-first risk handling, and append-only paper rejection records.
+- Added an ecosystem comparison and explicit data gates for expanding from ETFs to a professional stock universe.
+
 ## 0.4.0 - 2026-07-13
 
 - Added an append-only daily paper-equity ledger with account, configuration, and market-snapshot identifiers.

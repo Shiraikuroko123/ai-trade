@@ -61,6 +61,20 @@ class StrategyTests(unittest.TestCase):
         ).generate(market, market._bars["UP"][-1].date)
         self.assertEqual(signal.target_weights, {})
 
+    def test_asset_class_constraint_reduces_target_exposure(self):
+        settings = StrategySettings(
+            benchmark="UP", rebalance_days=20, lookback_days=63, skip_days=5,
+            trend_sma_days=100, volatility_days=20, top_n=1, minimum_momentum=0,
+            target_annual_volatility=0, minimum_cash_weight=0,
+            max_position_weight=0.95, max_asset_class_weight=0.05,
+        )
+        market = FakeMarket()
+        signal = MomentumTrendStrategy(settings).generate(
+            market, market._bars["UP"][-1].date
+        )
+        self.assertAlmostEqual(sum(signal.target_weights.values()), 0.05)
+        self.assertEqual(signal.diagnostics["constraints"]["asset_class_caps_applied"], ["other"])
+
 
 if __name__ == "__main__":
     unittest.main()

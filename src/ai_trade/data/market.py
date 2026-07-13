@@ -8,6 +8,7 @@ import json
 
 from ..config import AppConfig
 from ..models import Bar, Instrument
+from ..security import TradingStatus
 from .eastmoney import completed_session_cutoff, load_cached_bars
 
 
@@ -50,10 +51,9 @@ class MarketData:
         self.manifest = self._load_and_validate_manifest()
 
         benchmark = config.strategy.benchmark
-        common_latest = min(item.dates[-1] for item in self.symbols.values())
-        self.calendar = [day for day in self.symbols[benchmark].dates if day <= common_latest]
+        self.calendar = list(self.symbols[benchmark].dates)
         if not self.calendar:
-            raise RuntimeError("No common completed market date is available")
+            raise RuntimeError("No completed benchmark market date is available")
 
     def bar(self, symbol: str, on_date: date) -> Bar | None:
         return self.symbols[symbol].by_date.get(on_date)
@@ -61,6 +61,13 @@ class MarketData:
     def latest_bar_on_or_before(self, symbol: str, on_date: date) -> Bar | None:
         item = self.symbols[symbol]
         index = bisect_right(item.dates, on_date) - 1
+        return item.bars[index] if index >= 0 else None
+
+    def previous_bar(self, symbol: str, on_date: date) -> Bar | None:
+        item = self.symbols[symbol]
+        index = bisect_right(item.dates, on_date) - 1
+        if index >= 0 and item.dates[index] == on_date:
+            index -= 1
         return item.bars[index] if index >= 0 else None
 
     def history(self, symbol: str, on_date: date, count: int) -> list[Bar]:
@@ -72,6 +79,14 @@ class MarketData:
     def instrument(self, symbol: str) -> Instrument:
         return self.symbols[symbol].instrument
 
+    def active_symbols(self, on_date: date) -> tuple[str, ...]:
+        return tuple(
+            symbol for symbol in self.config.active_symbols(on_date) if symbol in self.symbols
+        )
+
+    def trading_status(self, symbol: str, on_date: date) -> TradingStatus:
+        return self.config.security_master.trading_status(symbol, on_date)
+
     def latest_date(self) -> date:
         return self.calendar[-1]
 
@@ -81,6 +96,16 @@ class MarketData:
             "adjustment": self.config.raw["data"].get("adjustment", "none"),
             "completed_session_cutoff": self.completed_through.isoformat(),
             "latest_common_session": self.latest_date().isoformat(),
+            "latest_benchmark_session": self.latest_date().isoformat(),
+            "universe": {
+                "name": self.config.universe_name,
+                "active_symbols": list(self.active_symbols(self.latest_date())),
+                "minimum_listing_days": self.config.minimum_listing_days,
+                "security_master_sha256": self.config.security_master.fingerprint(),
+                "selection_method": self.config.security_master.metadata.get(
+                    "selection_method"
+                ),
+            },
             "manifest": self.manifest,
             "symbols": {
                 symbol: {
@@ -102,6 +127,11 @@ class MarketData:
             return None
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
+            if manifest.get("provider") != self.config.raw["data"]["provider"]:
+                raise RuntimeError("Cache manifest provider does not match configuration")
+            configured_adjustment = self.config.raw["data"].get("adjustment", "none")
+            if manifest.get("adjustment") != configured_adjustment:
+                raise RuntimeError("Cache manifest adjustment does not match configuration")
             files = manifest["files"]
             for symbol, digest in self.file_hashes.items():
                 expected = files[symbol]["sha256"]

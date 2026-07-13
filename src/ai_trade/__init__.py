@@ -1,3 +1,3 @@
-"""AI Trade: auditable ETF research and paper trading."""
+"""AI Trade: auditable systematic research and paper trading."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

@@ -8,16 +8,11 @@
     "market_close_time": "15:30",
     "adjustment": "forward"
   },
-  "universe": [
-    {"symbol": "510300", "name": "沪深300ETF", "market": "SH", "asset": "China large cap", "lot_size": 100},
-    {"symbol": "510500", "name": "中证500ETF", "market": "SH", "asset": "China mid cap", "lot_size": 100},
-    {"symbol": "159915", "name": "创业板ETF", "market": "SZ", "asset": "China growth", "lot_size": 100},
-    {"symbol": "512100", "name": "中证1000ETF", "market": "SH", "asset": "China small cap", "lot_size": 100},
-    {"symbol": "513100", "name": "纳指ETF", "market": "SH", "asset": "US technology", "lot_size": 100},
-    {"symbol": "513500", "name": "标普500ETF", "market": "SH", "asset": "US large cap", "lot_size": 100},
-    {"symbol": "518880", "name": "黄金ETF", "market": "SH", "asset": "Gold", "lot_size": 100},
-    {"symbol": "511010", "name": "国债ETF", "market": "SH", "asset": "China treasury", "lot_size": 100}
-  ],
+  "security_master": {
+    "file": "config/security_master.json",
+    "universe": "core_etf",
+    "minimum_listing_days": 180
+  },
   "strategy": {
     "benchmark": "510300",
     "rebalance_days": 20,
@@ -35,7 +30,12 @@
     "minimum_average_amount": 5000000.0,
     "minimum_rebalance_weight": 0.02,
     "weighting_method": "inverse_volatility",
-    "risk_model": "conservative_sum"
+    "risk_model": "conservative_sum",
+    "max_asset_class_weight": 0.70,
+    "max_sector_weight": 0.35,
+    "capacity_reference_cash": 100000.0,
+    "max_average_amount_participation": 0.05,
+    "capacity_days": 1
   },
   "risk": {
     "max_portfolio_drawdown": 0.15,
@@ -45,7 +45,30 @@
   "costs": {
     "commission_bps": 2.0,
     "slippage_bps": 3.0,
-    "minimum_commission": 5.0
+    "minimum_commission": 5.0,
+    "sell_stamp_duty_bps": 0.0,
+    "transfer_fee_bps": 0.0,
+    "by_instrument_type": {
+      "ETF": {
+        "commission_bps": 2.0,
+        "slippage_bps": 3.0,
+        "minimum_commission": 5.0,
+        "sell_stamp_duty_bps": 0.0,
+        "transfer_fee_bps": 0.0
+      },
+      "STOCK": {
+        "commission_bps": 2.0,
+        "slippage_bps": 5.0,
+        "minimum_commission": 5.0,
+        "sell_stamp_duty_bps": 10.0,
+        "transfer_fee_bps": 0.2
+      }
+    },
+    "history": [
+      {"instrument_type": "STOCK", "start": "2016-01-01", "end": "2022-04-28", "sell_stamp_duty_bps": 10.0, "transfer_fee_bps": 0.2},
+      {"instrument_type": "STOCK", "start": "2022-04-29", "end": "2023-08-27", "sell_stamp_duty_bps": 10.0, "transfer_fee_bps": 0.1},
+      {"instrument_type": "STOCK", "start": "2023-08-28", "end": null, "sell_stamp_duty_bps": 5.0, "transfer_fee_bps": 0.1}
+    ]
   },
   "backtest": {
     "initial_cash": 100000.0,
@@ -57,6 +80,7 @@
     "state_file": "state/paper_state.json",
     "trades_file": "state/paper_trades.csv",
     "equity_file": "state/paper_equity.csv",
+    "rejections_file": "state/paper_rejections.csv",
     "minimum_promotion_sessions": 60
   },
   "reports_dir": "reports",

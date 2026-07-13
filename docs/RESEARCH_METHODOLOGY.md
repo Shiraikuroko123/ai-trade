@@ -6,7 +6,7 @@ A signal may use only completed daily bars through date `t`. Orders generated fr
 
 ## Strategy
 
-The default strategy combines medium-term momentum, a long-term moving-average filter, inverse-volatility weights, conservative volatility aggregation, liquidity screening, position caps, and a cash reserve. Covariance and risk-parity modes are available for research but did not outperform the simpler default in the current development walk-forward comparison.
+The default strategy combines medium-term momentum, a long-term moving-average filter, inverse-volatility weights, conservative volatility aggregation, liquidity and capacity screening, position/asset-class/risk-group caps, and a cash reserve. Candidate eligibility is evaluated at the signal date from the security master. Covariance and risk-parity modes are available for research but did not outperform the simpler default in the current development walk-forward comparison.
 
 ## Validation Layers
 
@@ -17,5 +17,7 @@ The default strategy combines medium-term momentum, a long-term moving-average f
 5. Nearby-parameter sensitivity.
 6. Historical stress regimes.
 7. Independent future paper sessions.
+
+Execution diagnostics include rejected orders and separately report commission, stamp duty, transfer fees, and slippage. The current ETF data uses forward-adjusted bars for both research and simulated fills; this remains an approximation until raw prices and corporate actions are modeled independently.
 
 The existing historical windows were used to select the current liquidity threshold. They are development evidence, not a pristine final holdout. Future paper data is the next independent test.

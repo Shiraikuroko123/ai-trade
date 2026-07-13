@@ -31,7 +31,12 @@ def download_universe(config: AppConfig, force: bool = False) -> dict[str, Path]
         for instrument in config.instruments
     }
     if not force and all(
-        cache_is_current(path, market_close=market_close) for path in final_paths.values()
+        cache_is_current(
+            final_paths[instrument.symbol],
+            today=_instrument_cutoff(instrument, market_close),
+            market_close=market_close,
+        )
+        for instrument in config.instruments
     ):
         return final_paths
 
@@ -62,7 +67,7 @@ def download_universe(config: AppConfig, force: bool = False) -> dict[str, Path]
                     _stage_recent_completed_cache(
                         fallback,
                         staged,
-                        completed_session_cutoff(market_close=market_close),
+                        _instrument_cutoff(instrument, market_close),
                     )
                     staged_paths[instrument.symbol] = staged
                     sources[instrument.symbol] = "validated_local_fallback"
@@ -113,7 +118,11 @@ def download_instrument(
         output_path is None
         and output.exists()
         and not force
-        and cache_is_current(output, market_close=market_close)
+        and cache_is_current(
+            output,
+            today=_instrument_cutoff(instrument, market_close),
+            market_close=market_close,
+        )
     ):
         return output
 
@@ -132,7 +141,7 @@ def download_instrument(
     }
     request = urllib.request.Request(
         f"{ENDPOINT}?{urllib.parse.urlencode(params)}",
-        headers={"User-Agent": "Mozilla/5.0 ai-trade/0.1"},
+        headers={"User-Agent": "Mozilla/5.0 ai-trade/0.5.0"},
     )
     timeout = int(config.raw["data"].get("timeout_seconds", 20))
     payload = None
@@ -186,6 +195,13 @@ def _file_sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _instrument_cutoff(instrument: Instrument, market_close: str) -> date:
+    cutoff = completed_session_cutoff(market_close=market_close)
+    if instrument.delisting_date is not None:
+        return min(cutoff, instrument.delisting_date)
+    return cutoff
 
 
 def _stage_recent_completed_cache(source: Path, destination: Path, cutoff: date) -> None:

@@ -27,6 +27,10 @@ def calculate_metrics(curve: list[EquityPoint], trades: list[Trade] | None = Non
             "invested_days": 0.0,
             "turnover": 0.0,
             "commissions": 0.0,
+            "stamp_duty": 0.0,
+            "transfer_fees": 0.0,
+            "slippage_cost": 0.0,
+            "transaction_costs": 0.0,
         }
 
     equities = [point.equity for point in curve]
@@ -52,6 +56,9 @@ def calculate_metrics(curve: list[EquityPoint], trades: list[Trade] | None = Non
     average_equity = statistics.fmean(equities)
     turnover = sum(trade.notional for trade in trade_list) / average_equity if average_equity > 0 else 0.0
     commissions = sum(trade.commission for trade in trade_list)
+    stamp_duty = sum(trade.stamp_duty for trade in trade_list)
+    transfer_fees = sum(trade.transfer_fee for trade in trade_list)
+    slippage_cost = sum(trade.slippage_cost for trade in trade_list)
     invested_days = sum(
         1 for point in curve if point.equity > 0 and point.cash < point.equity - 1e-8
     )
@@ -74,6 +81,10 @@ def calculate_metrics(curve: list[EquityPoint], trades: list[Trade] | None = Non
         "invested_days": float(invested_days),
         "turnover": turnover,
         "commissions": commissions,
+        "stamp_duty": stamp_duty,
+        "transfer_fees": transfer_fees,
+        "slippage_cost": slippage_cost,
+        "transaction_costs": commissions + stamp_duty + transfer_fees + slippage_cost,
     }
 
 
