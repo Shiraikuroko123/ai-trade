@@ -6,7 +6,7 @@ AI Trade prioritizes timing correctness, reproducibility, and loss controls over
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --no-build-isolation -e .
+.\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
