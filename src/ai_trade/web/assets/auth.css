@@ -1,0 +1,454 @@
+:root {
+  color-scheme: light;
+  --desk: oklch(1 0 0);
+  --sidebar: oklch(0.965 0.008 220);
+  --surface: oklch(0.985 0.004 220);
+  --surface-strong: oklch(0.945 0.012 220);
+  --ink: oklch(0.24 0.018 250);
+  --ink-soft: oklch(0.43 0.02 245);
+  --rule: oklch(0.88 0.012 230);
+  --rule-strong: oklch(0.76 0.018 230);
+  --honey: oklch(0.76 0.15 78);
+  --honey-hover: oklch(0.71 0.16 76);
+  --honey-soft: oklch(0.94 0.05 80);
+  --teal: oklch(0.45 0.09 195);
+  --teal-hover: oklch(0.39 0.09 195);
+  --teal-soft: oklch(0.94 0.025 195);
+  --negative: oklch(0.47 0.16 25);
+  --negative-soft: oklch(0.95 0.035 25);
+  --warning: oklch(0.49 0.11 65);
+  --warning-soft: oklch(0.95 0.045 75);
+  --focus: oklch(0.48 0.11 195);
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+* {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+
+html {
+  background: var(--desk);
+  color: var(--ink);
+  min-width: 320px;
+}
+
+body {
+  background: var(--desk);
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.5;
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100svh;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input {
+  color: inherit;
+  font: inherit;
+}
+
+button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  background: var(--ink);
+  color: var(--desk);
+  left: 1rem;
+  padding: 0.75rem 1rem;
+  position: fixed;
+  top: -5rem;
+  z-index: 10;
+}
+
+.skip-link:focus {
+  top: 1rem;
+}
+
+.auth-shell {
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+  min-height: 100vh;
+  min-height: 100svh;
+}
+
+.auth-context {
+  background: var(--sidebar);
+  border-inline-end: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: max(1.5rem, env(safe-area-inset-top)) 1.25rem max(1.25rem, env(safe-area-inset-bottom));
+}
+
+.brand-block {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.brand-mark {
+  align-items: center;
+  background: var(--ink);
+  border-radius: 7px;
+  color: var(--desk);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  font-weight: 750;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.brand-block strong,
+.brand-block span {
+  display: block;
+}
+
+.brand-block strong {
+  font-size: 1.05rem;
+}
+
+.brand-block span {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.access-stage {
+  background: var(--desk);
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 2rem;
+  padding: 0.9rem;
+}
+
+.access-stage span,
+.access-stage small {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.access-stage strong {
+  font-size: 0.95rem;
+}
+
+.access-stage small {
+  color: var(--negative);
+}
+
+.local-status {
+  align-items: center;
+  color: var(--ink-soft);
+  display: flex;
+  font-size: 0.82rem;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+
+.status-dot {
+  background: var(--teal);
+  border-radius: 999px;
+  height: 8px;
+  width: 8px;
+}
+
+.auth-workspace {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  padding: 4rem 2rem;
+}
+
+.auth-panel {
+  width: min(100%, 420px);
+}
+
+.auth-heading {
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.5rem;
+}
+
+.context-label {
+  color: var(--ink-soft);
+  display: block;
+  font-size: 0.82rem;
+  margin-bottom: 0.25rem;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1,
+h2 {
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 720;
+  margin-bottom: 0.5rem;
+}
+
+.auth-heading p,
+.no-account p {
+  color: var(--ink-soft);
+  margin-bottom: 0;
+  max-width: 42ch;
+  text-wrap: pretty;
+}
+
+#login-form {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.form-message {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  display: flex;
+  font-size: 0.9rem;
+  min-height: 52px;
+  padding: 0.7rem 0.8rem;
+  visibility: hidden;
+}
+
+.form-message.is-visible {
+  visibility: visible;
+}
+
+.form-message[data-kind="info"] {
+  background: var(--teal-soft);
+  border-color: color-mix(in oklch, var(--teal) 35%, var(--rule));
+  color: var(--teal-hover);
+}
+
+.form-message[data-kind="error"] {
+  background: var(--negative-soft);
+  border-color: color-mix(in oklch, var(--negative) 40%, var(--rule));
+  color: var(--negative);
+}
+
+.form-message[data-kind="lock"] {
+  background: var(--warning-soft);
+  border-color: color-mix(in oklch, var(--warning) 40%, var(--rule));
+  color: var(--warning);
+}
+
+.field-group {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.field-group label {
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.password-field {
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.password-field input {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.password-field .text-button {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+input {
+  background: var(--desk);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  min-height: 48px;
+  padding: 0.65rem 0.75rem;
+  width: 100%;
+}
+
+input:hover:not(:disabled) {
+  border-color: var(--teal);
+}
+
+input[aria-invalid="true"] {
+  border-color: var(--negative);
+}
+
+input:disabled {
+  background: var(--surface-strong);
+  color: var(--ink-soft);
+  cursor: not-allowed;
+}
+
+.text-button {
+  background: transparent;
+  border: 0;
+  color: var(--teal);
+  cursor: pointer;
+  font-size: 0.84rem;
+  min-height: 44px;
+  padding: 0 0.25rem;
+}
+
+.text-button:hover:not(:disabled) {
+  color: var(--teal-hover);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.primary-button {
+  background: var(--honey);
+  border: 1px solid var(--honey);
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+  min-height: 48px;
+  padding: 0.65rem 0.9rem;
+  transition: background-color 180ms ease-out, border-color 180ms ease-out;
+  width: 100%;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: var(--honey-hover);
+  border-color: var(--honey-hover);
+}
+
+.primary-button:active:not(:disabled) {
+  background: var(--honey-hover);
+}
+
+.primary-button:disabled,
+.text-button:disabled {
+  color: var(--ink-soft);
+  cursor: not-allowed;
+}
+
+.primary-button:disabled {
+  background: var(--surface-strong);
+  border-color: var(--rule);
+}
+
+.no-account {
+  border-top: 1px solid var(--rule);
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+}
+
+.no-account h2 {
+  font-size: 0.98rem;
+  font-weight: 650;
+  margin-bottom: 0.35rem;
+}
+
+.no-account p {
+  font-size: 0.9rem;
+}
+
+.noscript-message {
+  background: var(--negative-soft);
+  border: 1px solid color-mix(in oklch, var(--negative) 40%, var(--rule));
+  border-radius: 7px;
+  color: var(--negative);
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+}
+
+@media (max-width: 760px) {
+  .auth-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .auth-context {
+    border-block-end: 1px solid var(--rule);
+    border-inline-end: 0;
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 0;
+    padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 1rem max(1rem, env(safe-area-inset-left));
+  }
+
+  .access-stage {
+    align-content: center;
+    margin: 0;
+    min-width: 144px;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .access-stage span,
+  .access-stage small {
+    font-size: 0.72rem;
+  }
+
+  .local-status {
+    grid-column: 1 / -1;
+    margin-top: 0;
+  }
+
+  .auth-workspace {
+    align-items: flex-start;
+    padding: 2.5rem max(1rem, env(safe-area-inset-right)) max(2.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  }
+}
+
+@media (max-width: 400px) {
+  .auth-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .access-stage {
+    grid-template-columns: auto 1fr;
+    min-width: 0;
+  }
+
+  .access-stage small {
+    grid-column: 1 / -1;
+  }
+
+  .local-status {
+    grid-column: auto;
+  }
+
+  .auth-workspace {
+    padding-top: 2rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

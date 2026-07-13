@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
+  <title>登录 | AI Trade</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="auth.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到登录表单</a>
+
+  <div class="auth-shell">
+    <aside class="auth-context" aria-label="工作台访问状态">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">AT</div>
+        <div>
+          <strong>AI Trade</strong>
+          <span>投资工作台</span>
+        </div>
+      </div>
+
+      <div class="access-stage">
+        <span>当前环境</span>
+        <strong>内测访问</strong>
+        <small>真实下单保持锁定</small>
+      </div>
+
+      <div class="local-status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>仅连接本机</span>
+      </div>
+    </aside>
+
+    <main id="main-content" class="auth-workspace" tabindex="-1">
+      <section class="auth-panel" aria-labelledby="login-title" aria-describedby="login-intro">
+        <header class="auth-heading">
+          <span class="context-label">工作台访问</span>
+          <h1 id="login-title">登录工作台</h1>
+          <p id="login-intro">使用管理员分配的内测账号继续。</p>
+        </header>
+
+        <noscript>
+          <p class="noscript-message">此页面需要启用 JavaScript 才能登录。</p>
+        </noscript>
+
+        <form id="login-form" method="post" action="/api/auth/login" novalidate>
+          <div
+            id="form-message"
+            class="form-message is-visible"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            aria-hidden="false"
+            data-kind="info"
+          >登录仅建立本机会话，不会解除真实下单锁定。</div>
+
+          <div class="field-group">
+            <label for="username">用户名</label>
+            <input
+              id="username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              enterkeyhint="next"
+              aria-describedby="form-message"
+              required
+            >
+          </div>
+
+          <div class="field-group password-field">
+            <label for="password">密码</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              enterkeyhint="go"
+              aria-describedby="form-message"
+              required
+            >
+            <button
+              id="password-toggle"
+              class="text-button"
+              type="button"
+              aria-controls="password"
+              aria-pressed="false"
+            >显示密码</button>
+          </div>
+
+          <button id="login-button" class="primary-button" type="submit">登录</button>
+        </form>
+
+        <section class="no-account" aria-labelledby="no-account-title">
+          <h2 id="no-account-title">暂无内测账号？</h2>
+          <p>账号由内测管理员统一开通，请联系邀请你参与测试的负责人。</p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="auth.js" defer></script>
+</body>
+</html>

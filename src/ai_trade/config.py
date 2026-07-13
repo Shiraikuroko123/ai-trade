@@ -14,6 +14,10 @@ from .security import SecurityMaster
 
 DEFAULT_BROKER_MAX_ORDER_NOTIONAL = 50_000.0
 DEFAULT_BROKER_MAX_DAILY_NOTIONAL = 100_000.0
+DEFAULT_AUTH_SESSION_HOURS = 8
+DEFAULT_AUTH_MAX_FAILED_ATTEMPTS = 5
+DEFAULT_AUTH_FAILURE_WINDOW_MINUTES = 15
+DEFAULT_AUTH_LOCKOUT_MINUTES = 15
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,16 @@ class AppConfig:
     def paper_rejections_file(self) -> Path:
         return self.resolve(
             self.raw["paper"].get("rejections_file", "state/paper_rejections.csv")
+        )
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.raw.get("auth", {}).get("enabled", True))
+
+    @property
+    def auth_users_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("auth", {}).get("users_file", "state/beta_users.json")
         )
 
     @property
@@ -269,6 +283,7 @@ def _validate(
         raise ValueError("paper.initial_cash must be positive")
     if int(raw["paper"].get("minimum_promotion_sessions", 60)) < 20:
         raise ValueError("paper.minimum_promotion_sessions must be at least 20")
+    _validate_auth(raw.get("auth", {}))
     _validate_broker(raw.get("broker", {}))
 
 
@@ -322,6 +337,39 @@ def _validate_costs(costs: CostSettings) -> None:
             previous_end = previous[1]
             if previous_end is None or current[0] <= previous_end:
                 raise ValueError(f"Overlapping cost history for {instrument_type}")
+
+
+def _validate_auth(value: dict[str, Any]) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("auth must be an object")
+    if not isinstance(value.get("enabled", True), bool):
+        raise ValueError("auth.enabled must be true or false")
+    users_file = value.get("users_file", "state/beta_users.json")
+    if not isinstance(users_file, str) or not users_file.strip():
+        raise ValueError("auth.users_file must be a non-empty path")
+    raw_hours = value.get("session_hours", DEFAULT_AUTH_SESSION_HOURS)
+    if isinstance(raw_hours, bool):
+        raise ValueError("auth.session_hours must be between 1 and 24")
+    hours = float(raw_hours)
+    if not math.isfinite(hours) or not 1 <= hours <= 24:
+        raise ValueError("auth.session_hours must be between 1 and 24")
+    integer_limits = {
+        "max_failed_attempts": (DEFAULT_AUTH_MAX_FAILED_ATTEMPTS, 3, 20),
+        "failure_window_minutes": (
+            DEFAULT_AUTH_FAILURE_WINDOW_MINUTES,
+            1,
+            1440,
+        ),
+        "lockout_minutes": (DEFAULT_AUTH_LOCKOUT_MINUTES, 1, 1440),
+    }
+    for name, (default, minimum, maximum) in integer_limits.items():
+        raw_value = value.get(name, default)
+        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+            raise ValueError(f"auth.{name} must be an integer")
+        if not minimum <= raw_value <= maximum:
+            raise ValueError(
+                f"auth.{name} must be between {minimum} and {maximum}"
+            )
 
 
 def _validate_broker(value: dict[str, Any]) -> None:

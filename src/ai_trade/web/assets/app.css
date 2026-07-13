@@ -37,6 +37,10 @@
   letter-spacing: 0;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html {
   background: var(--desk);
   color: var(--ink);
@@ -293,6 +297,13 @@ p {
 .quiet-meta {
   color: var(--ink-soft);
   font-size: 0.8rem;
+}
+
+.account-label {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #main-content {

@@ -65,6 +65,8 @@ const STATUS_LABELS = {
 
 const state = {
   token: "",
+  user: null,
+  authEnabled: true,
   actions: [],
   route: validRoute(location.hash.slice(1)) || "overview",
   controller: null,
@@ -85,6 +87,8 @@ const versionLabel = document.getElementById("version-label");
 const connectionDot = document.getElementById("connection-dot");
 const connectionLabel = document.getElementById("connection-label");
 const jobIndicator = document.getElementById("job-indicator");
+const signedInUser = document.getElementById("signed-in-user");
+const logoutButton = document.getElementById("logout");
 
 const moneyFormatter = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -291,6 +295,9 @@ async function api(path, options = {}) {
     }
   }
   if (!response.ok) {
+    if (response.status === 401) {
+      location.replace("/login");
+    }
     throw new Error(payload.error || `请求失败 (${response.status})`);
   }
   return payload;
@@ -302,6 +309,12 @@ async function bootstrap() {
     const payload = await api("/api/bootstrap");
     state.token = payload.token;
     state.actions = Array.isArray(payload.actions) ? payload.actions : [];
+    state.user = payload.user || null;
+    state.authEnabled = payload.auth_enabled !== false;
+    signedInUser.textContent = state.authEnabled
+      ? `内测账号 ${state.user?.username || "已登录"}`
+      : "本地所有者";
+    logoutButton.hidden = !state.authEnabled;
     setConnection(true);
     await loadRoute();
     await pollJobs();
@@ -1370,6 +1383,23 @@ function notify(message, error = false) {
   window.setTimeout(() => toast.remove(), 4200);
 }
 
+async function logout() {
+  logoutButton.disabled = true;
+  logoutButton.textContent = "正在退出";
+  try {
+    await api("/api/auth/logout", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+    });
+  } catch (error) {
+    if (!location.pathname.startsWith("/login")) {
+      notify(error.message || "退出失败", true);
+    }
+  } finally {
+    location.replace("/login");
+  }
+}
+
 document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-job-action]");
   if (action) {
@@ -1408,6 +1438,7 @@ document.addEventListener("submit", (event) => {
 });
 
 document.getElementById("refresh-view").addEventListener("click", loadRoute);
+logoutButton.addEventListener("click", logout);
 
 window.addEventListener("hashchange", () => {
   const next = validRoute(location.hash.slice(1)) || "overview";

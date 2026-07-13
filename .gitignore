@@ -17,3 +17,6 @@ coverage.xml
 dist/
 build/
 *.egg-info/
+beta-users*.json
+beta_users*.json
+*内测名单*.json

@@ -32,6 +32,8 @@ point-in-time universe -> signal factors -> portfolio constraints
                     loopback-only local workstation
 ```
 
+The workstation has two explicit local access profiles. Beta mode protects every data API, job, and report with a password-authenticated in-memory session and a session-bound CSRF token. Owner-local mode deliberately bypasses that login for one trusted loopback-only process; it is a convenience profile, not a remotely enforceable license.
+
 Future broker integrations stay outside the core runtime and enter through the `ai_trade.brokers` entry-point group:
 
 ```text
@@ -64,7 +66,8 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/ledger.py`: idempotent order intents, broker order events, and fills.
 - `broker/live_guard.py`: paper, configuration, adapter, reconciliation, kill-switch, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
-- `web/`: loopback-only HTTP server, background job manager, dashboard service, and packaged static application.
+- `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
+- `web/`: loopback-only authenticated HTTP server, background job manager, dashboard service, and packaged static application.
 
 No broker adapter ships with the project. The live route exists so its safety contract can be tested before credentials or broker-specific code are introduced; with the default configuration it cannot submit an order.
 

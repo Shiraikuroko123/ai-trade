@@ -70,7 +70,7 @@ class WebTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             config = replace(source, project_root=Path(temporary))
-            server, _ = create_dashboard_server(config, port=0)
+            server, _ = create_dashboard_server(config, port=0, auth_enabled=False)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -237,7 +237,7 @@ class WebTests(unittest.TestCase):
         config = load_config(
             Path(__file__).resolve().parents[1] / "config/default.json"
         )
-        server, token = create_dashboard_server(config, port=0)
+        server, token = create_dashboard_server(config, port=0, auth_enabled=False)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.server_port
@@ -294,6 +294,7 @@ class WebTests(unittest.TestCase):
                 headers={
                     "Content-Type": "application/json",
                     "X-AI-Trade-Token": token,
+                    "Origin": f"http://127.0.0.1:{port}",
                 },
             )
             self.assertEqual(status, 400)

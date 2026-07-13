@@ -5,7 +5,9 @@ import importlib.resources
 import json
 import logging
 import sys
+from dataclasses import asdict
 from datetime import date
+from getpass import getpass
 from pathlib import Path
 
 from .backtest import BacktestEngine
@@ -69,6 +71,39 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--no-open", action="store_true", help="Do not open a browser")
+    serve.add_argument(
+        "--owner-local",
+        action="store_true",
+        help="Bypass beta login for this loopback-only owner session",
+    )
+    beta_add = subparsers.add_parser(
+        "beta-user-add", help="Add an account to the local beta whitelist"
+    )
+    beta_add.add_argument("username")
+    beta_add.add_argument(
+        "--replace", action="store_true", help="Replace an existing password"
+    )
+    subparsers.add_parser("beta-user-list", help="List local beta accounts")
+    for action in ("enable", "disable", "remove"):
+        command = subparsers.add_parser(
+            f"beta-user-{action}", help=f"{action.title()} a local beta account"
+        )
+        command.add_argument("username")
+        if action == "remove":
+            command.add_argument(
+                "--yes", action="store_true", help="Confirm permanent removal"
+            )
+    beta_export = subparsers.add_parser(
+        "beta-users-export", help="Export a portable beta whitelist without plaintext passwords"
+    )
+    beta_export.add_argument("output")
+    beta_import = subparsers.add_parser(
+        "beta-users-import", help="Import a portable beta whitelist"
+    )
+    beta_import.add_argument("source")
+    beta_import.add_argument(
+        "--mode", choices=("reject", "merge", "replace"), default="reject"
+    )
     return parser
 
 
@@ -81,6 +116,72 @@ def main(argv: list[str] | None = None) -> int:
             return _initialize_workspace(Path(args.directory))
         config = load_config(_resolve_config_path(args.config))
         _configure_logging(config)
+        if args.command in {
+            "beta-user-add",
+            "beta-user-list",
+            "beta-user-enable",
+            "beta-user-disable",
+            "beta-user-remove",
+        }:
+            from .web.auth import UserStore
+
+            users = UserStore(config.auth_users_file)
+            if args.command == "beta-user-add":
+                password = getpass("内测密码: ")
+                confirmation = getpass("再次输入: ")
+                if password != confirmation:
+                    raise ValueError("两次输入的密码不一致")
+                user = users.add_user(args.username, password, replace=args.replace)
+                print(json.dumps(asdict(user), ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "beta-user-list":
+                print(
+                    json.dumps(
+                        [asdict(user) for user in users.list_users()],
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
+            if args.command == "beta-user-enable":
+                user = users.set_enabled(args.username, True)
+                print(json.dumps(asdict(user), ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "beta-user-disable":
+                user = users.set_enabled(args.username, False)
+                print(json.dumps(asdict(user), ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "beta-user-remove":
+                if not args.yes:
+                    raise ValueError("Permanent removal requires --yes")
+                if not users.remove_user(args.username):
+                    raise ValueError("Beta user does not exist")
+                print(json.dumps({"removed": args.username}, ensure_ascii=False))
+                return 0
+        if args.command in {"beta-users-export", "beta-users-import"}:
+            from .web.auth import UserStore
+
+            users = UserStore(config.auth_users_file)
+            if args.command == "beta-users-export":
+                output = Path(args.output).expanduser().resolve()
+                count = users.export_users(output)
+                print(
+                    json.dumps(
+                        {"output": str(output), "users": count},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
+            imported = users.import_users(args.source, mode=args.mode)
+            print(
+                json.dumps(
+                    {"users": [asdict(user) for user in imported]},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         if args.command == "universe-status":
             on_date = date.fromisoformat(args.date) if args.date else date.today()
             print(
@@ -191,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
                 host=args.host,
                 port=args.port,
                 open_browser=not args.no_open,
+                auth_enabled=False if args.owner_local else None,
             )
             return 0
     except Exception as exc:

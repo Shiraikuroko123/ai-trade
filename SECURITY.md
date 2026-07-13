@@ -10,11 +10,11 @@ Do not open a public issue for credential exposure, command execution, data-inte
 
 ## Trading Boundary
 
-AI Trade is a research and local paper-trading tool. It has no bundled working live-broker adapter. The local workstation binds only to a loopback address, validates the Host header, denies cross-origin writes, and requires a per-process write token for state-changing jobs.
+AI Trade is a research and local paper-trading tool. It has no bundled working live-broker adapter. The local workstation binds only to a loopback address, validates the Host header, and denies cross-origin writes. Beta mode stores only PBKDF2 password verifiers in the Git-ignored `state/` directory, keeps sessions in memory, uses `HttpOnly`/`SameSite=Strict` cookies, and binds every write token to the authenticated session. `serve --owner-local` deliberately bypasses beta login for the owner on a trusted local machine; it must never be treated as remote access control.
 
 Future live submission requires every independent gate: current paper-account configuration, forward promotion eligibility, an installed adapter and account, consecutive clean sandbox reconciliations bound to the active configuration, a clear kill switch, a matching unexpired authorization file, explicit live mode, and the exact process-level risk confirmation. Pre-trade checks also enforce the active universe, lot and tick sizes, daily price limits, broker-available cash/positions, single-order limits, and reserved daily notional.
 
-Never commit or paste broker passwords, fund passwords, API secrets, session cookies, private keys, or recovery phrases. The project never requires a crypto-wallet signature, token purchase, or deposit to unlock features.
+Never commit or paste broker passwords, fund passwords, beta password files, exported beta-user bundles, API secrets, session cookies, private keys, or recovery phrases. Portable beta-user bundles contain offline password verifiers: distribute them privately and rotate affected passwords if a bundle leaks. The project never requires a crypto-wallet signature, token purchase, or deposit to unlock features.
 
 ## Local Data
 

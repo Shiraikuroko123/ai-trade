@@ -7,7 +7,7 @@
 
 [架构](docs/ARCHITECTURE.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.6.0` 增加了浏览器工作台、后台研究任务、券商插件契约、沙箱对账、订单账本与多重实盘门禁，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.7.0` 增加了内测登录、可移植白名单和本地所有者模式；浏览器研究工作台、券商插件契约、订单账本与多重实盘门禁继续保留，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
 系统已经贯通以下流程：
 
@@ -31,10 +31,19 @@ git clone https://github.com/Shiraikuroko123/ai-trade.git
 cd ai-trade
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 .\.venv\Scripts\python.exe -m ai_trade.cli download --force
+.\.venv\Scripts\python.exe -m ai_trade.cli serve --owner-local
+```
+
+`serve --owner-local` 只适合工作区所有者在自己的可信电脑上使用，它保留回环地址限制但跳过内测登录。命令会打印并打开类似 `http://127.0.0.1:8765/` 的地址；不要直接双击 `src/ai_trade/web/assets/index.html`。端口占用时可以增加 `--port 8877`。
+
+朋友或其他内测部署默认需要账号。用户文件只保存加盐密码验证器并位于 Git 忽略的 `state/`：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli beta-user-add friend-name
 .\.venv\Scripts\python.exe -m ai_trade.cli serve
 ```
 
-`serve` 会打印并打开类似 `http://127.0.0.1:8765/` 的地址。必须使用命令行实际打印的 HTTP 地址；不要直接双击 `src/ai_trade/web/assets/index.html`。端口占用时可以使用 `serve --port 8877`。
+管理员可以使用 `beta-user-list`、`beta-user-enable`、`beta-user-disable` 和 `beta-user-remove --yes` 管理名单。跨电脑分发时，先用 `beta-users-export ..\AI-Trade-内测名单.json` 导出到仓库外，再在朋友的工作区运行 `beta-users-import ..\AI-Trade-内测名单.json`；导出包不含明文密码或会话，但包含离线密码验证器，仍应私下传递且不得提交 Git。密码替换、停用或删除账号后，已有会话会在下一次请求时失效。纯本地认证不能阻止拥有源码和本机管理权限的人主动绕过，强制授权和实时撤权需要独立 HTTPS 认证服务。
 
 ![AI Trade 本地投资工作台](docs/assets/workstation-overview.png)
 
@@ -123,7 +132,7 @@ ai-trade/
 
 ## 当前研究证据
 
-数据截止 2026-07-10，`v0.6.0` 默认配置的全历史年化收益约 10.16%、Sharpe 约 1.12、最大回撤约 -11.81%；连续滚动样本外账户年化约 11.28%、Sharpe 约 1.23、最大回撤约 -14.01%。1,000 次移动区块 Bootstrap 的年化收益 95% 区间约为 4.21% 至 17.45%，较差 5% 路径的最大回撤约 -23.78%。
+数据截止 2026-07-10，这组研究证据生成于 `v0.6.0`，`v0.7.0` 未改变对应策略配置：全历史年化收益约 10.16%、Sharpe 约 1.12、最大回撤约 -11.81%；连续滚动样本外账户年化约 11.28%、Sharpe 约 1.23、最大回撤约 -14.01%。1,000 次移动区块 Bootstrap 的年化收益 95% 区间约为 4.21% 至 17.45%，较差 5% 路径的最大回撤约 -23.78%。
 
 这些历史窗口已经用于工程和模型判断，不再是独立最终检验集。它们只能说明当前实现值得继续模拟，不能说明未来会取得相同收益；下一份真正独立的证据来自版本冻结后的未来模拟盘。
 
@@ -181,7 +190,7 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 - 股票池扩容前仍缺少可靠的历史成分、ST/停复牌、退市、逐时点复权因子与公司行动数据；仅把今天的沪深 300 名单塞进回测会产生错误结论。
 - 当前 500 万元流动性阈值和风险模型已经参考过现有历史及滚动窗口结果，因此这些“样本外”窗口也已成为开发数据，不再是完全未触碰的最终检验集。下一阶段独立证据只能来自未来模拟盘。
 
-更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。`v0.6.0` 提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的券商连接器。
+更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。`v0.7.0` 提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的券商连接器。
 
 ## 与 Vibe-Trading 的关系
 

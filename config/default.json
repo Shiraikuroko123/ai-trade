@@ -83,6 +83,14 @@
     "rejections_file": "state/paper_rejections.csv",
     "minimum_promotion_sessions": 60
   },
+  "auth": {
+    "enabled": true,
+    "users_file": "state/beta_users.json",
+    "session_hours": 8,
+    "max_failed_attempts": 5,
+    "failure_window_minutes": 15,
+    "lockout_minutes": 15
+  },
   "broker": {
     "mode": "disabled",
     "adapter": null,

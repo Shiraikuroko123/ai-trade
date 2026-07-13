@@ -2,22 +2,36 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import mimetypes
+import re
 import secrets
 import threading
 import webbrowser
+from datetime import datetime, timezone
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from ipaddress import ip_address
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..config import AppConfig
+from .auth import (
+    AuthManager,
+    AuthenticationError,
+    LoginRateLimiter,
+    Session,
+    SessionStore,
+    UserStore,
+)
 from .jobs import JobManager
 from .service import DashboardService
 
 
 LOGGER = logging.getLogger(__name__)
+SESSION_COOKIE_NAME = "ai_trade_session"
+REPORT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -36,12 +50,28 @@ def create_dashboard_server(
     config: AppConfig,
     host: str = "127.0.0.1",
     port: int = 8765,
+    auth_enabled: bool | None = None,
 ) -> tuple[DashboardServer, str]:
     _require_loopback(host)
     service = DashboardService(config)
     jobs = JobManager(config)
     token = secrets.token_urlsafe(32)
-    handler = _handler_factory(service, jobs, token)
+    use_auth = config.auth_enabled if auth_enabled is None else auth_enabled
+    auth: AuthManager | None = None
+    session_max_age = 0
+    if use_auth:
+        settings = config.raw.get("auth", {})
+        session_max_age = round(float(settings.get("session_hours", 8)) * 3600)
+        auth = AuthManager(
+            UserStore(config.auth_users_file),
+            SessionStore(session_max_age),
+            LoginRateLimiter(
+                max_failures=int(settings.get("max_failed_attempts", 5)),
+                window_seconds=int(settings.get("failure_window_minutes", 15)) * 60,
+                lockout_seconds=int(settings.get("lockout_minutes", 15)) * 60,
+            ),
+        )
+    handler = _handler_factory(service, jobs, token, auth, session_max_age)
     try:
         server = DashboardServer((host, port), handler, jobs)
     except Exception:
@@ -55,8 +85,9 @@ def serve_dashboard(
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
+    auth_enabled: bool | None = None,
 ) -> None:
-    server, _ = create_dashboard_server(config, host, port)
+    server, _ = create_dashboard_server(config, host, port, auth_enabled)
     actual_host, actual_port = server.server_address[:2]
     display_host = f"[{actual_host}]" if ":" in actual_host else actual_host
     url = f"http://{display_host}:{actual_port}/"
@@ -81,6 +112,8 @@ def _handler_factory(
     service: DashboardService,
     jobs: JobManager,
     token: str,
+    auth: AuthManager | None,
+    session_max_age: int,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         server_version = "AITradeDashboard"
@@ -92,6 +125,29 @@ def _handler_factory(
                 return
             try:
                 path = urlsplit(self.path).path
+                if path in {"/login", "/login.html"}:
+                    if auth is None or self._session_context() is not None:
+                        self._redirect("/")
+                    else:
+                        self._static(path, include_body=False)
+                    return
+                if path in {"/auth.css", "/auth.js"}:
+                    self._static(path, include_body=False)
+                    return
+                if path == "/api/auth/session":
+                    self._json(self._session_payload())
+                    return
+                if path.startswith("/api/"):
+                    if auth is not None and self._require_session() is None:
+                        return
+                    self._json_error(
+                        HTTPStatus.METHOD_NOT_ALLOWED, "HEAD is not supported for this API"
+                    )
+                    return
+                if auth is not None and self._require_session(
+                    page=path in {"/", "/index.html"}
+                ) is None:
+                    return
                 if path.startswith("/reports/"):
                     self._report(path, include_body=False)
                 else:
@@ -109,11 +165,37 @@ def _handler_factory(
                 return
             parsed = urlsplit(self.path)
             try:
+                if parsed.path in {"/login", "/login.html"}:
+                    if auth is None or self._session_context() is not None:
+                        self._redirect("/")
+                    else:
+                        self._static(parsed.path)
+                    return
+                if parsed.path in {"/auth.css", "/auth.js"}:
+                    self._static(parsed.path)
+                    return
+                if parsed.path == "/api/auth/session":
+                    self._json(self._session_payload())
+                    return
+                context = None
+                if auth is not None:
+                    context = self._require_session(
+                        page=parsed.path in {"/", "/index.html"}
+                    )
+                    if context is None:
+                        return
                 if parsed.path == "/api/bootstrap":
+                    session = context[1] if context is not None else None
                     self._json(
                         {
-                            "token": token,
+                            "token": session.csrf_token if session is not None else token,
                             "actions": list(jobs_action_names()),
+                            "auth_enabled": auth is not None,
+                            "user": {
+                                "username": session.username
+                                if session is not None
+                                else "本地所有者"
+                            },
                         }
                     )
                 elif parsed.path == "/api/overview":
@@ -161,9 +243,26 @@ def _handler_factory(
                 )
 
         def do_POST(self) -> None:
-            if not self._authorize_write(token):
+            if not self._valid_host():
+                self._json_error(HTTPStatus.FORBIDDEN, "Invalid host header")
                 return
             parsed = urlsplit(self.path)
+            if parsed.path == "/api/auth/login":
+                self._login()
+                return
+            if parsed.path == "/api/auth/logout":
+                context = self._authorize_write()
+                if context is None:
+                    return
+                if auth is not None:
+                    auth.logout(context[0])
+                self._json(
+                    {"authenticated": False},
+                    headers={"Set-Cookie": self._clear_session_cookie()},
+                )
+                return
+            if self._authorize_write() is None:
+                return
             if parsed.path != "/api/jobs":
                 self._json_error(HTTPStatus.NOT_FOUND, "API endpoint not found")
                 return
@@ -184,7 +283,7 @@ def _handler_factory(
                 )
 
         def do_DELETE(self) -> None:
-            if not self._authorize_write(token):
+            if self._authorize_write() is None:
                 return
             parsed = urlsplit(self.path)
             if not parsed.path.startswith("/api/jobs/"):
@@ -203,25 +302,162 @@ def _handler_factory(
         def log_message(self, format: str, *args) -> None:
             LOGGER.info("dashboard %s - %s", self.address_string(), format % args)
 
-        def _authorize_write(self, expected: str) -> bool:
+        def _authorize_write(self) -> tuple[str, Session | None] | None:
             if not self._valid_host():
                 self._json_error(HTTPStatus.FORBIDDEN, "Invalid host header")
-                return False
+                return None
+            context = self._require_session() if auth is not None else ("", None)
+            if context is None:
+                return None
             provided = self.headers.get("X-AI-Trade-Token")
+            expected = context[1].csrf_token if context[1] is not None else token
             if provided is None or not secrets.compare_digest(provided, expected):
                 self._json_error(HTTPStatus.FORBIDDEN, "Write token is missing or invalid")
-                return False
-            origin = self.headers.get("Origin")
-            if origin:
-                expected_origins = {
-                    f"http://{self.headers.get('Host')}",
-                    f"http://localhost:{self.server.server_port}",
-                    f"http://127.0.0.1:{self.server.server_port}",
+                return None
+            if not self._same_origin():
+                self._json_error(HTTPStatus.FORBIDDEN, "Cross-origin write denied")
+                return None
+            return context
+
+        def _login(self) -> None:
+            if auth is None:
+                self._json_error(HTTPStatus.NOT_FOUND, "Authentication is not enabled")
+                return
+            if not self._same_origin():
+                self._json_error(HTTPStatus.FORBIDDEN, "Cross-origin login denied")
+                return
+            try:
+                payload = self._read_json()
+                username = payload.get("username")
+                password = payload.get("password")
+                if not isinstance(username, str) or not isinstance(password, str):
+                    username, password = "", ""
+                grant = auth.login(username, password, source=self.client_address[0])
+            except AuthenticationError as exc:
+                retry_after = max(0, math.ceil(exc.retry_after))
+                if retry_after:
+                    self._json_error(
+                        HTTPStatus.TOO_MANY_REQUESTS,
+                        "登录尝试过多，请稍后再试",
+                        payload={"retry_after": retry_after},
+                        headers={"Retry-After": str(retry_after)},
+                    )
+                else:
+                    self._json_error(
+                        HTTPStatus.UNAUTHORIZED, "用户名或密码不正确"
+                    )
+                return
+            except ValueError as exc:
+                self._json_error(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except Exception:
+                LOGGER.exception("Dashboard authentication failed")
+                self._json_error(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    "登录服务暂时不可用，请检查本机日志",
+                )
+                return
+            previous = self._cookie_token()
+            if previous:
+                auth.logout(previous)
+            self._json(
+                {
+                    "authenticated": True,
+                    "username": grant.username,
+                    "expires_at": datetime.fromtimestamp(
+                        grant.expires_at, timezone.utc
+                    ).isoformat(),
+                },
+                headers={
+                    "Set-Cookie": self._session_cookie(
+                        grant.token, session_max_age
+                    )
+                },
+            )
+
+        def _session_context(self) -> tuple[str, Session] | None:
+            if auth is None:
+                return None
+            token_value = self._cookie_token()
+            if not token_value:
+                return None
+            session = auth.authenticate_session(token_value)
+            return (token_value, session) if session is not None else None
+
+        def _require_session(
+            self, *, page: bool = False
+        ) -> tuple[str, Session] | None:
+            context = self._session_context()
+            if context is not None:
+                return context
+            if page:
+                self._redirect("/login")
+            else:
+                self._json_error(
+                    HTTPStatus.UNAUTHORIZED,
+                    "请先登录内测账号",
+                    headers={"WWW-Authenticate": "Session"},
+                )
+            return None
+
+        def _session_payload(self) -> dict[str, object]:
+            if auth is None:
+                return {
+                    "auth_enabled": False,
+                    "authenticated": True,
+                    "configured": True,
+                    "username": "本地所有者",
                 }
-                if origin not in expected_origins:
-                    self._json_error(HTTPStatus.FORBIDDEN, "Cross-origin write denied")
-                    return False
-            return True
+            context = self._session_context()
+            if context is None:
+                return {
+                    "auth_enabled": True,
+                    "authenticated": False,
+                    "configured": auth.users.has_users(),
+                    "username": None,
+                }
+            return {
+                "auth_enabled": True,
+                "authenticated": True,
+                "configured": True,
+                "username": context[1].username,
+                "expires_at": datetime.fromtimestamp(
+                    context[1].expires_at, timezone.utc
+                ).isoformat(),
+            }
+
+        def _cookie_token(self) -> str | None:
+            values = self.headers.get_all("Cookie", [])
+            if len(values) != 1 or len(values[0]) > 4096:
+                return None
+            cookies = SimpleCookie()
+            try:
+                cookies.load(values[0])
+            except CookieError:
+                return None
+            morsel = cookies.get(SESSION_COOKIE_NAME)
+            if morsel is None or not 20 <= len(morsel.value) <= 512:
+                return None
+            return morsel.value
+
+        def _same_origin(self) -> bool:
+            origin = self.headers.get("Origin")
+            host = self.headers.get("Host")
+            return bool(origin and host and origin == f"http://{host}")
+
+        @staticmethod
+        def _session_cookie(value: str, max_age: int) -> str:
+            return (
+                f"{SESSION_COOKIE_NAME}={value}; Path=/; HttpOnly; "
+                f"SameSite=Strict; Max-Age={max_age}"
+            )
+
+        @staticmethod
+        def _clear_session_cookie() -> str:
+            return (
+                f"{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; "
+                "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            )
 
         def _valid_host(self) -> bool:
             values = self.headers.get_all("Host", [])
@@ -259,6 +495,10 @@ def _handler_factory(
                 "/index.html": "index.html",
                 "/app.css": "app.css",
                 "/app.js": "app.js",
+                "/login": "login.html",
+                "/login.html": "login.html",
+                "/auth.css": "auth.css",
+                "/auth.js": "auth.js",
             }
             name = names.get(path)
             if name is None:
@@ -280,17 +520,22 @@ def _handler_factory(
             name = unquote(path.removeprefix("/reports/"))
             allowed_suffixes = {".csv", ".html", ".json", ".md"}
             if (
-                not name
-                or not name.isascii()
-                or "/" in name
-                or "\\" in name
-                or name.startswith(".")
+                not REPORT_NAME_PATTERN.fullmatch(name)
                 or not any(name.endswith(suffix) for suffix in allowed_suffixes)
             ):
                 self._json_error(HTTPStatus.NOT_FOUND, "Report not found")
                 return
-            report = service.config.reports_dir / name
-            if not report.is_file():
+            reports_root = service.config.reports_dir.resolve()
+            candidate = reports_root / name
+            if candidate.is_symlink():
+                self._json_error(HTTPStatus.NOT_FOUND, "Report not found")
+                return
+            try:
+                report = candidate.resolve(strict=True)
+            except OSError:
+                self._json_error(HTTPStatus.NOT_FOUND, "Report not found")
+                return
+            if report.parent != reports_root or not report.is_file():
                 self._json_error(HTTPStatus.NOT_FOUND, "Report not found")
                 return
             content = report.read_bytes()
@@ -311,7 +556,10 @@ def _handler_factory(
                 self.wfile.write(content)
 
         def _json(
-            self, value: object, status: HTTPStatus = HTTPStatus.OK
+            self,
+            value: object,
+            status: HTTPStatus = HTTPStatus.OK,
+            headers: dict[str, str] | None = None,
         ) -> None:
             content = json.dumps(
                 value, ensure_ascii=False, separators=(",", ":"), default=str
@@ -321,12 +569,29 @@ def _handler_factory(
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(content)))
             self.send_header("Cache-Control", "no-store")
+            for name, header_value in (headers or {}).items():
+                self.send_header(name, header_value)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(content)
 
-        def _json_error(self, status: HTTPStatus, message: str) -> None:
-            self._json({"error": message}, status)
+        def _json_error(
+            self,
+            status: HTTPStatus,
+            message: str,
+            *,
+            payload: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self._json({"error": message, **(payload or {})}, status, headers)
+
+        def _redirect(self, location: str) -> None:
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self._security_headers()
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
 
         def _security_headers(self) -> None:
             self.send_header(
@@ -339,6 +604,10 @@ def _handler_factory(
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.send_header(
+                "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+            )
 
     return Handler
 

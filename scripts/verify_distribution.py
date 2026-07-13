@@ -13,6 +13,10 @@ WHEEL_REQUIRED = {
     "ai_trade/web/assets/index.html",
     "ai_trade/web/assets/app.css",
     "ai_trade/web/assets/app.js",
+    "ai_trade/web/assets/auth.css",
+    "ai_trade/web/assets/auth.js",
+    "ai_trade/web/assets/login.html",
+    "ai_trade/web/auth.py",
 }
 
 SDIST_REQUIRED = {
@@ -43,9 +47,22 @@ SDIST_REQUIRED = {
     "src/ai_trade/web/assets/index.html",
     "src/ai_trade/web/assets/app.css",
     "src/ai_trade/web/assets/app.js",
+    "src/ai_trade/web/assets/auth.css",
+    "src/ai_trade/web/assets/auth.js",
+    "src/ai_trade/web/assets/login.html",
+    "src/ai_trade/web/auth.py",
 }
 
-BANNED_PARTS = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache"}
+BANNED_PARTS = {
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "logs",
+    "reports",
+    "state",
+}
+SENSITIVE_NAME_MARKERS = ("beta-users", "beta_users", "内测名单")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,6 +112,9 @@ def _verify_safe_unique_names(names: list[str], archive_name: str) -> None:
             raise SystemExit(f"{archive_name} contains an unsafe path: {name}")
         if BANNED_PARTS.intersection(path.parts) or path.suffix in {".pyc", ".pyo"}:
             raise SystemExit(f"{archive_name} contains a generated file: {name}")
+        folded_name = path.name.casefold()
+        if any(marker in folded_name for marker in SENSITIVE_NAME_MARKERS):
+            raise SystemExit(f"{archive_name} contains a beta-user file: {name}")
 
 
 def _strip_sdist_root(names: list[str], archive_name: str) -> set[str]:

@@ -2,6 +2,16 @@
 
 All notable changes are documented here. The project follows semantic versioning while it remains experimental.
 
+## Unreleased
+
+## 0.7.0 - 2026-07-13
+
+- Added a loopback-only beta login with PBKDF2 password verifiers, in-memory sessions, session-bound CSRF tokens, strict same-origin writes, rate limiting, and explicit logout.
+- Added local beta-user management plus portable whitelist export/import without plaintext passwords or sessions.
+- Added an explicit `serve --owner-local` mode for a trusted workstation owner while keeping beta authentication enabled for ordinary deployments.
+- Made legacy configurations fail closed into beta login and bound sessions to the current credential revision so password replacement, disabling, removal, and changed imports invalidate existing access.
+- Hardened report downloads against unsafe filenames, traversal, and symbolic-link escapes.
+
 ## 0.6.0 - 2026-07-13
 
 - Added a packaged, zero-runtime-dependency local workstation with overview, research, portfolio, trading, risk, universe, and system views.

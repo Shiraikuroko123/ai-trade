@@ -21,7 +21,7 @@ class WebReportTests(unittest.TestCase):
             report.write_text('{"status":"ok"}', encoding="utf-8")
             (config.reports_dir / "secret.exe").write_bytes(b"not-a-report")
 
-            server, _ = create_dashboard_server(config, port=0)
+            server, _ = create_dashboard_server(config, port=0, auth_enabled=False)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
