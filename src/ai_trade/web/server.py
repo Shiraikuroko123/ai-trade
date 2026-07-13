@@ -16,6 +16,7 @@ from importlib import resources
 from ipaddress import ip_address
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from .. import __version__
 from ..config import AppConfig
 from .auth import (
     AuthManager,
@@ -189,6 +190,7 @@ def _handler_factory(
                     self._json(
                         {
                             "token": session.csrf_token if session is not None else token,
+                            "version": __version__,
                             "actions": list(jobs_action_names()),
                             "auth_enabled": auth is not None,
                             "user": {
@@ -217,6 +219,8 @@ def _handler_factory(
                     self._json(service.universe(selected))
                 elif parsed.path == "/api/system":
                     self._json(service.system())
+                elif parsed.path == "/api/storage":
+                    self._json(service.storage())
                 elif parsed.path == "/api/jobs":
                     self._json({"jobs": jobs.list()})
                 elif parsed.path.startswith("/api/jobs/"):
@@ -263,14 +267,18 @@ def _handler_factory(
                 return
             if self._authorize_write() is None:
                 return
-            if parsed.path != "/api/jobs":
-                self._json_error(HTTPStatus.NOT_FOUND, "API endpoint not found")
-                return
             try:
-                payload = self._read_json()
-                action = str(payload.get("action", ""))
-                job = jobs.submit(action)
-                self._json(job.payload(), HTTPStatus.ACCEPTED)
+                if parsed.path == "/api/jobs":
+                    payload = self._read_json()
+                    action = str(payload.get("action", ""))
+                    job = jobs.submit(action)
+                    self._json(job.payload(), HTTPStatus.ACCEPTED)
+                elif parsed.path == "/api/storage/preferences":
+                    self._json(service.save_storage_preferences(self._read_json()))
+                elif parsed.path == "/api/storage/refresh":
+                    self._json(service.storage(refresh=True))
+                else:
+                    self._json_error(HTTPStatus.NOT_FOUND, "API endpoint not found")
             except ValueError as exc:
                 self._json_error(HTTPStatus.BAD_REQUEST, str(exc))
             except RuntimeError as exc:

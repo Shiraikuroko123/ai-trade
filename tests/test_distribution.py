@@ -21,6 +21,21 @@ class DistributionVerificationTests(unittest.TestCase):
                 self.assertIn(f"ai_trade/data/{module}", WHEEL_REQUIRED)
                 self.assertIn(f"src/ai_trade/data/{module}", SDIST_REQUIRED)
 
+    def test_cloud_usage_module_is_required_in_both_artifacts(self):
+        self.assertIn("ai_trade/cloud_usage.py", WHEEL_REQUIRED)
+        self.assertIn("src/ai_trade/cloud_usage.py", SDIST_REQUIRED)
+
+    def test_disabling_cloud_preserves_the_installation_identity(self):
+        source = (REPOSITORY_ROOT / "scripts/configure_cloud.ps1").read_text(
+            encoding="utf-8"
+        )
+        disable_block = source.split("if ($Disable) {", 1)[1].split(
+            "function Read-EnvFile", 1
+        )[0]
+
+        self.assertNotIn("AI_TRADE_CLOUD_INSTALLATION_ID", disable_block)
+        self.assertNotIn("AI_TRADE_CLOUD_PREFIX", disable_block)
+
     def test_sensitive_release_content_is_rejected(self):
         cases = (
             b"endpoint=https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",

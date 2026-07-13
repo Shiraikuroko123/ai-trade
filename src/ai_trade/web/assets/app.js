@@ -7,6 +7,7 @@ const ROUTES = {
   trading: { title: "交易", context: "执行记录与权限晋级" },
   risk: { title: "风险", context: "约束、尾部与实盘门禁" },
   universe: { title: "数据", context: "证券主数据与覆盖" },
+  storage: { title: "存储", context: "本地缓存与云端预算" },
   system: { title: "系统", context: "任务、报告与本地诊断" },
 };
 
@@ -29,6 +30,7 @@ const JOB_LABELS = {
   "paper-init": "初始化模拟账户",
   "paper-run": "运行模拟日",
   "paper-audit": "审计模拟账户",
+  "cloud-backup": "备份行情",
 };
 
 const CHECK_LABELS = {
@@ -74,6 +76,7 @@ const state = {
   charts: new Map(),
   jobs: [],
   jobStates: new Map(),
+  cloudBackupWarning: null,
   tradingTab: "paper",
   universeDate: "",
   resizeTimer: 0,
@@ -311,6 +314,7 @@ async function bootstrap() {
     state.actions = Array.isArray(payload.actions) ? payload.actions : [];
     state.user = payload.user || null;
     state.authEnabled = payload.auth_enabled !== false;
+    if (payload.version) versionLabel.textContent = `AI Trade v${payload.version}`;
     signedInUser.textContent = state.authEnabled
       ? `内测账号 ${state.user?.username || "已登录"}`
       : "本地所有者";
@@ -333,15 +337,27 @@ function setConnection(connected) {
 
 function setRouteChrome(route) {
   const meta = ROUTES[route];
+  let activeLink = null;
   routeTitle.textContent = meta.title;
   routeContext.textContent = meta.context;
   document.title = `${meta.title} | AI Trade`;
   for (const link of document.querySelectorAll("[data-route]")) {
     if (link.dataset.route === route) {
       link.setAttribute("aria-current", "page");
+      activeLink = link;
     } else {
       link.removeAttribute("aria-current");
     }
+  }
+  if (activeLink && window.matchMedia("(max-width: 820px)").matches) {
+    window.requestAnimationFrame(() => {
+      const navigation = activeLink.closest(".sidebar");
+      if (!navigation) return;
+      navigation.scrollLeft = Math.max(
+        0,
+        activeLink.offsetLeft - (navigation.clientWidth - activeLink.clientWidth) / 2,
+      );
+    });
   }
 }
 
@@ -373,6 +389,7 @@ async function loadRoute() {
         portfolio: "/api/portfolio",
         trading: "/api/trading",
         universe: `/api/universe${state.universeDate ? `?date=${encodeURIComponent(state.universeDate)}` : ""}`,
+        storage: "/api/storage",
       };
       payload = await api(endpoints[state.route], { signal });
     }
@@ -398,6 +415,7 @@ function renderRoute(payload) {
     trading: renderTrading,
     risk: renderRisk,
     universe: renderUniverse,
+    storage: renderStorage,
     system: renderSystem,
   };
   main.innerHTML = renderers[state.route](payload);
@@ -421,6 +439,12 @@ function updateRouteDate(payload) {
     value = payload.overview?.market?.date;
   } else if (state.route === "universe") {
     value = payload.date;
+  } else if (state.route === "storage") {
+    const scanned = payload.usage?.scanned_at;
+    marketDate.textContent = scanned
+      ? `云端清点 ${formatDate(scanned, true)}`
+      : "云端尚未清点";
+    return;
   } else if (state.route === "system") {
     value = payload.system?.diagnosis?.latest_market_date;
   }
@@ -1090,10 +1114,102 @@ function eligibilityLabel(reasons) {
   }[reason] || reason)).join("、");
 }
 
+function renderStorage(data) {
+  const preferences = data.preferences || {};
+  const usage = data.usage || {};
+  const operational = Boolean(data.operational);
+  const storageMode = data.effective_storage_mode || "local";
+  const snapshots = Array.isArray(usage.snapshots) ? usage.snapshots : [];
+  const actions = [
+    `<button class="button secondary" type="button" data-storage-refresh${operational ? "" : " disabled"}>清点云端</button>`,
+    operational ? actionButton("cloud-backup", "primary") : "",
+  ].join("");
+  const missing = Array.isArray(data.missing_configuration) ? data.missing_configuration : [];
+  return `
+    <div class="page-stack">
+      ${pageIntro("数据存储", "活动行情保留在本地，R2 保存可校验的独立快照", actions)}
+
+      <section class="metric-strip" aria-label="存储状态">
+        ${metric("当前策略", storageMode === "hybrid" ? "本地 + R2" : "仅本地", `本地缓存 ${formatStorageBytes(data.local?.bytes || 0)}`)}
+        ${metric("云端容量剩余", usage.scanned_at ? formatStorageBytes(usage.storage_remaining_bytes) : "待清点", usage.scanned_at ? `已用 ${formatStorageBytes(usage.storage_bytes)} / ${formatStorageBytes(usage.storage_limit_bytes)}` : "点击清点云端读取当前安装空间")}
+        ${metric("A 类操作剩余", formatInteger(usage.class_a_remaining), `预算周期已记录 ${formatInteger(usage.class_a)} / ${formatInteger(usage.class_a_limit)}`)}
+        ${metric("B 类操作剩余", formatInteger(usage.class_b_remaining), `预算周期已记录 ${formatInteger(usage.class_b)} / ${formatInteger(usage.class_b_limit)}`)}
+      </section>
+
+      ${!data.credentials_configured ? `<aside class="callout warning"><strong>尚未配置 Cloudflare R2</strong><p>先安装云端支持组件，再运行 <code>powershell -ExecutionPolicy Bypass -File .\\scripts\\configure_cloud.ps1</code>，然后重启工作台。${missing.length ? ` 缺少：${escapeHtml(missing.join("、"))}。` : ""}</p></aside>` : ""}
+      ${data.credentials_configured && !data.enabled ? `<aside class="callout warning"><strong>R2 凭据已保存，但云备份未启用</strong><p>重新运行云配置脚本以启用当前 Windows 用户的配置，然后重启工作台。</p></aside>` : ""}
+      ${data.credentials_configured && !data.dependency_available ? `<aside class="callout warning"><strong>尚未安装云端支持组件</strong><p>在仓库根目录运行 <code>.\\.venv\\Scripts\\python.exe -m pip install -e '.[cloud]'</code>，然后重启工作台。</p></aside>` : ""}
+      ${data.configuration_error ? `<aside class="callout danger"><strong>云配置无法读取</strong><p>${escapeHtml(data.configuration_error)}</p></aside>` : ""}
+      ${data.inventory_error ? `<aside class="callout danger"><strong>云端清点未完成</strong><p>${escapeHtml(data.inventory_error)}</p></aside>` : ""}
+      <div id="cloud-backup-warning-region">${cloudBackupWarningMarkup(state.cloudBackupWarning)}</div>
+
+      <section class="split-layout storage-layout">
+        <article class="panel">
+          ${panelHeader("用量与预算", `${usage.scanned_at ? `容量清点于 ${formatDate(usage.scanned_at, true)}，共 ${formatInteger(usage.object_count)} 个对象` : "容量尚未清点"}；操作追踪始于 ${formatDate(usage.tracking_started_at, true)}`)}
+          <div class="usage-list">
+            ${storageUsageMeter("R2 容量", usage.storage_bytes, usage.storage_limit_bytes, usage.storage_remaining_bytes, usage.storage_percent, "当前安装命名空间")}
+            ${storageUsageMeter("A 类操作", usage.class_a, usage.class_a_limit, usage.class_a_remaining, usage.class_a_percent, `${usage.period_start || "—"} 至 ${usage.period_end || "—"}`)}
+            ${storageUsageMeter("B 类操作", usage.class_b, usage.class_b_limit, usage.class_b_remaining, usage.class_b_percent, `${usage.period_start || "—"} 至 ${usage.period_end || "—"}`)}
+          </div>
+        </article>
+
+        <article class="panel">
+          ${panelHeader("存储偏好", "设置保存在当前工作区，不包含 R2 密钥")}
+          <form id="storage-preferences-form" class="storage-form">
+            <fieldset class="mode-fieldset">
+              <legend>自动保存策略</legend>
+              <div class="mode-segmented">
+                <label><input type="radio" name="storage_mode" value="local"${storageMode === "local" ? " checked" : ""}><span>仅本地</span></label>
+                <label><input type="radio" name="storage_mode" value="hybrid"${storageMode === "hybrid" ? " checked" : ""}${operational ? "" : " disabled"}><span>本地 + R2</span></label>
+              </div>
+            </fieldset>
+            <div class="storage-fields">
+              ${numberField("storage_limit_gb", "容量预算", preferences.storage_limit_gb ?? 10, "GB", "0.1", "1000000", "0.1")}
+              ${numberField("class_a_limit", "A 类操作额度", preferences.class_a_limit ?? 1000000, "次", "1", "1000000000000", "1")}
+              ${numberField("class_b_limit", "B 类操作额度", preferences.class_b_limit ?? 10000000, "次", "1", "1000000000000", "1")}
+              ${numberField("billing_cycle_day", "预算周期起始日", preferences.billing_cycle_day ?? 1, "日", "1", "28", "1")}
+            </div>
+            <div class="form-footer">
+              <span>手动“备份行情”会执行一次上传；自动策略影响后续刷新和模拟任务。</span>
+              <button class="button primary" type="submit">保存设置</button>
+            </div>
+          </form>
+        </article>
+      </section>
+
+      <section class="panel">
+        ${panelHeader("云端快照", usage.scanned_at ? `${snapshots.length} 个行情快照出现在最近清点结果中` : "清点后显示当前安装的快照")}
+        <div class="table-wrap"><table class="data-table compact">
+          <thead><tr><th>快照 ID</th><th class="numeric">大小</th><th>更新时间</th></tr></thead>
+          <tbody>${snapshots.length ? snapshots.map((snapshot) => `<tr><td class="mono">${escapeHtml(snapshot.snapshot_id)}</td><td class="numeric">${formatStorageBytes(snapshot.size)}</td><td>${formatDate(snapshot.last_modified, true)}</td></tr>`).join("") : emptyRow(3, data.credentials_configured ? "尚无已清点的云端快照" : "配置 R2 后可保存行情快照")}</tbody>
+        </table></div>
+      </section>
+
+      <aside class="callout info"><strong>统计口径</strong><p>容量来自当前安装命名空间的 R2 对象清点。A/B 类操作只统计 AI Trade 在本机观测到的高层请求，不包含升级前记录、其他应用、其他设备及 SDK 内部重试。页面额度是你设置的预算，不是 Cloudflare 官方账单余额。</p></aside>
+    </div>`;
+}
+
+function storageUsageMeter(label, used, limit, remaining, percent, note) {
+  const actualPercent = Math.max(0, finite(percent) || 0);
+  const progressPercent = Math.min(100, actualPercent);
+  const operation = label.includes("操作");
+  const renderValue = (value) => operation ? formatInteger(value) : formatStorageBytes(value);
+  const overage = Math.max(0, (finite(used) || 0) - (finite(limit) || 0));
+  return `<div class="usage-row">
+    <div class="usage-row-head"><div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(note)}</span></div><span class="mono">${renderValue(used)} / ${renderValue(limit)}</span></div>
+    <progress max="100" value="${progressPercent}" aria-label="${escapeHtml(label)}已使用 ${actualPercent.toFixed(2)}%"></progress>
+    <div class="usage-row-foot"><span>已使用 ${actualPercent.toFixed(3)}%</span><strong>${overage > 0 ? `超出 ${renderValue(overage)}` : `剩余 ${renderValue(remaining)}`}</strong></div>
+  </div>`;
+}
+
+function numberField(name, label, value, unit, minimum, maximum, step) {
+  return `<label class="field"><span>${escapeHtml(label)}</span><div class="unit-input"><input name="${escapeHtml(name)}" type="number" value="${escapeHtml(value)}" min="${minimum}" max="${maximum}" step="${step}" required><span>${escapeHtml(unit)}</span></div></label>`;
+}
+
 function renderSystem(payload) {
   const data = payload.system || {};
   const diagnosis = data.diagnosis || {};
-  const actionButtons = state.actions.map((action) => actionButton(action, action === "refresh-data" ? "primary" : "secondary")).join("");
+  const actionButtons = state.actions.filter((action) => action !== "cloud-backup").map((action) => actionButton(action, action === "refresh-data" ? "primary" : "secondary")).join("");
   return `
     <div class="page-stack">
       ${pageIntro("本地系统", "所有任务仅在当前电脑运行，结果写入可检查的报告和账本", actionButtons)}
@@ -1150,7 +1266,19 @@ function formatBytes(value) {
   if (parsed === null) return "—";
   if (parsed < 1024) return `${parsed} B`;
   if (parsed < 1024 * 1024) return `${(parsed / 1024).toFixed(1)} KB`;
-  return `${(parsed / 1024 / 1024).toFixed(1)} MB`;
+  if (parsed < 1024 * 1024 * 1024) return `${(parsed / 1024 / 1024).toFixed(1)} MB`;
+  if (parsed < 1024 * 1024 * 1024 * 1024) return `${(parsed / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  return `${(parsed / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
+}
+
+function formatStorageBytes(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  if (parsed < 1000) return `${parsed} B`;
+  if (parsed < 1000 ** 2) return `${(parsed / 1000).toFixed(1)} KB`;
+  if (parsed < 1000 ** 3) return `${(parsed / 1000 ** 2).toFixed(1)} MB`;
+  if (parsed < 1000 ** 4) return `${(parsed / 1000 ** 3).toFixed(2)} GB`;
+  return `${(parsed / 1000 ** 4).toFixed(2)} TB`;
 }
 
 function jobsTable(jobs) {
@@ -1158,7 +1286,7 @@ function jobsTable(jobs) {
     <thead><tr><th>任务</th><th>状态</th><th>开始时间</th><th>耗时</th><th>操作</th></tr></thead>
     <tbody>${jobs.length ? jobs.map((job) => `<tr>
       <td>${escapeHtml(JOB_LABELS[job.action] || job.action)}</td>
-      <td>${jobStatusChip(job.status)}</td>
+      <td><div class="action-row">${jobStatusChip(job.status)}${cloudBackupStatusChip(job)}</div></td>
       <td>${formatDate(job.started_at || job.created_at, true)}</td>
       <td class="mono">${jobDuration(job)}</td>
       <td><div class="action-row"><button class="button secondary" type="button" data-job-view="${escapeHtml(job.id)}">查看</button>${["queued", "running"].includes(job.status) ? `<button class="button danger" type="button" data-job-cancel="${escapeHtml(job.id)}">取消</button>` : ""}</div></td>
@@ -1175,6 +1303,43 @@ function jobStatusChip(status) {
     cancelled: "neutral",
   }[status] || "neutral";
   return statusChip(STATUS_LABELS[status] || status || "—", kind);
+}
+
+function cloudBackupStatusChip(job) {
+  const backup = job?.cloud_backup;
+  if (!backup || !["succeeded", "failed", "cancelled"].includes(backup.status)) return "";
+  const label = backup.automatic ? "自动云备份" : "云备份";
+  const suffix = {
+    succeeded: "完成",
+    failed: "失败",
+    cancelled: "已取消",
+  }[backup.status];
+  const kind = backup.status === "succeeded" ? "success" : backup.status === "failed" ? "danger" : "warning";
+  return statusChip(`${label}${suffix}`, kind);
+}
+
+function cloudBackupWarningMarkup(event) {
+  const backup = event?.cloud_backup;
+  if (!backup || !["failed", "cancelled"].includes(backup.status)) return "";
+  const automatic = Boolean(backup.automatic);
+  const title = backup.status === "failed"
+    ? (automatic ? "自动云备份失败" : "云备份失败")
+    : (automatic ? "自动云备份已取消" : "云备份已取消");
+  const message = backup.status === "failed" && automatic
+    ? "本地任务结果仍有效。A/B 操作计数已在本机更新；请检查云端配置或稍后手动备份。"
+    : "本地行情仍有效，已经发生的 A/B 操作也会保留在本机计数中；云端可能没有形成完整快照。";
+  return `<aside class="callout warning" role="status"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(message)}</p></aside>`;
+}
+
+function syncCloudBackupWarning(jobs) {
+  const latest = jobs.find((job) => ["succeeded", "failed", "cancelled"].includes(job?.cloud_backup?.status));
+  if (!latest) return;
+  state.cloudBackupWarning = ["failed", "cancelled"].includes(latest.cloud_backup.status) ? latest : null;
+}
+
+function updateCloudBackupWarningUi() {
+  const region = document.getElementById("cloud-backup-warning-region");
+  if (region) region.innerHTML = cloudBackupWarningMarkup(state.cloudBackupWarning);
 }
 
 function jobDuration(job) {
@@ -1291,6 +1456,68 @@ function drawLineChart(canvas, points, series) {
   });
 }
 
+async function refreshStorageInventory(silent = false) {
+  const button = document.querySelector("[data-storage-refresh]");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在清点";
+  }
+  try {
+    const payload = await api("/api/storage/refresh", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+    });
+    state.data.set("storage", payload);
+    if (state.route === "storage") renderRoute(payload);
+    if (!silent) notify(payload.inventory_error ? "云端清点未完成" : "云端用量已更新", Boolean(payload.inventory_error));
+  } catch (error) {
+    notify(friendlyError(error.message), true);
+  } finally {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = "清点云端";
+    }
+  }
+}
+
+async function reloadStorageStatus(silent = false) {
+  try {
+    const payload = await api("/api/storage");
+    state.data.set("storage", payload);
+    if (state.route === "storage") renderRoute(payload);
+    if (!silent) notify("本地存储用量已更新");
+  } catch (error) {
+    if (!silent) notify(friendlyError(error.message), true);
+  }
+}
+
+async function saveStoragePreferences(form) {
+  const button = form.querySelector('button[type="submit"]');
+  const values = new FormData(form);
+  button.disabled = true;
+  button.textContent = "正在保存";
+  try {
+    const payload = await api("/api/storage/preferences", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify({
+        storage_mode: String(values.get("storage_mode") || "local"),
+        storage_limit_gb: Number(values.get("storage_limit_gb")),
+        class_a_limit: Number(values.get("class_a_limit")),
+        class_b_limit: Number(values.get("class_b_limit")),
+        billing_cycle_day: Number(values.get("billing_cycle_day")),
+      }),
+    });
+    state.data.set("storage", payload);
+    if (state.route === "storage") renderRoute(payload);
+    notify("存储设置已保存");
+  } catch (error) {
+    notify(friendlyError(error.message), true);
+    button.disabled = false;
+    button.textContent = "保存设置";
+  }
+}
+
 async function startJob(action) {
   try {
     const job = await api("/api/jobs", {
@@ -1328,7 +1555,8 @@ async function showJob(jobId) {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
     detail.innerHTML = `
       <section class="panel">
-        ${panelHeader(`${JOB_LABELS[job.action] || job.action} · ${STATUS_LABELS[job.status] || job.status}`, job.return_code === null ? "进程尚未结束" : `退出码 ${job.return_code}`)}
+        ${panelHeader(`${JOB_LABELS[job.action] || job.action} · ${STATUS_LABELS[job.status] || job.status}`, job.return_code === null ? "进程尚未结束" : `退出码 ${job.return_code}`, cloudBackupStatusChip(job))}
+        ${cloudBackupWarningMarkup(job)}
         <pre class="job-output">${escapeHtml(job.output || "任务尚无输出")}</pre>
       </section>`;
   } catch (error) {
@@ -1340,16 +1568,43 @@ async function pollJobs() {
   try {
     const payload = await api("/api/jobs");
     const jobs = payload.jobs || [];
+    let storageRefreshMode = "";
     for (const job of jobs) {
       const previous = state.jobStates.get(job.id);
       if (previous && ["queued", "running"].includes(previous) && ["succeeded", "failed", "cancelled"].includes(job.status)) {
-        notify(`${JOB_LABELS[job.action] || job.action}${job.status === "succeeded" ? "已完成" : job.status === "failed" ? "失败" : "已取消"}`, job.status === "failed");
+        const backupStatus = job.cloud_backup?.status;
+        const automaticBackupFailed = job.cloud_backup?.automatic && backupStatus === "failed";
+        notify(
+          automaticBackupFailed && job.status === "succeeded"
+            ? `${JOB_LABELS[job.action] || job.action}已完成；自动云备份失败，本地任务结果仍有效`
+            : `${JOB_LABELS[job.action] || job.action}${job.status === "succeeded" ? "已完成" : job.status === "failed" ? "失败" : "已取消"}`,
+          job.status === "failed" || automaticBackupFailed,
+        );
+        if (!storageRefreshMode && backupStatus === "succeeded") {
+          storageRefreshMode = "inventory";
+        } else if (!storageRefreshMode && ["failed", "cancelled"].includes(backupStatus)) {
+          storageRefreshMode = "local";
+        } else if (
+          !storageRefreshMode
+          && job.status === "cancelled"
+          && ["refresh-data", "paper-run"].includes(job.action)
+          && state.data.get("storage")?.effective_storage_mode === "hybrid"
+        ) {
+          storageRefreshMode = "local";
+        }
       }
       state.jobStates.set(job.id, job.status);
     }
     state.jobs = jobs;
+    syncCloudBackupWarning(jobs);
     updateJobsUi();
+    updateCloudBackupWarningUi();
     setConnection(true);
+    if (state.route === "storage" && storageRefreshMode === "inventory") {
+      await refreshStorageInventory(true);
+    } else if (state.route === "storage" && storageRefreshMode === "local") {
+      await reloadStorageStatus(true);
+    }
   } catch {
     setConnection(false);
   }
@@ -1358,6 +1613,7 @@ async function pollJobs() {
 function mergeJob(job) {
   state.jobs = [job, ...state.jobs.filter((item) => item.id !== job.id)];
   state.jobStates.set(job.id, job.status);
+  syncCloudBackupWarning(state.jobs);
 }
 
 function updateJobsUi() {
@@ -1417,6 +1673,11 @@ document.addEventListener("click", (event) => {
     loadRoute();
     return;
   }
+  const storageRefresh = event.target.closest("[data-storage-refresh]");
+  if (storageRefresh) {
+    refreshStorageInventory();
+    return;
+  }
   const view = event.target.closest("[data-job-view]");
   if (view) {
     showJob(view.dataset.jobView);
@@ -1436,11 +1697,15 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.id !== "universe-date-form") return;
-  event.preventDefault();
-  const form = new FormData(event.target);
-  state.universeDate = String(form.get("date") || "");
-  loadRoute();
+  if (event.target.id === "universe-date-form") {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    state.universeDate = String(form.get("date") || "");
+    loadRoute();
+  } else if (event.target.id === "storage-preferences-form") {
+    event.preventDefault();
+    saveStoragePreferences(event.target);
+  }
 });
 
 document.getElementById("refresh-view").addEventListener("click", loadRoute);

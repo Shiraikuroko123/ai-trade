@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 import zipfile
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -17,6 +18,17 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .config import AppConfig
+from .cloud_usage import (
+    CloudPreferencesError,
+    CloudUsageStore,
+    cloud_preferences_path,
+    cloud_state_lock,
+    cloud_usage_path,
+    directory_usage,
+    load_cloud_preferences,
+    update_cloud_preferences,
+    usage_summary,
+)
 from .data.eastmoney import load_cached_bars
 from .data.market import MarketData
 
@@ -53,6 +65,10 @@ class CloudSettings:
     @property
     def configured(self) -> bool:
         return self.enabled and not self.missing_configuration
+
+    @property
+    def credentials_configured(self) -> bool:
+        return not self.missing_configuration
 
     @property
     def missing_configuration(self) -> tuple[str, ...]:
@@ -96,7 +112,10 @@ class SnapshotArtifact:
 
 def load_cloud_settings() -> CloudSettings:
     enabled = _environment_flag("AI_TRADE_CLOUD_ENABLED", False)
-    prefix = os.environ.get("AI_TRADE_CLOUD_PREFIX", "ai-trade").strip().strip("/")
+    prefix = (
+        os.environ.get("AI_TRADE_CLOUD_PREFIX", "ai-trade").strip().strip("/")
+        or "ai-trade"
+    )
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,79}", prefix):
         raise CloudConfigurationError("AI_TRADE_CLOUD_PREFIX is invalid")
     if ".." in PurePosixPath(prefix).parts:
@@ -145,14 +164,175 @@ def cloud_dependency_available() -> bool:
     return True
 
 
+def cloud_dashboard_status(
+    config: AppConfig, *, refresh: bool = False
+) -> dict[str, object]:
+    configuration_error: str | None = None
+    try:
+        settings = load_cloud_settings()
+    except Exception as exc:
+        settings = None
+        configuration_error = safe_cloud_error(exc)
+
+    configured = bool(settings and settings.configured)
+    credentials_configured = bool(settings and settings.credentials_configured)
+    dependency_available = cloud_dependency_available()
+    operational = configured and dependency_available
+    profile_id = _cloud_profile_id(settings)
+    preferences = load_cloud_preferences(
+        cloud_preferences_path(config.project_root, profile_id),
+        cloud_configured=operational,
+    )
+    usage_store = CloudUsageStore(cloud_usage_path(config.project_root, profile_id))
+    inventory_error: str | None = None
+    if refresh:
+        if not configured:
+            inventory_error = "Cloud backup is not configured for this Windows user"
+        elif not dependency_available:
+            inventory_error = "Cloud support is not installed"
+        else:
+            try:
+                R2ObjectStore(settings, usage_store=usage_store).refresh_inventory()
+            except Exception as exc:
+                inventory_error = safe_cloud_error(exc)
+    summary = usage_summary(preferences, usage_store)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "enabled": bool(settings and settings.enabled),
+        "credentials_configured": credentials_configured,
+        "configured": configured,
+        "operational": operational,
+        "provider": "Cloudflare R2" if configured else None,
+        "dependency_available": dependency_available,
+        "configuration_error": configuration_error,
+        "missing_configuration": list(settings.missing_configuration)
+        if settings is not None
+        else [],
+        "preferences": preferences.public_status(),
+        "effective_storage_mode": "hybrid"
+        if operational and preferences.automatic_cloud_backup
+        else "local",
+        "local": directory_usage(config.cache_dir),
+        "usage": summary,
+        "inventory_error": inventory_error,
+        "official_account_usage": False,
+        "usage_notice": (
+            "Storage is an R2 inventory of this installation namespace. "
+            "Class A/B counts are high-level requests observed by AI Trade since "
+            "tracking began; they exclude other clients, pre-upgrade activity, and "
+            "SDK-internal retries. Limits are user-configured budgets, not a "
+            "Cloudflare billing balance."
+        ),
+    }
+
+
+def save_cloud_dashboard_preferences(
+    config: AppConfig, payload: dict[str, object]
+) -> dict[str, object]:
+    settings = load_cloud_settings()
+    operational = settings.configured and cloud_dependency_available()
+    profile_id = _cloud_profile_id(settings)
+    update_cloud_preferences(
+        cloud_preferences_path(config.project_root, profile_id),
+        payload,
+        cloud_configured=operational,
+    )
+    return cloud_dashboard_status(config)
+
+
+def automatic_cloud_backup_enabled(config: AppConfig) -> bool:
+    settings = load_cloud_settings()
+    if not settings.configured or not cloud_dependency_available():
+        return False
+    profile_id = _cloud_profile_id(settings)
+    preferences = load_cloud_preferences(
+        cloud_preferences_path(config.project_root, profile_id), cloud_configured=True
+    )
+    return preferences.automatic_cloud_backup
+
+
+def tracked_r2_store(config: AppConfig, settings: CloudSettings) -> "R2ObjectStore":
+    profile_id = _cloud_profile_id(settings)
+    return R2ObjectStore(
+        settings,
+        usage_store=CloudUsageStore(
+            cloud_usage_path(config.project_root, profile_id)
+        ),
+    )
+
+
+def _cloud_profile_id(settings: CloudSettings | None) -> str:
+    if settings is None or not settings.credentials_configured:
+        return "local"
+    coordinates = "\0".join(
+        (
+            settings.endpoint.lower(),
+            settings.region.lower(),
+            settings.bucket,
+            settings.prefix,
+            settings.installation_id,
+        )
+    )
+    return hashlib.sha256(coordinates.encode("utf-8")).hexdigest()[:32]
+
+
+def safe_cloud_error(exc: Exception) -> str:
+    if isinstance(
+        exc,
+        (
+            CloudConfigurationError,
+            CloudIntegrityError,
+            CloudPreferencesError,
+            FileExistsError,
+            FileNotFoundError,
+            ValueError,
+        ),
+    ):
+        return _redact_cloud_error(str(exc))
+    code = type(exc).__name__
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error", {})
+        if isinstance(error, dict) and re.fullmatch(
+            r"[A-Za-z0-9_.-]{1,80}", str(error.get("Code", ""))
+        ):
+            code = str(error["Code"])
+    return _redact_cloud_error(
+        f"Cloud provider request failed ({code}); credentials and endpoint were redacted"
+    )
+
+
+def _redact_cloud_error(message: str) -> str:
+    redacted = re.sub(r"(?i)https://[^\s'\"<>]+", "<redacted endpoint>", message)
+    for name, label in (
+        ("AI_TRADE_R2_BUCKET", "bucket"),
+        ("AI_TRADE_R2_ACCESS_KEY_ID", "access key"),
+        ("AI_TRADE_R2_SECRET_ACCESS_KEY", "secret key"),
+    ):
+        value = os.environ.get(name, "")
+        if value:
+            redacted = redacted.replace(value, f"<redacted {label}>")
+    return re.sub(
+        r"(?i)\b(object[ _-]?key|key)\s*[:=]\s*(?:'[^']*'|\"[^\"]*\"|[^\s,;]+)",
+        r"\1=<redacted key>",
+        redacted,
+    )
+
+
 class R2ObjectStore:
-    def __init__(self, settings: CloudSettings, client: Any | None = None):
+    def __init__(
+        self,
+        settings: CloudSettings,
+        client: Any | None = None,
+        usage_store: CloudUsageStore | None = None,
+    ):
         if not settings.configured:
             raise CloudConfigurationError(
                 "Cloud backup is not configured for this user"
             )
         self.settings = settings
         self._client_value = client
+        self.usage_store = usage_store
 
     def client(self) -> Any:
         if self._client_value is None:
@@ -178,14 +358,36 @@ class R2ObjectStore:
             )
         return self._client_value
 
+    def _request(self, operation_class: str, method: str, **request: object) -> Any:
+        client = self.client()
+        if self.usage_store is not None:
+            # Count the high-level request before dispatch so provider-side failures
+            # are not silently presented as free operations.
+            self.usage_store.record(operation_class)
+        return getattr(client, method)(**request)
+
+    def _operation_lock(self):
+        if self.usage_store is None:
+            return nullcontext()
+        return cloud_state_lock(self.usage_store.path.parent)
+
     def check_connection(self) -> None:
-        self.client().list_objects_v2(
-            Bucket=self.settings.bucket,
-            Prefix=f"{self.settings.namespace}/",
-            MaxKeys=1,
-        )
+        with self._operation_lock():
+            self._request(
+                "class_a",
+                "list_objects_v2",
+                Bucket=self.settings.bucket,
+                Prefix=f"{self.settings.namespace}/",
+                MaxKeys=1,
+            )
 
     def upload_snapshot(self, artifact: SnapshotArtifact) -> dict[str, object]:
+        with self._operation_lock():
+            return self._upload_snapshot_locked(artifact)
+
+    def _upload_snapshot_locked(
+        self, artifact: SnapshotArtifact
+    ) -> dict[str, object]:
         previous = self._latest_pointer()
         if previous and previous.get("dataset_sha256") == artifact.dataset_sha256:
             duplicate = self._verified_duplicate(previous, artifact)
@@ -199,14 +401,18 @@ class R2ObjectStore:
             "dataset": DATASET,
         }
         with artifact.path.open("rb") as handle:
-            self.client().put_object(
+            self._request(
+                "class_a",
+                "put_object",
                 Bucket=self.settings.bucket,
                 Key=key,
                 Body=handle,
                 ContentType="application/zip",
                 Metadata=metadata,
             )
-        head = self.client().head_object(Bucket=self.settings.bucket, Key=key)
+        head = self._request(
+            "class_b", "head_object", Bucket=self.settings.bucket, Key=key
+        )
         if int(head.get("ContentLength", -1)) != artifact.size:
             raise CloudIntegrityError(
                 "R2 snapshot size does not match the uploaded archive"
@@ -231,7 +437,9 @@ class R2ObjectStore:
             ],
             "skipped_duplicate": False,
         }
-        self.client().put_object(
+        self._request(
+            "class_a",
+            "put_object",
             Bucket=self.settings.bucket,
             Key=f"{self.settings.namespace}/indexes/{DATASET}/latest.json",
             Body=json.dumps(pointer, sort_keys=True, separators=(",", ":")).encode(
@@ -263,8 +471,11 @@ class R2ObjectStore:
         ):
             return None
         try:
-            head = self.client().head_object(
-                Bucket=self.settings.bucket, Key=object_key
+            head = self._request(
+                "class_b",
+                "head_object",
+                Bucket=self.settings.bucket,
+                Key=object_key,
             )
         except KeyError:
             return None
@@ -284,11 +495,15 @@ class R2ObjectStore:
     def _latest_pointer(self) -> dict[str, object] | None:
         key = f"{self.settings.namespace}/indexes/{DATASET}/latest.json"
         try:
-            head = self.client().head_object(Bucket=self.settings.bucket, Key=key)
+            head = self._request(
+                "class_b", "head_object", Bucket=self.settings.bucket, Key=key
+            )
             size = int(head.get("ContentLength", -1))
             if size < 1 or size > 64 * 1024:
                 raise CloudIntegrityError("Cloud latest pointer has an invalid size")
-            response = self.client().get_object(Bucket=self.settings.bucket, Key=key)
+            response = self._request(
+                "class_b", "get_object", Bucket=self.settings.bucket, Key=key
+            )
         except KeyError:
             return None
         except Exception as exc:
@@ -313,11 +528,16 @@ class R2ObjectStore:
         return value
 
     def list_snapshots(self, limit: int = 20) -> list[dict[str, object]]:
+        with self._operation_lock():
+            return self._list_snapshots_locked(limit)
+
+    def _list_snapshots_locked(self, limit: int) -> list[dict[str, object]]:
         if limit < 1 or limit > 1_000:
             raise ValueError("Cloud snapshot limit must be between 1 and 1000")
         prefix = f"{self.settings.namespace}/snapshots/{DATASET}/"
         objects: list[dict[str, object]] = []
         token: str | None = None
+        seen_tokens: set[str] = set()
         while True:
             request: dict[str, object] = {
                 "Bucket": self.settings.bucket,
@@ -326,7 +546,7 @@ class R2ObjectStore:
             }
             if token:
                 request["ContinuationToken"] = token
-            response = self.client().list_objects_v2(**request)
+            response = self._request("class_a", "list_objects_v2", **request)
             for item in response.get("Contents", []):
                 key = str(item.get("Key", ""))
                 name = PurePosixPath(key).name
@@ -346,15 +566,80 @@ class R2ObjectStore:
                         "object_key": key,
                     }
                 )
-            if not response.get("IsTruncated"):
-                break
-            token = str(response.get("NextContinuationToken", "")) or None
+            token = _next_continuation_token(
+                response, seen_tokens, "Cloud snapshot listing"
+            )
             if token is None:
                 break
         objects.sort(key=lambda item: str(item["snapshot_id"]), reverse=True)
         return objects[:limit]
 
+    def refresh_inventory(self) -> dict[str, object]:
+        if self.usage_store is None:
+            raise CloudConfigurationError(
+                "Cloud inventory requires a local usage store"
+            )
+        with self._operation_lock():
+            prefix = f"{self.settings.namespace}/"
+            snapshot_prefix = f"{self.settings.namespace}/snapshots/{DATASET}/"
+            token: str | None = None
+            seen_tokens: set[str] = set()
+            object_count = 0
+            storage_bytes = 0
+            snapshots: list[dict[str, object]] = []
+            while True:
+                request: dict[str, object] = {
+                    "Bucket": self.settings.bucket,
+                    "Prefix": prefix,
+                    "MaxKeys": 1_000,
+                }
+                if token:
+                    request["ContinuationToken"] = token
+                response = self._request("class_a", "list_objects_v2", **request)
+                for item in response.get("Contents", []):
+                    key = str(item.get("Key", ""))
+                    size = int(item.get("Size", 0) or 0)
+                    object_count += 1
+                    storage_bytes += max(0, size)
+                    if not key.startswith(snapshot_prefix):
+                        continue
+                    name = PurePosixPath(key).name
+                    snapshot_id = name.removesuffix(".zip")
+                    if not name.endswith(".zip") or not SNAPSHOT_ID_PATTERN.fullmatch(
+                        snapshot_id
+                    ):
+                        continue
+                    modified = item.get("LastModified")
+                    snapshots.append(
+                        {
+                            "snapshot_id": snapshot_id,
+                            "size": max(0, size),
+                            "last_modified": modified.isoformat()
+                            if hasattr(modified, "isoformat")
+                            else None,
+                        }
+                    )
+                token = _next_continuation_token(
+                    response, seen_tokens, "Cloud inventory"
+                )
+                if token is None:
+                    break
+            snapshots.sort(
+                key=lambda item: str(item["snapshot_id"]), reverse=True
+            )
+            return self.usage_store.save_inventory(
+                object_count=object_count,
+                storage_bytes=storage_bytes,
+                snapshots=snapshots[:1_000],
+            )
+
     def restore_snapshot(
+        self, config: AppConfig, snapshot_id: str, destination: Path
+    ) -> Path:
+        with self._operation_lock():
+            return self._restore_snapshot_locked(config, snapshot_id, destination)
+
+    def _restore_snapshot_locked(
         self, config: AppConfig, snapshot_id: str, destination: Path
     ) -> Path:
         if not SNAPSHOT_ID_PATTERN.fullmatch(snapshot_id):
@@ -377,7 +662,9 @@ class R2ObjectStore:
             raise
 
     def _download_verified(self, key: str, destination: Path) -> None:
-        head = self.client().head_object(Bucket=self.settings.bucket, Key=key)
+        head = self._request(
+            "class_b", "head_object", Bucket=self.settings.bucket, Key=key
+        )
         size = int(head.get("ContentLength", -1))
         if size < 1 or size > MAX_ARCHIVE_BYTES:
             raise CloudIntegrityError(
@@ -386,7 +673,9 @@ class R2ObjectStore:
         expected = _metadata(head).get("sha256")
         if not expected or not re.fullmatch(r"[0-9a-f]{64}", expected):
             raise CloudIntegrityError("Cloud snapshot has no valid SHA-256 metadata")
-        response = self.client().get_object(Bucket=self.settings.bucket, Key=key)
+        response = self._request(
+            "class_b", "get_object", Bucket=self.settings.bucket, Key=key
+        )
         body = response["Body"]
         digest = hashlib.sha256()
         total = 0
@@ -1171,7 +1460,7 @@ def _validate_r2_endpoint(endpoint: str) -> None:
 
 def _environment_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
-    if raw is None:
+    if raw is None or not raw.strip():
         return default
     normalized = raw.strip().lower()
     if normalized in {"1", "true", "yes", "on"}:
@@ -1179,6 +1468,24 @@ def _environment_flag(name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise CloudConfigurationError(f"{name} must be true or false")
+
+
+def _next_continuation_token(
+    response: dict[str, Any], seen_tokens: set[str], operation: str
+) -> str | None:
+    if not response.get("IsTruncated"):
+        return None
+    token = response.get("NextContinuationToken")
+    if not isinstance(token, str) or not token or len(token) > 8_192:
+        raise CloudIntegrityError(
+            f"{operation} pagination did not provide a valid continuation token"
+        )
+    if token in seen_tokens:
+        raise CloudIntegrityError(
+            f"{operation} pagination repeated a continuation token"
+        )
+    seen_tokens.add(token)
+    return token
 
 
 def _metadata(response: dict[str, Any]) -> dict[str, str]:

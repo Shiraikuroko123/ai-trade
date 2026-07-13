@@ -10,8 +10,6 @@ $ErrorActionPreference = "Stop"
 
 $names = @(
     "AI_TRADE_CLOUD_ENABLED",
-    "AI_TRADE_CLOUD_PREFIX",
-    "AI_TRADE_CLOUD_INSTALLATION_ID",
     "AI_TRADE_R2_ENDPOINT",
     "AI_TRADE_R2_REGION",
     "AI_TRADE_R2_BUCKET",
@@ -25,6 +23,7 @@ if ($Disable) {
         [Environment]::SetEnvironmentVariable($name, $null, "Process")
     }
     Write-Host "AI Trade cloud backup is disabled for the current Windows user."
+    Write-Host "The non-secret installation ID and prefix were retained for later reconnection."
     exit 0
 }
 

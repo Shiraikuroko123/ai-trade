@@ -1,6 +1,6 @@
 # Cloudflare R2 行情快照
 
-AI Trade 可以把已校验的本地行情缓存保存为 Cloudflare R2 对象快照。该功能是可选备份，不是网络盘、实时数据源、跨电脑账户同步或实盘交易服务。普通安装保持关闭且不包含任何项目作者的账号、存储桶或令牌；每位用户必须配置自己的私有 R2。
+AI Trade 可以把已校验的本地行情缓存保存为 Cloudflare R2 对象快照。该功能是可选备份，不是网络盘、实时数据源、跨电脑账户同步或实盘交易服务。仓库不包含项目作者的账号、存储桶或令牌；从 GitHub 克隆项目的普通用户可以配置自己的私有 R2，并在自己的工作台查看相同的存储页和本机统计。
 
 ## 数据边界
 
@@ -68,6 +68,37 @@ wheel 用户把上述命令替换为 `ai-trade cloud-status` 和 `ai-trade cloud
 
 状态和备份输出只显示公共状态、摘要和快照 ID，不回显 endpoint、bucket、对象 key、Access Key 或 Secret Key。未配置用户执行备份时会失败关闭，不会使用他人的账号。
 
+连接参数只存在于启动 AI Trade 的当前 Windows 用户环境中。浏览器不会接收 R2 endpoint、bucket、installation ID、命名空间、对象 key、Access Key 或 Secret Key；这些值也不会进入报告、快照 manifest 或 Git 仓库。不要把环境变量转存到 `.env`、教程、截图或问题报告中。朋友在自己的电脑部署时，必须使用他自己的 R2 配置；内测登录账号不会携带或共享云存储权限。
+
+## 存储策略与工作台
+
+启动工作台后进入“存储”页，可以选择两种自动保存策略：
+
+- **仅本地（`local`）**：活动行情、回测和模拟盘继续使用本地文件，不自动上传 R2。已经配置 R2 时，仍可显式点击“备份行情”创建一次快照。
+- **本地 + R2（`hybrid`）**：本地文件仍是唯一活动工作区；后续成功的行情下载、带刷新的信号流程和模拟盘流程会尝试追加 R2 快照。上传失败只记录告警，不会把已经有效的本地任务改判为失败。
+
+系统不提供“纯云端活动缓存”模式。回测和模拟盘需要一致、可锁定、可校验的本地缓存，恢复快照也必须先进入独立暂存目录。没有完整 R2 配置时不能选择 `hybrid`，并会安全回落到本地运行。
+
+“存储”页提供以下操作：
+
+- **清点云端**：分页列出当前安装命名空间，更新全部对象的容量与对象数，并保留最近按 ID 排序的最多 1,000 条安全快照摘要；这是一次真实 R2 列表操作。
+- **备份行情**：启动一次后台 `cloud-backup` 任务，只上传通过校验的行情快照。
+- **保存设置**：保存存储策略、容量预算、A/B 类操作预算和用户预算周期起始日；这些非敏感设置保存在 Git 忽略的 `state/cloud_profiles/<profile-id>/preferences.json`。
+
+清点结果和本机操作账本保存在同一配置目录下的 `usage.sqlite3`，因此重启工作台后仍可查看。`<profile-id>` 是由 endpoint、region、bucket、prefix 和 installation ID 生成的不可逆本地指纹；它不会返回浏览器，也不包含访问密钥。更换 R2 账号、bucket 或 installation ID 会切换到独立目录，旧配置的容量、快照和 A/B 计数不会混入新视图。页面首次打开只读取当前配置最近一次本地清点缓存，不会在每次浏览时静默访问 R2；需要最新容量和快照列表时点击“清点云端”。恢复仍使用命令行，以保留明确的暂存目录和人工复核步骤。
+
+## 用量与预算口径
+
+工作台显示的数值用于本机管理，不是 Cloudflare 官方账单或全账户用量：
+
+- **R2 容量**：最近一次“清点云端”时，当前 `installation ID` 命名空间内对象大小的合计。它不包含同一 bucket 的其他前缀、其他 AI Trade 安装或其他应用，也不是 Cloudflare 可能采用的计费平均值。
+- **A 类操作**：AI Trade 在本机观测到的 `put_object` 和 `list_objects_v2` 高层请求；上传和云端清点通常会增加该计数。
+- **B 类操作**：AI Trade 在本机观测到的 `head_object` 和 `get_object` 高层请求；上传后的对象校验、重复快照检查、最新指针读取和恢复可能增加该计数。
+
+A/B 账本从 `v0.9.0` 在当前工作区首次使用后开始，无法补记升级前操作。它不包含 Cloudflare 控制台、其他应用、其他设备、其他 AI Trade 工作区或 SDK 内部重试发出的请求。因此页面明确标记为“本机观测”，不能用它替代 Cloudflare Analytics 或账单。
+
+容量预算、A/B 操作预算及“剩余”均由用户自行填写。初始值为 10 GB、A 类 1,000,000 次、B 类 10,000,000 次；这些只是可编辑的本地管理默认值，不证明账户享有相应免费额度，也不会阻止请求、删除对象或改变 Cloudflare 计费。用户预算周期起始日可设为每月 1 至 28 日，按 UTC 日期划分本机 A/B 统计区间；它不代表 Cloudflare 官方计费周期。预算不足时页面的剩余值最低显示为 0，实际超出量仍会保留在本机账本中。
+
 ## 备份、查看与恢复
 
 先确保本地行情缓存通过正常下载和校验，再上传快照：
@@ -81,9 +112,9 @@ wheel 用户把上述命令替换为 `ai-trade cloud-status` 和 `ai-trade cloud
 
 wheel 用户使用对应的 `ai-trade download --force`、`ai-trade doctor`、`ai-trade cloud-backup` 和 `ai-trade cloud-list --limit 20` 命令。
 
-刷新使用腾讯网络回退或合格的本地回退缓存时，云快照会保留逐标的来源、实际共同交易日和原始错误，不会把上传时间或请求上界伪装成行情日期。
+刷新使用腾讯网络回退或合格的本地回退缓存时，云快照会保留逐标的来源、实际共同交易日和脱敏后的结构化错误类型，不会把上传时间或请求上界伪装成行情日期。
 
-通过 `scripts/install_paper_task.ps1` 安装的每日模拟盘任务会在当前 Windows 用户明确启用云配置后追加一次行情快照。R2 失败只写入 `logs/scheduled_paper.log`，不会推翻已经成功落盘的行情、模拟盘或审计结果。
+通过 `scripts/install_paper_task.ps1` 安装的每日模拟盘任务会加载当前 Windows 用户环境；只有完整配置 R2 并选择 `hybrid` 后，成功的模拟盘刷新流程才会尝试追加一次行情快照。R2 失败只写入 `logs/scheduled_paper.log`，不会推翻已经成功落盘的行情、模拟盘或审计结果。
 
 从 `cloud-list` 取得快照 ID 后，可下载到默认暂存区：
 
@@ -107,4 +138,4 @@ wheel 用户使用对应的 `ai-trade download --force`、`ai-trade doctor`、`a
 powershell -ExecutionPolicy Bypass -File .\scripts\configure_cloud.ps1 -Disable
 ```
 
-禁用只移除本机环境设置，不删除 R2 中已有快照。云端保留期限和删除策略由 bucket 所有者在 Cloudflare 中单独管理。
+禁用会清除当前 Windows 用户的云开关、endpoint、bucket 和访问凭据，但保留非敏感的 installation ID 与 prefix。以后重新配置同一 R2 账号和 bucket 时会重新连接原命名空间；它不会删除 R2 中已有快照。云端保留期限和删除策略由 bucket 所有者在 Cloudflare 中单独管理。若要有意创建全新的独立命名空间，应先自行保存旧 installation ID，再显式清除 `AI_TRADE_CLOUD_INSTALLATION_ID` 后重新配置；丢失旧 ID 会使旧快照无法通过普通列表命令定位。

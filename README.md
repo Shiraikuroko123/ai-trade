@@ -7,7 +7,7 @@
 
 [架构](docs/ARCHITECTURE.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.8.0` 增加了腾讯网络回退、可恢复的整套缓存事务和每位用户独立配置的 Cloudflare R2 行情快照；浏览器研究工作台、内测登录、券商插件契约、订单账本与多重实盘门禁继续保留，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.9.0` 增加了可选择的“仅本地 / 本地 + R2”存储策略、云端快照清点，以及容量和 A/B 类操作的本机预算视图；腾讯网络回退、可恢复的整套缓存事务、浏览器研究工作台、内测登录、券商插件契约、订单账本与多重实盘门禁继续保留，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
 系统已经贯通以下流程：
 
@@ -19,6 +19,7 @@
 6. 维护支持断档逐日追赶、风险冷却和幂等执行的本地模拟账户。
 7. 生成 HTML、CSV、JSON 和 Markdown 审计报告。
 8. 通过只绑定回环地址的本地浏览器工作台复盘信号、组合、交易、风险、数据和任务。
+9. 在同一工作台管理本地 / 混合存储策略、云端清点、快照备份和本机预算。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -80,7 +81,7 @@ ai-trade doctor
 
 ## 可选 Cloudflare R2 行情快照
 
-云端备份默认关闭且没有内置公共账号。每位用户需要安装可选依赖，并在自己的电脑上运行交互式配置脚本；脚本把设置写入当前 Windows 用户的环境变量，不会创建可提交的凭据文件：
+项目没有内置公共云账号，未配置时工作台使用“仅本地”。GitHub 上的普通用户克隆项目后，可以安装可选依赖，并在自己的电脑上配置自己的 Cloudflare R2；脚本只把连接参数写入当前 Windows 用户的环境变量，不会创建可提交的凭据文件：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e '.[cloud]'
@@ -89,7 +90,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_cloud.ps1
 .\.venv\Scripts\python.exe -m ai_trade.cli cloud-status --check
 ```
 
-`cloud-backup` 只打包当前已校验的 `data/cache` CSV 与 `manifest.json`。`reports/`、`state/`、`logs/`、内测账号、券商凭据和任何实盘授权都不会上传。`cloud-restore` 只解压到新的 `local/cloud-restore/<snapshot-id>/` 暂存目录，不会覆盖活动缓存。命令、权限建议、轮换和恢复检查见 [云端行情快照](docs/CLOUD_STORAGE.md)。
+重启工作台后进入“存储”页，可以选择“仅本地”或“本地 + R2”、清点当前安装命名空间、手动备份行情，并设置容量、A 类操作、B 类操作和用户预算周期起始日。活动行情始终保留在本地：“仅本地”不做自动云备份；“本地 + R2”会在后续成功的行情刷新和模拟任务后尝试追加可校验快照，云端失败不会推翻有效的本地结果。已经配置 R2 的用户仍可在“仅本地”模式下手动点击“备份行情”。
+
+存储页不是 Cloudflare 账单页。容量来自当前安装命名空间最近一次 R2 对象清点；A/B 类操作只统计 AI Trade 从本版本开始在本机观测到的高层请求，不包含其他应用、其他电脑、升级前请求或 SDK 内部重试。页面中的额度、周期和“剩余”是用户自行设置的本地预算，不是 Cloudflare 官方账户余额、免费额度证明或强制限流。初始预算为 10 GB、A 类 1,000,000 次、B 类 10,000,000 次、每月 1 日起算，用户应按自己的 Cloudflare 套餐和管理目标修改。
+
+`cloud-backup` 只打包当前已校验的 `data/cache` CSV 与 `manifest.json`。`reports/`、`state/`、`logs/`、内测账号、券商凭据和任何实盘授权都不会上传。R2 endpoint、bucket、安装命名空间、对象 key 和访问密钥不会返回网页或写入报告；非敏感偏好和本机观测账本位于 Git 忽略的 `state/`。`cloud-restore` 只解压到新的 `local/cloud-restore/<snapshot-id>/` 暂存目录，不会覆盖活动缓存。完整口径、命令、权限建议、轮换和恢复检查见 [云端行情快照](docs/CLOUD_STORAGE.md)。
 
 ## 工程结构
 
@@ -208,7 +213,7 @@ Get-ScheduledTask -TaskName 'AI-Trade Paper Daily'
 Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 ```
 
-计划任务脚本会传递 Python 的非零退出码；数据、状态或网络异常不会被伪装成成功。当前 Windows 用户启用 R2 后，成功的模拟盘和审计会追加一次行情快照；云端失败只记告警，不会把有效的本地交易结果改成失败。
+计划任务脚本会传递 Python 的非零退出码；数据、状态或网络异常不会被伪装成成功。当前 Windows 用户配置 R2 并选择“本地 + R2”后，成功的模拟盘刷新流程会尝试追加一次行情快照；云端失败只记告警，不会把有效的本地交易结果改成失败。
 
 ## 已知研究边界
 

@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import tempfile
 import threading
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from ai_trade import __version__
 from ai_trade.cli import main
 from ai_trade.config import load_config
 from ai_trade.models import Bar, Instrument
@@ -75,7 +77,7 @@ class WebTests(unittest.TestCase):
             thread.start()
             try:
                 status, _, body = _request(server.server_port, "GET", "/api/system")
-                self.assertEqual(status, 200)
+                self.assertEqual(status, 200, body)
                 payload = json.loads(body)
                 self.assertEqual(payload["diagnosis"]["status"], "ERROR")
                 self.assertEqual(
@@ -135,10 +137,17 @@ class WebTests(unittest.TestCase):
             self.assertIs(manager.submit("backtest"), first)
             paper_init = manager.submit("paper-init")
             self.assertEqual(COMMANDS[paper_init.action], ("paper-init",))
+            cloud_backup = manager.submit("cloud-backup")
+            self.assertEqual(COMMANDS[cloud_backup.action], ("cloud-backup",))
             with self.assertRaisesRegex(ValueError, "Unsupported"):
                 manager.submit("delete-everything")
             cancelled = manager.cancel(first.id)
             self.assertEqual(cancelled.status, "cancelled")
+            cancelled_cloud = manager.cancel(cloud_backup.id)
+            self.assertEqual(
+                cancelled_cloud.payload()["cloud_backup"],
+                {"status": "cancelled", "automatic": False},
+            )
             manager.close()
 
     def test_job_manager_close_cancels_queue_and_rejects_new_work(self):
@@ -165,7 +174,7 @@ class WebTests(unittest.TestCase):
 
         with patch("ai_trade.web.jobs.subprocess.Popen", side_effect=start_process):
             manager = JobManager(config)
-            job = manager.submit("backtest")
+            job = manager.submit("cloud-backup")
             self.assertTrue(popen_entered.wait(timeout=2))
             manager.cancel(job.id)
             release_popen.set()
@@ -174,7 +183,53 @@ class WebTests(unittest.TestCase):
                 time.sleep(0.01)
             self.assertTrue(process.terminated)
             self.assertEqual(job.status, "cancelled")
+            self.assertEqual(
+                job.payload()["cloud_backup"],
+                {"status": "cancelled", "automatic": False},
+            )
             manager.close()
+
+    def test_job_manager_handles_cloud_backup_protocol_and_explicit_failure(self):
+        config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())
+        marker = (
+            '@@AI_TRADE_CLOUD_BACKUP@@{"schema_version":1,"status":"failed"}\n'
+        )
+        processes = [
+            _FakeProcess(output=f"local task completed\n{marker}", return_code=0),
+            _FakeProcess(output="cloud command failed\n", return_code=7),
+        ]
+        environments = []
+
+        def start_process(*args, **kwargs):
+            environments.append(kwargs["env"])
+            return processes.pop(0)
+
+        with patch("ai_trade.web.jobs.subprocess.Popen", side_effect=start_process):
+            manager = JobManager(config)
+            try:
+                parent = manager.submit("refresh-data")
+                _wait_for_job(parent)
+                self.assertEqual(parent.status, "succeeded", parent.output)
+                self.assertEqual(
+                    parent.payload()["cloud_backup"],
+                    {"status": "failed", "automatic": True},
+                )
+                self.assertEqual(parent.output, "local task completed\n")
+                self.assertNotIn("@@AI_TRADE_CLOUD_BACKUP@@", parent.output)
+
+                explicit = manager.submit("cloud-backup")
+                _wait_for_job(explicit)
+                self.assertEqual(explicit.status, "failed")
+                self.assertEqual(
+                    explicit.payload()["cloud_backup"],
+                    {"status": "failed", "automatic": False},
+                )
+                self.assertEqual(
+                    [value["AI_TRADE_WEB_JOB_PROTOCOL"] for value in environments],
+                    ["1", "1"],
+                )
+            finally:
+                manager.close()
 
     def test_close_stops_active_startup_and_never_runs_queued_job(self):
         config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())
@@ -265,6 +320,7 @@ class WebTests(unittest.TestCase):
             self.assertEqual(status, 200)
             payload = json.loads(body)
             self.assertEqual(payload["token"], token)
+            self.assertEqual(payload["version"], __version__)
             self.assertIn("backtest", payload["actions"])
 
             status, _, _ = _request(
@@ -304,6 +360,100 @@ class WebTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
+    def test_storage_api_is_safe_for_unconfigured_users_and_protects_writes(self):
+        source = load_config(
+            Path(__file__).resolve().parents[1] / "config/default.json"
+        )
+        cloud_names = {
+            "AI_TRADE_CLOUD_ENABLED": "",
+            "AI_TRADE_CLOUD_PREFIX": "",
+            "AI_TRADE_CLOUD_INSTALLATION_ID": "",
+            "AI_TRADE_R2_ENDPOINT": "",
+            "AI_TRADE_R2_REGION": "",
+            "AI_TRADE_R2_BUCKET": "",
+            "AI_TRADE_R2_ACCESS_KEY_ID": "",
+            "AI_TRADE_R2_SECRET_ACCESS_KEY": "",
+        }
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, cloud_names, clear=False
+        ):
+            config = replace(source, project_root=Path(temporary))
+            server, token = create_dashboard_server(config, port=0, auth_enabled=False)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.server_port
+            origin = f"http://127.0.0.1:{port}"
+            try:
+                status, _, body = _request(port, "GET", "/api/storage")
+                self.assertEqual(status, 200)
+                payload = json.loads(body)
+                self.assertFalse(payload["configured"])
+                self.assertEqual(payload["effective_storage_mode"], "local")
+                self.assertFalse(payload["official_account_usage"])
+                rendered = body.decode("utf-8")
+                self.assertNotIn("endpoint_url", rendered)
+                self.assertNotIn("secret_access_key", rendered)
+
+                status, _, _ = _request(
+                    port,
+                    "POST",
+                    "/api/storage/preferences",
+                    body=json.dumps({"storage_mode": "local"}).encode(),
+                    headers={"Content-Type": "application/json", "Origin": origin},
+                )
+                self.assertEqual(status, 403)
+
+                status, _, body = _request(
+                    port,
+                    "POST",
+                    "/api/storage/preferences",
+                    body=json.dumps(
+                        {
+                            "storage_mode": "local",
+                            "storage_limit_gb": 20,
+                            "class_a_limit": 100,
+                            "class_b_limit": 200,
+                            "billing_cycle_day": 3,
+                        }
+                    ).encode(),
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-AI-Trade-Token": token,
+                        "Origin": origin,
+                    },
+                )
+                self.assertEqual(status, 200, body)
+                self.assertEqual(
+                    json.loads(body)["preferences"]["storage_limit_gb"], 20
+                )
+
+                status, _, body = _request(
+                    port,
+                    "POST",
+                    "/api/storage/preferences",
+                    body=json.dumps({"storage_mode": "hybrid"}).encode(),
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-AI-Trade-Token": token,
+                        "Origin": origin,
+                    },
+                )
+                self.assertEqual(status, 400)
+                self.assertIn(b"configured", body)
+
+                status, _, body = _request(
+                    port,
+                    "POST",
+                    "/api/storage/refresh",
+                    headers={"X-AI-Trade-Token": token, "Origin": origin},
+                )
+                self.assertEqual(status, 200)
+                self.assertTrue(json.loads(body)["inventory_error"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_host_header_parser_is_strict(self):
         self.assertEqual(_parse_host_header("127.0.0.1:8765"), ("127.0.0.1", 8765))
         self.assertEqual(_parse_host_header("[::1]:8765"), ("::1", 8765))
@@ -313,9 +463,11 @@ class WebTests(unittest.TestCase):
 
 
 class _FakeProcess:
-    def __init__(self):
+    def __init__(self, output="", return_code=0):
         self.returncode = None
         self.terminated = False
+        self.output = output
+        self.completion_return_code = return_code
 
     def poll(self):
         return self.returncode
@@ -329,8 +481,8 @@ class _FakeProcess:
 
     def communicate(self):
         if self.returncode is None:
-            self.returncode = 0
-        return "", None
+            self.returncode = self.completion_return_code
+        return self.output, None
 
 
 def _request(port, method, path, body=None, headers=None):

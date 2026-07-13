@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import subprocess
@@ -20,10 +21,14 @@ COMMANDS: dict[str, tuple[str, ...]] = {
     "paper-init": ("paper-init",),
     "paper-run": ("paper-run",),
     "paper-audit": ("paper-audit",),
+    "cloud-backup": ("cloud-backup",),
 }
 
 
 _CLOSE_TIMEOUT_SECONDS = 5.0
+_WEB_JOB_PROTOCOL_ENV = "AI_TRADE_WEB_JOB_PROTOCOL"
+_CLOUD_BACKUP_EVENT_PREFIX = "@@AI_TRADE_CLOUD_BACKUP@@"
+_CLOUD_BACKUP_STATUSES = {"succeeded", "failed", "cancelled"}
 
 
 @dataclass
@@ -37,6 +42,8 @@ class Job:
     return_code: int | None = None
     output: str = ""
     cancel_requested: bool = False
+    cloud_backup_status: str | None = None
+    cloud_backup_automatic: bool = False
 
     def payload(self, include_output: bool = True) -> dict[str, object]:
         value = {
@@ -50,6 +57,11 @@ class Job:
         }
         if include_output:
             value["output"] = self.output[-100_000:]
+        if self.cloud_backup_status is not None:
+            value["cloud_backup"] = {
+                "status": self.cloud_backup_status,
+                "automatic": self.cloud_backup_automatic,
+            }
         return value
 
 
@@ -105,6 +117,7 @@ class JobManager:
                 job.cancel_requested = True
                 job.status = "cancelled"
                 job.finished_at = _now()
+                _assign_cloud_backup_status(job, None)
             elif job.status == "running" and self._active_job_id == job_id:
                 job.cancel_requested = True
                 process = self._active_process
@@ -124,6 +137,7 @@ class JobManager:
                         job.cancel_requested = True
                         job.status = "cancelled"
                         job.finished_at = finished_at
+                        _assign_cloud_backup_status(job, None)
                 if self._active_job_id is not None:
                     active = self._jobs.get(self._active_job_id)
                     if active is not None:
@@ -166,6 +180,7 @@ class JobManager:
             ]
             environment = os.environ.copy()
             environment["PYTHONUTF8"] = "1"
+            environment[_WEB_JOB_PROTOCOL_ENV] = "1"
             creation_flags = (
                 subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             )
@@ -187,6 +202,7 @@ class JobManager:
                 if should_terminate:
                     _request_termination(process)
                 output, _ = process.communicate()
+                output, automatic_cloud_status = _extract_cloud_backup_event(output)
                 with self._lock:
                     job.output = output
                     job.return_code = process.returncode
@@ -195,6 +211,7 @@ class JobManager:
                         if job.cancel_requested
                         else "succeeded" if process.returncode == 0 else "failed"
                     )
+                    _assign_cloud_backup_status(job, automatic_cloud_status)
             except Exception as exc:
                 with self._lock:
                     if job.cancel_requested:
@@ -203,6 +220,7 @@ class JobManager:
                         job.output = f"Unable to start job: {exc}"
                         job.return_code = -1
                         job.status = "failed"
+                    _assign_cloud_backup_status(job, None)
             finally:
                 with self._lock:
                     job.finished_at = _now()
@@ -221,6 +239,37 @@ class JobManager:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_cloud_backup_event(output: str) -> tuple[str, str | None]:
+    clean: list[str] = []
+    status: str | None = None
+    for line in output.splitlines(keepends=True):
+        candidate = line.rstrip("\r\n")
+        if candidate.startswith(_CLOUD_BACKUP_EVENT_PREFIX):
+            try:
+                payload = json.loads(candidate.removeprefix(_CLOUD_BACKUP_EVENT_PREFIX))
+            except json.JSONDecodeError:
+                clean.append(line)
+                continue
+            if (
+                isinstance(payload, dict)
+                and payload.get("schema_version") == 1
+                and payload.get("status") in {"succeeded", "failed"}
+            ):
+                status = str(payload["status"])
+                continue
+        clean.append(line)
+    return "".join(clean), status
+
+
+def _assign_cloud_backup_status(job: Job, automatic_status: str | None) -> None:
+    if automatic_status in _CLOUD_BACKUP_STATUSES:
+        job.cloud_backup_status = automatic_status
+        job.cloud_backup_automatic = True
+    elif job.action == "cloud-backup" and job.status in _CLOUD_BACKUP_STATUSES:
+        job.cloud_backup_status = job.status
+        job.cloud_backup_automatic = False
 
 
 def _request_termination(process: subprocess.Popen[str]) -> None:

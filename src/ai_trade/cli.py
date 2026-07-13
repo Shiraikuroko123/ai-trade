@@ -5,7 +5,6 @@ import importlib.resources
 import json
 import logging
 import os
-import re
 import sys
 from dataclasses import asdict
 from datetime import date
@@ -24,6 +23,10 @@ from .report import save_backtest_report
 from .strategy import MomentumTrendStrategy
 from .validation import run_robustness_validation, save_validation_report
 from .walk_forward import run_walk_forward, save_walk_forward
+
+
+_WEB_JOB_PROTOCOL_ENV = "AI_TRADE_WEB_JOB_PROTOCOL"
+_CLOUD_BACKUP_EVENT_PREFIX = "@@AI_TRADE_CLOUD_BACKUP@@"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -246,10 +249,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command.startswith("cloud-"):
             from .cloud import (
-                R2ObjectStore,
                 backup_market_cache,
                 cloud_dependency_available,
                 load_cloud_settings,
+                tracked_r2_store,
             )
 
             settings = load_cloud_settings()
@@ -257,14 +260,14 @@ def main(argv: list[str] | None = None) -> int:
                 status = settings.public_status()
                 status["dependency_available"] = cloud_dependency_available()
                 if args.check:
-                    store = R2ObjectStore(settings)
+                    store = tracked_r2_store(config, settings)
                     store.check_connection()
                     status["connection"] = "ok"
                 else:
                     status["connection"] = "not_checked"
                 print(json.dumps(status, ensure_ascii=False, indent=2))
                 return 0
-            store = R2ObjectStore(settings)
+            store = tracked_r2_store(config, settings)
             if args.command == "cloud-backup":
                 _ensure_cache(config)
                 result = backup_market_cache(config, store)
@@ -313,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "download":
             paths = download_universe(config, force=args.force)
+            _maybe_automatic_cloud_backup(config)
             print(
                 json.dumps(
                     {key: str(value) for key, value in paths.items()},
@@ -372,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "signal":
             if args.refresh:
                 download_universe(config, force=True)
+                _maybe_automatic_cloud_backup(config)
             else:
                 _ensure_cache(config)
             market = MarketData(config)
@@ -390,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _ensure_cache(config)
             report = run_paper(config, MarketData(config))
+            _maybe_automatic_cloud_backup(config)
             print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "paper-status":
@@ -439,6 +445,47 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _maybe_automatic_cloud_backup(config: AppConfig) -> None:
+    try:
+        from .cloud import (
+            automatic_cloud_backup_enabled,
+            backup_market_cache,
+            load_cloud_settings,
+            tracked_r2_store,
+        )
+
+        if not automatic_cloud_backup_enabled(config):
+            return
+        settings = load_cloud_settings()
+        result = backup_market_cache(config, tracked_r2_store(config, settings))
+        logging.getLogger(__name__).info(
+            "Automatic cloud snapshot %s (%s)",
+            result.get("snapshot_id", "completed"),
+            "deduplicated" if result.get("skipped_duplicate") else "uploaded",
+        )
+        _emit_cloud_backup_event("succeeded")
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Automatic cloud backup failed; local data remains valid: %s",
+            _safe_cloud_error(exc),
+        )
+        _emit_cloud_backup_event("failed")
+
+
+def _emit_cloud_backup_event(status: str) -> None:
+    if os.environ.get(_WEB_JOB_PROTOCOL_ENV) != "1":
+        return
+    if status not in {"succeeded", "failed"}:
+        raise ValueError("Cloud backup event status is invalid")
+    payload = json.dumps(
+        {"schema_version": 1, "status": status},
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    print(f"{_CLOUD_BACKUP_EVENT_PREFIX}{payload}", file=sys.stderr, flush=True)
 
 
 def _ensure_cache(config: AppConfig) -> None:
@@ -494,52 +541,9 @@ def _configure_logging(config: AppConfig) -> None:
 
 
 def _safe_cloud_error(exc: Exception) -> str:
-    from .cloud import CloudConfigurationError, CloudIntegrityError
+    from .cloud import safe_cloud_error
 
-    if isinstance(
-        exc,
-        (
-            CloudConfigurationError,
-            CloudIntegrityError,
-            FileExistsError,
-            FileNotFoundError,
-            ValueError,
-        ),
-    ):
-        return _redact_cloud_error(str(exc))
-    code = type(exc).__name__
-    response = getattr(exc, "response", None)
-    if isinstance(response, dict):
-        error = response.get("Error", {})
-        if isinstance(error, dict) and re.fullmatch(
-            r"[A-Za-z0-9_.-]{1,80}", str(error.get("Code", ""))
-        ):
-            code = str(error["Code"])
-    return _redact_cloud_error(
-        f"Cloud provider request failed ({code}); credentials and endpoint were redacted"
-    )
-
-
-def _redact_cloud_error(message: str) -> str:
-    redacted = re.sub(
-        r"(?i)https://[^\s'\"<>]+",
-        "<redacted endpoint>",
-        message,
-    )
-    for name, label in (
-        ("AI_TRADE_R2_BUCKET", "bucket"),
-        ("AI_TRADE_R2_ACCESS_KEY_ID", "access key"),
-        ("AI_TRADE_R2_SECRET_ACCESS_KEY", "secret key"),
-    ):
-        value = os.environ.get(name, "")
-        if value:
-            redacted = redacted.replace(value, f"<redacted {label}>")
-    redacted = re.sub(
-        r"(?i)\b(object[ _-]?key|key)\s*[:=]\s*(?:'[^']*'|\"[^\"]*\"|[^\s,;]+)",
-        r"\1=<redacted key>",
-        redacted,
-    )
-    return redacted
+    return safe_cloud_error(exc)
 
 
 def _backtest_console(result, paths: dict[str, Path]) -> str:

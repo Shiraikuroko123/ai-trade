@@ -120,6 +120,31 @@ class WebReleaseTests(unittest.TestCase):
             )
         )
 
+    def test_diagnosis_does_not_count_circuit_skip_as_provider_attempt(self):
+        config = load_config(REPOSITORY_ROOT / "config/default.json")
+        current = date(2024, 1, 5)
+        market = _DiagnosticMarket(
+            config.instruments[:2],
+            latest=current,
+            completed_through=current,
+            sources=("tencent_network_fallback", "tencent_network_fallback"),
+            network_errors=(
+                (
+                    "attempt 1/2: RemoteDisconnected: provider closed connection",
+                    "attempt 2/2: RemoteDisconnected: provider closed connection",
+                ),
+                (
+                    "Eastmoney circuit breaker open; skipped after transport failure "
+                    "on 159915: EastmoneyDownloadError: attempts exhausted",
+                ),
+            ),
+        )
+
+        failures = diagnose(config, market)["cache_manifest"]["refresh_failures"]
+
+        self.assertEqual(failures[0]["attempts"], 2)
+        self.assertEqual(failures[1]["attempts"], 0)
+
     def test_research_reports_snapshot_state_and_configuration(self):
         source = load_config(REPOSITORY_ROOT / "config/default.json")
         with tempfile.TemporaryDirectory() as temporary:

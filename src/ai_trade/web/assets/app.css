@@ -727,6 +727,161 @@ progress {
   width: 100%;
 }
 
+.storage-layout {
+  align-items: start;
+}
+
+.usage-list {
+  border-top: 1px solid var(--rule);
+}
+
+.usage-row {
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem 0;
+}
+
+.usage-row-head,
+.usage-row-foot,
+.form-footer {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.usage-row-head strong,
+.usage-row-head span {
+  display: block;
+}
+
+.usage-row-head strong,
+.usage-row-foot strong {
+  font-size: 0.8rem;
+}
+
+.usage-row-head div > span,
+.usage-row-foot,
+.form-footer > span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+}
+
+.storage-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.mode-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.mode-fieldset legend {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  margin-bottom: 0.35rem;
+}
+
+.mode-segmented {
+  background: var(--surface-strong);
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 3px;
+}
+
+.mode-segmented label {
+  cursor: pointer;
+  min-width: 0;
+  position: relative;
+}
+
+.mode-segmented input {
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.mode-segmented span {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  display: flex;
+  font-size: 0.78rem;
+  font-weight: 650;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.45rem 0.65rem;
+}
+
+.mode-segmented input:checked + span {
+  background: var(--desk);
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.mode-segmented input:focus-visible + span {
+  outline: 3px solid color-mix(in oklch, var(--focus) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.mode-segmented input:disabled + span {
+  color: var(--ink-faint);
+  cursor: not-allowed;
+}
+
+.storage-fields {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field > span {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+}
+
+.unit-input {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+  position: relative;
+}
+
+.unit-input input {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  padding-inline-end: 2.7rem;
+  width: 100%;
+}
+
+.unit-input > span {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  pointer-events: none;
+  position: absolute;
+  right: 0.65rem;
+}
+
+.form-footer {
+  border-top: 1px solid var(--rule);
+  padding-top: 0.85rem;
+}
+
+.form-footer .button {
+  flex: 0 0 auto;
+}
+
 .segmented {
   background: var(--surface-strong);
   border-radius: 7px;
@@ -1089,6 +1244,21 @@ progress {
   .path-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.2rem;
+  }
+
+  .storage-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .usage-row-head,
+  .form-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .form-footer .button {
+    width: 100%;
   }
 }
 

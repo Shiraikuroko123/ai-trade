@@ -4,6 +4,17 @@ All notable changes are documented here. The project follows semantic versioning
 
 ## Unreleased
 
+## 0.9.0 - 2026-07-13
+
+- Added a workstation storage page for local-cache size, R2 namespace inventory, safe snapshot summaries, and manual inventory/backup actions.
+- Added explicit `local` and `hybrid` storage preferences; hybrid mode keeps the active cache local while attempting verified R2 snapshots after successful refresh and paper workflows.
+- Added persistent, cross-process accounting for AI Trade's locally observed high-level R2 Class A and Class B requests, plus configurable capacity and operation budgets with a user-defined UTC budget cycle.
+- Isolated preferences, inventory caches, and operation counters by an irreversible local R2-profile fingerprint so changing accounts, buckets, or installation IDs cannot mix usage views.
+- Clarified that capacity is scoped to the current installation namespace and that all displayed limits and remaining values are user budgets, not Cloudflare official account usage, billing balances, or enforced quotas.
+- Kept R2 credentials and cloud coordinates in the current Windows user's environment and out of browser responses, reports, snapshots, release archives, and Git; ordinary GitHub users can configure their own independent R2 account.
+- Preserved the non-secret installation identity when disabling cloud credentials so reconnecting the same R2 profile can still locate its existing snapshots.
+- Fixed workstation diagnostics so an Eastmoney circuit-breaker skip is not reported as another provider request attempt.
+
 ## 0.8.0 - 2026-07-13
 
 - Added opt-in Cloudflare R2 backups for checksummed market-cache snapshots, isolated by installation namespace, with list and connection diagnostics.

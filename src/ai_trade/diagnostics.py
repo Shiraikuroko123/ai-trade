@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .config import AppConfig
 from .data.market import MarketData
 
@@ -70,6 +72,20 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
                 source_counts[source] = source_counts.get(source, 0) + 1
                 errors = value.get("network_errors", []) if isinstance(value, dict) else []
                 if isinstance(errors, list) and errors:
+                    recorded_attempts = (
+                        value.get("eastmoney_attempts")
+                        if isinstance(value, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(recorded_attempts, bool)
+                        or not isinstance(recorded_attempts, int)
+                        or recorded_attempts < 0
+                    ):
+                        recorded_attempts = sum(
+                            re.match(r"^attempt \d+/\d+:", str(item)) is not None
+                            for item in errors
+                        )
                     error_types = sorted(
                         {
                             parts[1].strip()
@@ -81,8 +97,17 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
                         {
                             "symbol": str(symbol),
                             "source": source,
-                            "attempts": len(errors),
+                            "attempts": recorded_attempts,
                             "error_types": error_types,
+                            **(
+                                {"skipped_reason": value["eastmoney_skip_reason"]}
+                                if isinstance(value, dict)
+                                and isinstance(
+                                    value.get("eastmoney_skip_reason"), str
+                                )
+                                and value["eastmoney_skip_reason"]
+                                else {}
+                            ),
                         }
                     )
         fallback_count = source_counts.get("validated_local_fallback", 0)

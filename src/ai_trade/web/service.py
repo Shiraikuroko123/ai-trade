@@ -324,6 +324,16 @@ class DashboardService:
             },
         }
 
+    def storage(self, *, refresh: bool = False) -> dict[str, Any]:
+        from ..cloud import cloud_dashboard_status
+
+        return cloud_dashboard_status(self.config, refresh=refresh)
+
+    def save_storage_preferences(self, payload: dict[str, object]) -> dict[str, Any]:
+        from ..cloud import save_cloud_dashboard_preferences
+
+        return save_cloud_dashboard_preferences(self.config, payload)
+
     def market(self) -> MarketData:
         signature = tuple(
             sorted(

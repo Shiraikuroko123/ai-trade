@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 WHEEL_REQUIRED = {
     "ai_trade/__init__.py",
     "ai_trade/cloud.py",
+    "ai_trade/cloud_usage.py",
     "ai_trade/data/cache_snapshot.py",
     "ai_trade/data/tencent.py",
     "ai_trade/default_config.json",
@@ -54,6 +55,7 @@ SDIST_REQUIRED = {
     "src/ai_trade/default_security_master.json",
     "src/ai_trade/__init__.py",
     "src/ai_trade/cloud.py",
+    "src/ai_trade/cloud_usage.py",
     "src/ai_trade/data/cache_snapshot.py",
     "src/ai_trade/data/tencent.py",
     "src/ai_trade/web/assets/index.html",
