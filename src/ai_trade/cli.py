@@ -4,6 +4,8 @@ import argparse
 import importlib.resources
 import json
 import logging
+import os
+import re
 import sys
 from dataclasses import asdict
 from datetime import date
@@ -28,45 +30,92 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai-trade", description="Auditable systematic research and paper trading"
     )
-    parser.add_argument("--config", default="config/default.json", help="Path to JSON configuration")
+    parser.add_argument(
+        "--config", default="config/default.json", help="Path to JSON configuration"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="Create a standalone AI Trade workspace")
     init.add_argument("--directory", default=".", help="Target workspace directory")
 
     download = subparsers.add_parser("download", help="Download and cache market data")
-    download.add_argument("--force", action="store_true", help="Overwrite existing cache")
+    download.add_argument(
+        "--force", action="store_true", help="Overwrite existing cache"
+    )
+
+    cloud_status = subparsers.add_parser(
+        "cloud-status", help="Inspect this user's optional Cloudflare R2 backup"
+    )
+    cloud_status.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify access to the configured R2 namespace",
+    )
+    subparsers.add_parser(
+        "cloud-backup", help="Upload a verified market-cache snapshot to Cloudflare R2"
+    )
+    cloud_list = subparsers.add_parser(
+        "cloud-list",
+        help="List market-cache snapshots in this installation's namespace",
+    )
+    cloud_list.add_argument("--limit", type=int, default=20)
+    cloud_restore = subparsers.add_parser(
+        "cloud-restore",
+        help="Verify and restore a cloud snapshot into a new staging directory",
+    )
+    cloud_restore.add_argument("snapshot_id")
+    cloud_restore.add_argument(
+        "--directory",
+        help=(
+            "New destination directory (must not already exist); "
+            "defaults to local/cloud-restore/<snapshot-id>"
+        ),
+    )
 
     backtest = subparsers.add_parser("backtest", help="Run historical backtest")
     backtest.add_argument("--start", help="YYYY-MM-DD")
     backtest.add_argument("--end", help="YYYY-MM-DD")
 
-    walk = subparsers.add_parser("walk-forward", help="Run rolling out-of-sample validation")
+    walk = subparsers.add_parser(
+        "walk-forward", help="Run rolling out-of-sample validation"
+    )
     walk.add_argument("--train-days", type=int, default=756)
     walk.add_argument("--test-days", type=int, default=252)
 
-    validate = subparsers.add_parser("validate", help="Run robustness and stress validation")
+    validate = subparsers.add_parser(
+        "validate", help="Run robustness and stress validation"
+    )
     validate.add_argument("--bootstrap-samples", type=int, default=1000)
     validate.add_argument("--block-days", type=int, default=20)
 
     signal = subparsers.add_parser("signal", help="Show the latest target weights")
     signal.add_argument("--refresh", action="store_true")
 
-    paper_init = subparsers.add_parser("paper-init", help="Initialize the paper account")
+    paper_init = subparsers.add_parser(
+        "paper-init", help="Initialize the paper account"
+    )
     paper_init.add_argument("--cash", type=float)
     paper_init.add_argument("--overwrite", action="store_true")
 
-    paper_run = subparsers.add_parser("paper-run", help="Refresh data and process one paper session")
+    paper_run = subparsers.add_parser(
+        "paper-run", help="Refresh data and process one paper session"
+    )
     paper_run.add_argument("--no-refresh", action="store_true")
 
     subparsers.add_parser("paper-status", help="Show paper account state")
-    subparsers.add_parser("paper-audit", help="Audit forward paper performance and promotion gates")
+    subparsers.add_parser(
+        "paper-audit", help="Audit forward paper performance and promotion gates"
+    )
     universe = subparsers.add_parser(
         "universe-status", help="Inspect point-in-time universe eligibility"
     )
     universe.add_argument("--date", help="YYYY-MM-DD; defaults to today")
-    subparsers.add_parser("doctor", help="Check configuration, cache, and latest market date")
-    subparsers.add_parser("live-check", help="Verify the live-trading guard; does not submit orders")
+    subparsers.add_parser(
+        "doctor", help="Check configuration, cache, and latest market date"
+    )
+    subparsers.add_parser(
+        "live-check", help="Verify the live-trading guard; does not submit orders"
+    )
     serve = subparsers.add_parser("serve", help="Start the local AI Trade workstation")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
@@ -94,7 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
                 "--yes", action="store_true", help="Confirm permanent removal"
             )
     beta_export = subparsers.add_parser(
-        "beta-users-export", help="Export a portable beta whitelist without plaintext passwords"
+        "beta-users-export",
+        help="Export a portable beta whitelist without plaintext passwords",
     )
     beta_export.add_argument("output")
     beta_import = subparsers.add_parser(
@@ -194,9 +244,82 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.command.startswith("cloud-"):
+            from .cloud import (
+                R2ObjectStore,
+                backup_market_cache,
+                cloud_dependency_available,
+                load_cloud_settings,
+            )
+
+            settings = load_cloud_settings()
+            if args.command == "cloud-status":
+                status = settings.public_status()
+                status["dependency_available"] = cloud_dependency_available()
+                if args.check:
+                    store = R2ObjectStore(settings)
+                    store.check_connection()
+                    status["connection"] = "ok"
+                else:
+                    status["connection"] = "not_checked"
+                print(json.dumps(status, ensure_ascii=False, indent=2))
+                return 0
+            store = R2ObjectStore(settings)
+            if args.command == "cloud-backup":
+                _ensure_cache(config)
+                result = backup_market_cache(config, store)
+                public_keys = (
+                    "snapshot_id",
+                    "sha256",
+                    "dataset_sha256",
+                    "size",
+                    "created_at",
+                    "latest_common_session",
+                    "skipped_duplicate",
+                )
+                print(
+                    json.dumps(
+                        {key: result[key] for key in public_keys if key in result},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
+            if args.command == "cloud-list":
+                snapshots = store.list_snapshots(limit=args.limit)
+                public = [
+                    {key: value for key, value in item.items() if key != "object_key"}
+                    for item in snapshots
+                ]
+                print(json.dumps({"snapshots": public}, ensure_ascii=False, indent=2))
+                return 0
+            destination = (
+                Path(args.directory)
+                if args.directory
+                else config.project_root / "local" / "cloud-restore" / args.snapshot_id
+            )
+            restored = store.restore_snapshot(config, args.snapshot_id, destination)
+            print(
+                json.dumps(
+                    {
+                        "snapshot_id": args.snapshot_id,
+                        "restored_to": str(restored),
+                        "active_cache_unchanged": True,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         if args.command == "download":
             paths = download_universe(config, force=args.force)
-            print(json.dumps({key: str(value) for key, value in paths.items()}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {key: str(value) for key, value in paths.items()},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 0
         if args.command == "backtest":
             _ensure_cache(config)
@@ -213,7 +336,16 @@ def main(argv: list[str] | None = None) -> int:
             market = MarketData(config)
             result = run_walk_forward(config, market, args.train_days, args.test_days)
             paths = save_walk_forward(result, config.reports_dir)
-            print(json.dumps({"aggregate": result["aggregate"], "files": [str(path) for path in paths]}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "aggregate": result["aggregate"],
+                        "files": [str(path) for path in paths],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 0
         if args.command == "validate":
             _ensure_cache(config)
@@ -243,7 +375,9 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _ensure_cache(config)
             market = MarketData(config)
-            signal = MomentumTrendStrategy(config.strategy).generate(market, market.latest_date())
+            signal = MomentumTrendStrategy(config.strategy).generate(
+                market, market.latest_date()
+            )
             print(json.dumps(_signal_payload(signal), ensure_ascii=False, indent=2))
             return 0
         if args.command == "paper-init":
@@ -296,14 +430,23 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
     except Exception as exc:
-        logging.getLogger(__name__).exception("Command failed")
-        print(f"ERROR: {exc}", file=sys.stderr)
+        if getattr(args, "command", "").startswith("cloud-"):
+            message = _safe_cloud_error(exc)
+            logging.getLogger(__name__).error("Cloud command failed: %s", message)
+            print(f"ERROR: {message}", file=sys.stderr)
+        else:
+            logging.getLogger(__name__).exception("Command failed")
+            print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
 
 
 def _ensure_cache(config: AppConfig) -> None:
-    missing = [item.symbol for item in config.instruments if not (config.cache_dir / f"{item.symbol}.csv").exists()]
+    missing = [
+        item.symbol
+        for item in config.instruments
+        if not (config.cache_dir / f"{item.symbol}.csv").exists()
+    ]
     if missing:
         download_universe(config, force=False)
 
@@ -350,12 +493,63 @@ def _configure_logging(config: AppConfig) -> None:
     )
 
 
+def _safe_cloud_error(exc: Exception) -> str:
+    from .cloud import CloudConfigurationError, CloudIntegrityError
+
+    if isinstance(
+        exc,
+        (
+            CloudConfigurationError,
+            CloudIntegrityError,
+            FileExistsError,
+            FileNotFoundError,
+            ValueError,
+        ),
+    ):
+        return _redact_cloud_error(str(exc))
+    code = type(exc).__name__
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error", {})
+        if isinstance(error, dict) and re.fullmatch(
+            r"[A-Za-z0-9_.-]{1,80}", str(error.get("Code", ""))
+        ):
+            code = str(error["Code"])
+    return _redact_cloud_error(
+        f"Cloud provider request failed ({code}); credentials and endpoint were redacted"
+    )
+
+
+def _redact_cloud_error(message: str) -> str:
+    redacted = re.sub(
+        r"(?i)https://[^\s'\"<>]+",
+        "<redacted endpoint>",
+        message,
+    )
+    for name, label in (
+        ("AI_TRADE_R2_BUCKET", "bucket"),
+        ("AI_TRADE_R2_ACCESS_KEY_ID", "access key"),
+        ("AI_TRADE_R2_SECRET_ACCESS_KEY", "secret key"),
+    ):
+        value = os.environ.get(name, "")
+        if value:
+            redacted = redacted.replace(value, f"<redacted {label}>")
+    redacted = re.sub(
+        r"(?i)\b(object[ _-]?key|key)\s*[:=]\s*(?:'[^']*'|\"[^\"]*\"|[^\s,;]+)",
+        r"\1=<redacted key>",
+        redacted,
+    )
+    return redacted
+
+
 def _backtest_console(result, paths: dict[str, Path]) -> str:
     payload = {
         "period": [result.metadata["start"], result.metadata["end"]],
         "strategy": result.metrics,
         "benchmark": result.benchmark_metrics,
-        "latest_signal": _signal_payload(result.latest_signal) if result.latest_signal else None,
+        "latest_signal": _signal_payload(result.latest_signal)
+        if result.latest_signal
+        else None,
         "report": str(paths["html"]),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

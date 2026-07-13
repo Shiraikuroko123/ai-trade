@@ -563,7 +563,10 @@ class DashboardService:
                 "available": False,
                 "downloaded_at": None,
                 "completed_through": None,
+                "latest_common_session": None,
+                "request_policy": None,
                 "source_counts": {},
+                "refresh_failures": [],
             },
             "live_trading": "DISABLED",
         }

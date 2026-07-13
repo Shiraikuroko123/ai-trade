@@ -9,6 +9,7 @@ import json
 from ..config import AppConfig
 from ..models import Bar, Instrument
 from ..security import TradingStatus
+from .cache_snapshot import readable_snapshot
 from .eastmoney import completed_session_cutoff, load_cached_bars
 
 
@@ -23,6 +24,11 @@ class SymbolData:
 class MarketData:
     def __init__(self, config: AppConfig, as_of: datetime | None = None):
         self.config = config
+        with readable_snapshot(config.cache_dir):
+            self._initialize(as_of)
+
+    def _initialize(self, as_of: datetime | None) -> None:
+        config = self.config
         self.symbols: dict[str, SymbolData] = {}
         self.market_close_time = config.raw["data"].get("market_close_time", "15:30")
         self.completed_through = completed_session_cutoff(as_of, self.market_close_time)
@@ -54,6 +60,15 @@ class MarketData:
         self.calendar = list(self.symbols[benchmark].dates)
         if not self.calendar:
             raise RuntimeError("No completed benchmark market date is available")
+        common_symbols = set(config.active_symbols(self.calendar[-1]))
+        common_symbols.add(benchmark)
+        common_dates = set(self.symbols[benchmark].dates)
+        for symbol in sorted(common_symbols - {benchmark}):
+            if symbol in self.symbols:
+                common_dates.intersection_update(self.symbols[symbol].dates)
+        if not common_dates:
+            raise RuntimeError("Active instruments share no common completed market session")
+        self.latest_common_session = max(common_dates)
 
     def bar(self, symbol: str, on_date: date) -> Bar | None:
         return self.symbols[symbol].by_date.get(on_date)
@@ -95,7 +110,7 @@ class MarketData:
             "provider": self.config.raw["data"]["provider"],
             "adjustment": self.config.raw["data"].get("adjustment", "none"),
             "completed_session_cutoff": self.completed_through.isoformat(),
-            "latest_common_session": self.latest_date().isoformat(),
+            "latest_common_session": self.latest_common_session.isoformat(),
             "latest_benchmark_session": self.latest_date().isoformat(),
             "universe": {
                 "name": self.config.universe_name,

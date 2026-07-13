@@ -5,6 +5,9 @@ __pycache__/
 data/cache/*.csv
 data/cache/manifest.json
 data/cache/.snapshot-*/
+data/cache/.cache-*.lock
+data/cache/.cache-transaction.json
+data/cache/.cache-transactions/
 reports/*
 !reports/.gitkeep
 state/*
@@ -12,6 +15,9 @@ state/*
 logs/*
 !logs/.gitkeep
 .env
+.env.*
+!.env.example
+/local/
 .coverage
 coverage.xml
 dist/

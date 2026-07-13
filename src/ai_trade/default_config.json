@@ -1,10 +1,20 @@
 {
   "data": {
     "provider": "eastmoney",
+    "fallback_provider": "tencent",
     "start": "2013-01-01",
     "end": "2099-12-31",
     "cache_dir": "data/cache",
     "timeout_seconds": 20,
+    "proxy_mode": "system",
+    "request_interval_seconds": 2.0,
+    "request_jitter_seconds": 0.5,
+    "failure_cooldown_seconds": 20.0,
+    "max_attempts": 4,
+    "eastmoney_max_attempts": 2,
+    "retry_base_seconds": 1.0,
+    "retry_max_seconds": 8.0,
+    "retry_jitter_seconds": 0.5,
     "market_close_time": "15:30",
     "adjustment": "forward"
   },

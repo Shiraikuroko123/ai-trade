@@ -5,9 +5,27 @@ include CHANGELOG.md
 include SECURITY.md
 include PRODUCT.md
 include DESIGN.md
-recursive-include config *.json
-recursive-include docs *.md
-recursive-include docs/assets *.png
-recursive-include scripts *.ps1
-recursive-include scripts *.py
-recursive-include src/ai_trade/web/assets *.html *.css *.js
+include config/default.json
+include config/security_master.json
+include docs/ARCHITECTURE.md
+include docs/BROKER_ADAPTERS.md
+include docs/CLOUD_STORAGE.md
+include docs/ECOSYSTEM.md
+include docs/PAPER_TRADING.md
+include docs/RESEARCH_METHODOLOGY.md
+include docs/UNIVERSE.md
+include docs/assets/workstation-overview.png
+include scripts/bootstrap.ps1
+include scripts/configure_cloud.ps1
+include scripts/install_paper_task.ps1
+include scripts/run_daily_paper.ps1
+include scripts/verify_distribution.py
+include src/ai_trade/web/assets/app.css
+include src/ai_trade/web/assets/app.js
+include src/ai_trade/web/assets/auth.css
+include src/ai_trade/web/assets/auth.js
+include src/ai_trade/web/assets/index.html
+include src/ai_trade/web/assets/login.html
+prune local
+prune tests
+global-exclude .env .env.*

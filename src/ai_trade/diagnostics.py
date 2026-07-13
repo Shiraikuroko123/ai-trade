@@ -25,7 +25,11 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
         }
     aligned = len(set(latest_dates)) == 1
     latest_market_date = market.latest_date()
-    latest_common_date = min(latest_dates) if latest_dates else latest_market_date
+    latest_common_date = getattr(
+        market,
+        "latest_common_session",
+        min(latest_dates) if latest_dates else latest_market_date,
+    )
     market_data_current = latest_common_date >= market.completed_through
     market_data_lag_days = max(0, (market.completed_through - latest_common_date).days)
     research_warnings = []
@@ -52,30 +56,68 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
 
     manifest = market.manifest if isinstance(market.manifest, dict) else None
     source_counts: dict[str, int] = {}
+    refresh_failures: list[dict[str, object]] = []
+    provider_degraded = False
     if manifest:
         files = manifest.get("files", {})
         if isinstance(files, dict):
-            for value in files.values():
+            for symbol, value in files.items():
                 source = (
                     str(value.get("source", "unknown"))
                     if isinstance(value, dict)
                     else "unknown"
                 )
                 source_counts[source] = source_counts.get(source, 0) + 1
+                errors = value.get("network_errors", []) if isinstance(value, dict) else []
+                if isinstance(errors, list) and errors:
+                    error_types = sorted(
+                        {
+                            parts[1].strip()
+                            for item in errors
+                            if len(parts := str(item).split(":", 2)) >= 2
+                        }
+                    )
+                    refresh_failures.append(
+                        {
+                            "symbol": str(symbol),
+                            "source": source,
+                            "attempts": len(errors),
+                            "error_types": error_types,
+                        }
+                    )
         fallback_count = source_counts.get("validated_local_fallback", 0)
+        tencent_fallback_count = source_counts.get("tencent_network_fallback", 0)
+        recovered_count = sum(
+            value["source"] == "network" for value in refresh_failures
+        )
+        provider_degraded = bool(
+            fallback_count or tencent_fallback_count or refresh_failures
+        )
         if fallback_count:
             research_warnings.append(
                 f"The latest refresh used validated local fallback data for "
                 f"{fallback_count} instrument(s); verify provider availability"
+            )
+        if tencent_fallback_count:
+            research_warnings.append(
+                f"The latest refresh used Tencent network fallback data for "
+                f"{tencent_fallback_count} instrument(s) after Eastmoney was unavailable; "
+                "market data was refreshed, but primary-provider connectivity remains "
+                "degraded"
+            )
+        if recovered_count:
+            research_warnings.append(
+                f"The latest refresh recovered from network errors for "
+                f"{recovered_count} instrument(s); provider connectivity was unstable"
             )
     else:
         research_warnings.append(
             "Cache manifest is missing; data snapshot provenance cannot be verified"
         )
 
-    status = (
-        "OK" if aligned and market_data_current and manifest is not None else "WARNING"
-    )
+    status = "OK"
+    if not aligned or not market_data_current or manifest is None or provider_degraded:
+        status = "WARNING"
     return {
         "status": status,
         "config": str(config.path),
@@ -100,7 +142,12 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
             "completed_through": (
                 manifest.get("completed_through") if manifest else None
             ),
+            "latest_common_session": (
+                manifest.get("latest_common_session") if manifest else None
+            ),
+            "request_policy": manifest.get("request_policy") if manifest else None,
             "source_counts": source_counts,
+            "refresh_failures": refresh_failures,
         },
         "live_trading": "DISABLED",
     }

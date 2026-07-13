@@ -568,6 +568,12 @@ function translateWarning(value) {
   if (String(value).includes("validated local fallback")) {
     return "最近一次刷新有部分证券使用了已验证的本地备用缓存，请检查数据提供方是否可用。";
   }
+  const tencentFallback = String(value).match(
+    /used Tencent network fallback data for (\d+) instrument\(s\)/
+  );
+  if (tencentFallback) {
+    return `最近一次刷新在东方财富不可用后，已通过腾讯行情备用源更新 ${tencentFallback[1]} 支证券；数据已补齐，但主数据源连接仍需检查。`;
+  }
   const report = String(value).match(/^(.*?\.json) (?:was generated from a different data snapshot|is missing|is not valid JSON|does not contain a verifiable data snapshot)/);
   if (report) {
     return `${report[1]} 与当前行情快照不一致或不可用，请重新运行对应研究任务。`;

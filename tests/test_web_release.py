@@ -59,6 +59,67 @@ class WebReleaseTests(unittest.TestCase):
         self.assertEqual(result["status"], "WARNING")
         self.assertFalse(result["cache_manifest"]["available"])
 
+    def test_diagnosis_warns_after_recovered_provider_error(self):
+        config = load_config(REPOSITORY_ROOT / "config/default.json")
+        current = date(2024, 1, 5)
+        market = _DiagnosticMarket(
+            config.instruments[:2],
+            latest=current,
+            completed_through=current,
+            sources=("network", "network"),
+            network_errors=(
+                (
+                    "attempt 1/4: RemoteDisconnected: provider closed connection",
+                ),
+                (),
+            ),
+        )
+
+        result = diagnose(config, market)
+
+        self.assertTrue(result["market_data_current"])
+        self.assertEqual(result["status"], "WARNING")
+        self.assertEqual(
+            result["cache_manifest"]["refresh_failures"],
+            [
+                {
+                    "symbol": config.instruments[0].symbol,
+                    "source": "network",
+                    "attempts": 1,
+                    "error_types": ["RemoteDisconnected"],
+                }
+            ],
+        )
+        self.assertTrue(
+            any("connectivity was unstable" in item for item in result["research_warnings"])
+        )
+
+    def test_diagnosis_explains_tencent_network_fallback(self):
+        config = load_config(REPOSITORY_ROOT / "config/default.json")
+        current = date(2024, 1, 5)
+        market = _DiagnosticMarket(
+            config.instruments[:2],
+            latest=current,
+            completed_through=current,
+            sources=("tencent_network_fallback", "tencent_network_fallback"),
+        )
+
+        result = diagnose(config, market)
+
+        self.assertTrue(result["market_data_current"])
+        self.assertEqual(result["status"], "WARNING")
+        self.assertEqual(
+            result["cache_manifest"]["source_counts"],
+            {"tencent_network_fallback": 2},
+        )
+        self.assertTrue(
+            any(
+                "Tencent network fallback data for 2 instrument(s) after Eastmoney"
+                in item
+                for item in result["research_warnings"]
+            )
+        )
+
     def test_research_reports_snapshot_state_and_configuration(self):
         source = load_config(REPOSITORY_ROOT / "config/default.json")
         with tempfile.TemporaryDirectory() as temporary:
@@ -161,14 +222,24 @@ class WebReleaseTests(unittest.TestCase):
 
 
 class _DiagnosticMarket:
-    def __init__(self, instruments, latest, completed_through, sources):
+    def __init__(
+        self,
+        instruments,
+        latest,
+        completed_through,
+        sources,
+        network_errors=None,
+    ):
         self.completed_through = completed_through
         self._latest = latest
         self.symbols = {}
         self.file_hashes = {}
         self.excluded_dates = {}
         files = {}
-        for instrument, source in zip(instruments, sources):
+        errors_by_instrument = network_errors or (() for _ in instruments)
+        for instrument, source, errors in zip(
+            instruments, sources, errors_by_instrument
+        ):
             bar = Bar(latest, 10, 10, 10, 10, 100, 1000)
             self.symbols[instrument.symbol] = SimpleNamespace(
                 instrument=instrument, bars=[bar]
@@ -178,6 +249,7 @@ class _DiagnosticMarket:
             files[instrument.symbol] = {
                 "sha256": self.file_hashes[instrument.symbol],
                 "source": source,
+                "network_errors": list(errors),
             }
         self.manifest = {
             "downloaded_at": "2024-01-05T16:00:00+08:00",

@@ -4,7 +4,10 @@
 security master + dated memberships + trading status
                          |
                          v
-Eastmoney daily data -> validated atomic snapshot + manifest
+Eastmoney primary -> Tencent network fallback -> recent validated cache
+                         |
+                         v
+              validated snapshot + manifest
                          |
                          v
 point-in-time universe -> signal factors -> portfolio constraints
@@ -31,6 +34,14 @@ point-in-time universe -> signal factors -> portfolio constraints
                                     v
                     loopback-only local workstation
 ```
+
+The market refresh route is deterministic and auditable. Eastmoney is the configured primary provider. A failed primary request can fall back to Tencent Finance; a refresh-scoped transport circuit breaker skips repeated Eastmoney attempts after a qualifying connection failure. Only when both permitted network routes fail may the refresh reuse a locally validated cache inside the configured freshness window.
+
+Every candidate file is staged and validated before publication. The cache manifest distinguishes the requested completed-session cutoff from the latest trading session shared by the required active instruments, and records each instrument's route, errors, fallback reason, latest session, row count, and SHA-256. Tencent incremental refreshes and local network fallbacks accept a seed only when the active manifest, provider, adjustment, requested history start, latest session, row count, source route, and file hash match; entries record the retained seed source/hash in addition to refresh mode, proxy mode, page and overlap counts, and amount-quality fields.
+
+Publication is a recoverable cross-file transaction. A same-volume transaction directory keeps immutable copies of the previous files and a durable journal, while an atomic root marker mirrors the current phase. All CSV files are replaced before `manifest.json`; after validating the installed files, the journal and marker record an explicit `committed` state with every target hash. `MarketData` holds the transaction lock while loading. Recovery keeps a complete committed snapshot, rolls a mixed install back, reconstructs state from the journal when the root marker is missing, and preserves backups while failing closed if the remaining transaction is ambiguous.
+
+Tencent's currently observed historical kline amount field uses two decimal places in units of CNY 10,000, giving CNY 100 resolution. CNY 50 is only the nominal error bound if that quantization is round-to-nearest; it is not a provider contract. When the latest kline can be reconciled exactly with the separate quote response, the quote amount replaces that one value and the manifest records the override. This provenance supports review; it does not turn a public provider response into exchange-certified data.
 
 The workstation has two explicit local access profiles. Beta mode protects every data API, job, and report with a password-authenticated in-memory session and a session-bound CSRF token. Owner-local mode deliberately bypasses that login for one trusted loopback-only process; it is a convenience profile, not a remotely enforceable license.
 
@@ -71,4 +82,15 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 
 No broker adapter ships with the project. The live route exists so its safety contract can be tested before credentials or broker-specific code are introduced; with the default configuration it cannot submit an order.
 
+Provider fallback, cloud backup, and broker routing are separate trust boundaries. A successful data refresh or R2 backup does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision.
+
 The security-master schema removes a fixed instrument-count assumption, but the default master remains a curated ETF universe. A professional stock universe additionally requires licensed or independently verified point-in-time constituent and corporate-action data; the architecture does not treat a current constituent list as historical truth.
+
+## Optional Cloud Backup Boundary
+
+```text
+validated data/cache allowlist -> ZIP + snapshot manifest + SHA-256 -> private R2 namespace
+private R2 namespace -> size/hash/schema/path verification -> local/cloud-restore staging
+```
+
+R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/`, `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.

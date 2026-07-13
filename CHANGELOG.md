@@ -4,6 +4,20 @@ All notable changes are documented here. The project follows semantic versioning
 
 ## Unreleased
 
+## 0.8.0 - 2026-07-13
+
+- Added opt-in Cloudflare R2 backups for checksummed market-cache snapshots, isolated by installation namespace, with list and connection diagnostics.
+- Added staging-only verified restores that never overwrite the active cache and explicitly exclude reports, logs, account/beta state, broker credentials, and live authorization.
+- Added a `cloud` installation extra, current-user setup script, cloud-storage operations guide, and release checks that reject local staging and credential files.
+- Hardened Eastmoney refreshes with serial rate limiting, browser-compatible requests, cache-busting, jittered retries, cooldowns, and a refresh-scoped transport circuit breaker.
+- Limited Eastmoney-specific retries independently from the Tencent fallback and stopped retrying payload, business-response, and local-validation errors that cannot be repaired by another immediate request.
+- Added Tencent Finance as the default network fallback, including paged retries, overlap validation, full rebuilds after overlap mismatches such as adjustment drift, latest-session amount refinement, and explicit proxy routing.
+- Extended cache manifests with per-instrument source routes, fallback reasons, provider metadata, actual common-session dates, and explicit Tencent amount-resolution evidence.
+- Made multi-file cache publication crash-recoverable with an advisory lock, a durable transaction journal, immutable rollback copies, manifest-last installation, explicit committed-state verification, and fail-closed markerless recovery.
+- Hardened cloud export with CSV-derived date/row verification, a sanitized manifest schema, and object-backed duplicate checks; Tencent incremental seeds and local network fallbacks now require matching manifest provenance, requested history, latest session, and hashes.
+- Required the Tencent fallback module in both wheel and source-distribution release verification.
+- Added explicit workstation diagnostics when current data was completed through Tencent after the Eastmoney historical endpoint degraded.
+
 ## 0.7.0 - 2026-07-13
 
 - Added a loopback-only beta login with PBKDF2 password verifiers, in-memory sessions, session-bound CSRF tokens, strict same-origin writes, rate limiting, and explicit logout.

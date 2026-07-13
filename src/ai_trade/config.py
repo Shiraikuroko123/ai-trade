@@ -192,16 +192,21 @@ def _validate(
         raise ValueError("Only data.provider='eastmoney' is supported")
     if raw["data"].get("adjustment", "forward") not in {"none", "forward", "backward"}:
         raise ValueError("data.adjustment must be none, forward, or backward")
+    _validate_data_transport(raw["data"])
     try:
         data_start = date.fromisoformat(raw["data"]["start"])
         data_end = date.fromisoformat(raw["data"]["end"])
         backtest_start = date.fromisoformat(raw["backtest"]["start"])
         backtest_end = date.fromisoformat(raw["backtest"]["end"])
-        time.fromisoformat(raw["data"].get("market_close_time", "15:30"))
+        market_close = time.fromisoformat(
+            raw["data"].get("market_close_time", "15:30")
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"Configuration contains an invalid date or time: {exc}") from exc
     if data_start > data_end or backtest_start > backtest_end:
         raise ValueError("Configuration start date must not be after end date")
+    if market_close.tzinfo is not None:
+        raise ValueError("data.market_close_time must not include a timezone")
     for instrument in instruments:
         if not re.fullmatch(r"\d{6}", instrument.symbol):
             raise ValueError(f"Invalid six-digit symbol: {instrument.symbol!r}")
@@ -285,6 +290,52 @@ def _validate(
         raise ValueError("paper.minimum_promotion_sessions must be at least 20")
     _validate_auth(raw.get("auth", {}))
     _validate_broker(raw.get("broker", {}))
+
+
+def _validate_data_transport(data: dict[str, Any]) -> None:
+    fallback_provider = data.get("fallback_provider", "tencent")
+    if (
+        not isinstance(fallback_provider, str)
+        or fallback_provider not in {"tencent", "none"}
+    ):
+        raise ValueError("data.fallback_provider must be tencent or none")
+    proxy_mode = data.get("proxy_mode", "system")
+    if not isinstance(proxy_mode, str) or proxy_mode not in {"system", "direct"}:
+        raise ValueError("data.proxy_mode must be system or direct")
+    integer_limits = {
+        "timeout_seconds": (1, 120, 20),
+        "max_attempts": (1, 10, 4),
+        "eastmoney_max_attempts": (1, 10, data.get("max_attempts", 4)),
+    }
+    for name, (minimum, maximum, default) in integer_limits.items():
+        value = data.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"data.{name} must be an integer")
+        if not minimum <= value <= maximum:
+            raise ValueError(
+                f"data.{name} must be between {minimum} and {maximum}"
+            )
+
+    numeric_limits = {
+        "request_interval_seconds": (0.0, 60.0, 2.0),
+        "request_jitter_seconds": (0.0, 10.0, 0.5),
+        "failure_cooldown_seconds": (0.0, 300.0, 20.0),
+        "retry_base_seconds": (0.0, 60.0, 1.0),
+        "retry_max_seconds": (0.0, 300.0, 8.0),
+        "retry_jitter_seconds": (0.0, 10.0, 0.5),
+    }
+    parsed: dict[str, float] = {}
+    for name, (minimum, maximum, default) in numeric_limits.items():
+        value = data.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"data.{name} must be numeric")
+        parsed[name] = float(value)
+        if not math.isfinite(parsed[name]) or not minimum <= parsed[name] <= maximum:
+            raise ValueError(
+                f"data.{name} must be finite and between {minimum} and {maximum}"
+            )
+    if parsed["retry_max_seconds"] < parsed["retry_base_seconds"]:
+        raise ValueError("data.retry_max_seconds must not be below retry_base_seconds")
 
 
 def _validate_costs(costs: CostSettings) -> None:
