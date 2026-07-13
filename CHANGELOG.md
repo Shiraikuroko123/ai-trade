@@ -4,6 +4,15 @@ All notable changes are documented here. The project follows semantic versioning
 
 ## Unreleased
 
+## 0.10.0 - 2026-07-14
+
+- Added an optional K-line assistant with a zero-key local mode and an explicitly `research_only` model-enhanced mode.
+- Restricted assistant conclusions to `NO_ACTION`, `WATCH`, `REVIEW_CANDIDATE`, and `REDUCE_RISK`; assistant output cannot create orders, unlock broker gates, or promise returns.
+- Added a Windows setup script for current-user `AI_TRADE_AI_*` environment variables. API keys are read with `SecureString`, never echoed, and are not written to repository files or assistant history.
+- Restricted model endpoints to HTTPS, except for loopback-only HTTP development endpoints, and documented how to disable model configuration safely.
+- Kept per-user assistant history under Git-ignored `state/assistant/`, outside Cloudflare R2 snapshots and release artifacts.
+- Documented the independent clean-room implementation boundary: PA_Agent's observable research workflow was reviewed, while its AGPL source, prompts, schemas, UI, assets, and documentation text were not copied.
+
 ## 0.9.0 - 2026-07-13
 
 - Added a workstation storage page for local-cache size, R2 namespace inventory, safe snapshot summaries, and manual inventory/backup actions.

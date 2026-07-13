@@ -3,9 +3,9 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from ai_trade.cli import _maybe_automatic_cloud_backup, build_parser, main
 from ai_trade.config import _validate_auth, load_config
@@ -57,6 +57,57 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.owner_local)
         owner = build_parser().parse_args(["serve", "--owner-local"])
         self.assertTrue(owner.owner_local)
+
+    def test_assistant_analyze_parser_and_command(self):
+        args = build_parser().parse_args(
+            [
+                "assistant-analyze",
+                "--symbol",
+                "510300",
+                "--lookback",
+                "240",
+                "--mode",
+                "model",
+            ]
+        )
+        self.assertEqual(args.symbol, "510300")
+        self.assertEqual(args.lookback, 240)
+        self.assertEqual(args.mode, "model")
+
+        config = object()
+        market = object()
+        engine = MagicMock()
+        engine.analyze.return_value = {"analysis_id": "a" * 32}
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli._ensure_cache"),
+            patch("ai_trade.cli.MarketData", return_value=market),
+            patch("ai_trade.cli.AssistantEngine", return_value=engine),
+            redirect_stdout(output),
+        ):
+            status = main(
+                [
+                    "assistant-analyze",
+                    "--symbol",
+                    "510300",
+                    "--lookback",
+                    "240",
+                    "--mode",
+                    "model",
+                ]
+            )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output.getvalue()), {"analysis_id": "a" * 32})
+        engine.analyze.assert_called_once_with(
+            market,
+            "510300",
+            lookback=240,
+            mode="model",
+            user_id="local-owner",
+        )
 
     def test_packaged_default_matches_repository_config(self):
         root = Path(__file__).resolve().parents[1]

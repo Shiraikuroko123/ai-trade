@@ -3,6 +3,7 @@
 const ROUTES = {
   overview: { title: "总览", context: "每日收盘复盘" },
   research: { title: "研究", context: "历史证据与稳健性" },
+  assistant: { title: "AI 分析", context: "收盘 K 线诊断与风险复核" },
   portfolio: { title: "组合", context: "模拟账户与目标权重" },
   trading: { title: "交易", context: "执行记录与权限晋级" },
   risk: { title: "风险", context: "约束、尾部与实盘门禁" },
@@ -79,6 +80,8 @@ const state = {
   cloudBackupWarning: null,
   tradingTab: "paper",
   universeDate: "",
+  assistantResult: null,
+  assistantBusy: false,
   resizeTimer: 0,
 };
 
@@ -386,6 +389,7 @@ async function loadRoute() {
       const endpoints = {
         overview: "/api/overview",
         research: "/api/research",
+        assistant: "/api/assistant",
         portfolio: "/api/portfolio",
         trading: "/api/trading",
         universe: `/api/universe${state.universeDate ? `?date=${encodeURIComponent(state.universeDate)}` : ""}`,
@@ -411,6 +415,7 @@ function renderRoute(payload) {
   const renderers = {
     overview: renderOverview,
     research: renderResearch,
+    assistant: renderAssistant,
     portfolio: renderPortfolio,
     trading: renderTrading,
     risk: renderRisk,
@@ -431,6 +436,8 @@ function updateRouteDate(payload) {
     if (payload.version) versionLabel.textContent = `AI Trade v${payload.version}`;
   } else if (state.route === "research") {
     value = payload.backtest?.metadata?.end;
+  } else if (state.route === "assistant") {
+    value = (state.assistantResult || payload.history?.[0])?.data_date;
   } else if (state.route === "portfolio") {
     value = payload.date;
   } else if (state.route === "trading") {
@@ -839,6 +846,366 @@ function costStressTable(rows) {
       <td class="numeric ${tone(row.max_drawdown)}">${formatPercent(row.max_drawdown)}</td>
     </tr>`).join("") : emptyRow(4, "尚无成本压力报告")}</tbody>
   </table></div>`;
+}
+
+const ASSISTANT_CONCLUSIONS = {
+  NO_ACTION: "证据不足",
+  WATCH: "继续观察",
+  REVIEW_CANDIDATE: "研究候选",
+  REDUCE_RISK: "降低风险",
+};
+
+function renderAssistant(data) {
+  const status = data.status || {};
+  const history = Array.isArray(data.history) ? data.history : [];
+  const result = state.assistantResult || history[0] || null;
+  const defaults = data.defaults || {};
+  const instruments = Array.isArray(data.instruments) ? data.instruments : [];
+  const selectedSymbol = result?.symbol || defaults.symbol || instruments[0]?.symbol || "";
+  const selectedLookback = result?.lookback || defaults.lookback || 180;
+  const selectedMode = result?.mode || defaults.mode || "local";
+  const modelConfigured = Boolean(
+    status.model_configured ?? status.configured ?? status.model?.configured
+  );
+  const modelName = status.model_name || status.model?.name || status.model || "未配置";
+
+  return `
+    <div class="page-stack">
+      ${pageIntro("收盘 K 线分析", "基于同一份已校验行情快照完成市场诊断与风险复核")}
+
+      <section class="assistant-control-band" aria-label="分析条件">
+        <form id="assistant-analysis-form" class="assistant-form">
+          <label class="field">
+            <span>分析标的</span>
+            <select name="symbol" required>
+              ${instruments.map((item) => `<option value="${escapeHtml(item.symbol)}"${item.symbol === selectedSymbol ? " selected" : ""}>${escapeHtml(item.symbol)} · ${escapeHtml(item.name || instrumentName(item.symbol))}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>回看交易日</span>
+            <input name="lookback" type="number" min="60" max="500" step="10" value="${escapeHtml(selectedLookback)}" required>
+          </label>
+          <fieldset class="mode-fieldset assistant-mode">
+            <legend>分析模式</legend>
+            <div class="mode-segmented">
+              <label><input type="radio" name="mode" value="local"${selectedMode !== "model" ? " checked" : ""}><span>本地规则</span></label>
+              <label><input type="radio" name="mode" value="model"${selectedMode === "model" ? " checked" : ""}${modelConfigured ? "" : " disabled"}><span>模型增强</span></label>
+            </div>
+          </fieldset>
+          <button id="assistant-analyze-button" class="button primary" type="submit"${state.assistantBusy || !instruments.length ? " disabled" : ""}>${state.assistantBusy ? "分析中" : "开始分析"}</button>
+        </form>
+        <div class="assistant-control-meta">
+          ${statusChip(modelConfigured ? `模型已就绪 · ${modelName}` : "本地模式可用", modelConfigured ? "success" : "neutral")}
+          <span>只读研究权限 · 不生成订单</span>
+        </div>
+      </section>
+
+      ${status.configuration_error ? `<aside class="callout warning"><strong>模型配置未生效</strong><p>当前用户的模型环境变量不完整或端点不符合安全规则。本地模式仍可使用；重新运行配置脚本并重启工作台后再检查。</p></aside>` : ""}
+
+      ${result ? assistantResultMarkup(result) : `
+        <section class="empty-state">
+          <h2>尚无分析记录</h2>
+          <p>选择标的与回看期后建立第一份收盘诊断。</p>
+        </section>`}
+
+      ${assistantHistoryMarkup(history, result?.analysis_id)}
+
+      <aside class="callout warning">
+        <strong>研究边界</strong>
+        <p>AI 结论不会提交或生成真实订单，也不会改变模拟盘、券商适配器或实盘授权门禁。历史表现与模型文字都不保证未来收益。</p>
+      </aside>
+    </div>`;
+}
+
+function assistantResultMarkup(result) {
+  const diagnosis = result.diagnosis || {};
+  const assessment = result.assessment || {};
+  const features = result.features || {};
+  const validation = result.validation || {};
+  const conclusion = assistantConclusionLabel(assessment.conclusion);
+  const evidence = Array.isArray(diagnosis.evidence)
+    ? diagnosis.evidence
+    : Array.isArray(result.evidence) ? result.evidence : [];
+  const chart = Array.isArray(result.chart) ? { points: result.chart } : (result.chart || {});
+  const points = (Array.isArray(chart.points) ? chart.points : []).map((point) => ({
+    ...point,
+    ema20: point.ema20 ?? point.ema_20,
+    ema50: point.ema50 ?? point.ema_50,
+  }));
+  const modeLabel = result.mode === "model"
+    ? (validation.model_enhanced ? "模型增强" : "模型未完成 · 本地回退")
+    : "本地规则";
+  const trend = assistantTerm(diagnosis.trend || features.trend);
+  const volatility = finite(
+    features.annualized_volatility_20d ?? features.annual_volatility ?? features.volatility_annualized
+  );
+  const score = finite(diagnosis.score);
+
+  const warningMarkup = Array.isArray(validation.warnings) && validation.warnings.length
+    ? `<aside class="callout warning" role="status"><strong>模型增强未完成</strong><p>${escapeHtml(validation.warnings.map(assistantWarning).join("；"))}</p></aside>`
+    : "";
+
+  return `
+    ${warningMarkup}
+    <section class="metric-strip" aria-label="分析摘要">
+      ${metric("数据日期", result.data_date || "—", `${result.symbol || "—"} · ${result.name || instrumentName(result.symbol)}`)}
+      ${metric("市场趋势", trend, score === null ? "阶段一诊断" : `诊断分数 ${formatNumber(score, 0)}`, assistantTone(diagnosis.trend))}
+      ${metric("年化波动", volatility === null ? "—" : formatPercent(volatility), `ATR ${formatPercent(features.atr14_pct ?? features.atr_pct ?? features.atr_percent)}`, volatility !== null && volatility > 0.3 ? "tone-warning" : "")}
+      ${metric("研究结论", conclusion, `${modeLabel} · ${validation.valid === false ? "校验失败" : "结构已校验"}`, assistantConclusionTone(assessment.conclusion))}
+    </section>
+
+    <section class="assistant-provenance" aria-label="分析来源">
+      <span>行情源 <strong>${escapeHtml(result.snapshot?.provider || "—")}</strong></span>
+      <span>复权 <strong>${escapeHtml(result.snapshot?.adjustment || "—")}</strong></span>
+      <span>窗口指纹 <code>${escapeHtml(String(result.snapshot?.window_sha256 || result.snapshot?.snapshot_id || "—").slice(0, 16))}</code></span>
+      <span>生成时间 <strong>${formatDate(result.created_at, true)}</strong></span>
+    </section>
+
+    <section class="panel">
+      ${panelHeader("价格结构", `${result.lookback || points.length} 个交易日 · ${escapeHtml(modeLabel)}`)}
+      ${chartMarkup(
+        "assistant-price",
+        points,
+        [
+          { key: "close", label: "收盘", color: "--chart-primary" },
+          { key: "ema20", label: "EMA20", color: "--chart-secondary" },
+          { key: "ema50", label: "EMA50", color: "--chart-paper" },
+        ],
+        `${result.symbol || "标的"} 收盘价与 EMA20、EMA50；数据截止 ${result.data_date || "未知"}。`
+      )}
+    </section>
+
+    <section class="equal-layout assistant-stages">
+      <article class="panel">
+        ${panelHeader("阶段一 · 市场诊断", `${assistantTerm(diagnosis.regime)} · ${assistantTerm(diagnosis.volatility)}`)}
+        <p class="assistant-summary">${escapeHtml(diagnosis.summary || "本地特征已完成计算，等待结构化诊断摘要。")}</p>
+        <div class="check-list">
+          ${detailRow("趋势", trend, assistantKind(diagnosis.trend))}
+          ${detailRow("市场状态", assistantTerm(diagnosis.regime), "info")}
+          ${detailRow("波动状态", assistantTerm(diagnosis.volatility), "neutral")}
+          ${detailRow("诊断闸门", assistantTerm(diagnosis.gate), String(diagnosis.gate || "").toLowerCase() === "proceed" ? "success" : "warning")}
+        </div>
+      </article>
+      <article class="panel">
+        ${panelHeader("阶段二 · 风险复核", `${conclusion} · ${result.model || "local"}`)}
+        <p class="assistant-summary">${escapeHtml(assessment.summary || "当前结论仅用于研究复核。")}</p>
+        <div class="check-list">
+          ${detailRow("结论", conclusion, assistantConclusionKind(assessment.conclusion))}
+          ${detailRow("风险等级", assistantTerm(assessment.risk_level), assistantKind(assessment.risk_level))}
+          ${detailRow("研究风险预算", assistantBudget(assessment.risk_budget_pct), "warning")}
+          ${detailRow("引用证据", `${Array.isArray(assessment.evidence_ids) ? assessment.evidence_ids.length : 0} 项`, "info")}
+          ${result.mode === "model" ? detailRow("模型 Token", formatInteger(validation.usage?.total_tokens || 0), "neutral") : ""}
+        </div>
+      </article>
+    </section>
+
+    <section class="equal-layout">
+      <article class="panel">
+        ${panelHeader("证据账本", `${evidence.length} 项可追溯证据`)}
+        ${assistantEvidenceMarkup(evidence)}
+      </article>
+      <article class="panel">
+        ${panelHeader("失效条件", "任一条件出现时重新分析")}
+        ${assistantStringList(assessment.invalidation || assessment.invalidation_conditions, "当前没有额外失效条件")}
+      </article>
+    </section>
+
+    <section class="equal-layout">
+      <article class="panel">
+        ${panelHeader("决策路径", `${Array.isArray(result.decision_path) ? result.decision_path.length : 0} 个检查节点`)}
+        ${assistantDecisionPath(result.decision_path)}
+      </article>
+      <article class="panel">
+        ${panelHeader("情景复核", "条件触发，不是模型胜率")}
+        ${assistantScenarios(assessment.scenarios)}
+      </article>
+    </section>
+
+    ${assistantComparison(result.comparison)}
+  `;
+}
+
+function assistantEvidenceMarkup(items) {
+  if (!items.length) return `<div class="empty-state compact-empty"><p>当前记录没有可展示的证据项。</p></div>`;
+  return `<div class="evidence-ledger">${items.map((item, index) => {
+    const evidenceId = item.evidence_id || item.id || `E${index + 1}`;
+    const label = item.label || item.name || "分析证据";
+    const value = assistantEvidenceValue(evidenceId, item.display_value ?? item.value);
+    return `<div class="evidence-row">
+      <code>${escapeHtml(evidenceId)}</code>
+      <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(item.interpretation || item.description || "")}</span></div>
+      <span class="mono">${escapeHtml(value)}</span>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function assistantDecisionPath(items) {
+  if (!Array.isArray(items) || !items.length) return `<p class="section-note">暂无决策路径。</p>`;
+  return `<ol class="decision-path">${items.map((item) => {
+    if (typeof item === "string") return `<li><span>${escapeHtml(item)}</span></li>`;
+    const evidenceIds = Array.isArray(item.evidence_ids) ? item.evidence_ids.join(" · ") : "";
+    return `<li><div><strong>${escapeHtml(item.label || item.step || "检查")}</strong><span>${escapeHtml(assistantPathOutcome(item.outcome || item.result))}</span></div>${evidenceIds ? `<code>${escapeHtml(evidenceIds)}</code>` : ""}</li>`;
+  }).join("")}</ol>`;
+}
+
+function assistantEvidenceValue(evidenceId, value) {
+  if (value === null || value === undefined) return "—";
+  if (["momentum.return20", "risk.volatility20", "risk.atr14_pct"].includes(evidenceId)) {
+    return formatPercent(value, evidenceId === "momentum.return20");
+  }
+  if (evidenceId === "momentum.rsi14") return formatNumber(value, 1);
+  if (evidenceId === "structure.last_candle") {
+    return { BULLISH: "阳线", BEARISH: "阴线", DOJI: "十字", FLAT: "平盘" }[value] || assistantTerm(value);
+  }
+  if (evidenceId.startsWith("price.") || evidenceId.startsWith("trend.") || evidenceId.startsWith("structure.support") || evidenceId.startsWith("structure.resistance")) {
+    return typeof value === "number" ? formatNumber(value, 3) : assistantTerm(value);
+  }
+  return String(value);
+}
+
+function assistantPathOutcome(value) {
+  if (Object.prototype.hasOwnProperty.call(ASSISTANT_CONCLUSIONS, value)) {
+    return assistantConclusionLabel(value);
+  }
+  return { PASS: "通过", STOP: "终止", REVIEW: "需要复核" }[value] || value || "—";
+}
+
+function assistantScenarios(items) {
+  if (!Array.isArray(items) || !items.length) return `<p class="section-note">暂无条件情景。</p>`;
+  return `<div class="scenario-list">${items.map((item) => `<div class="scenario-row">
+    <strong>${escapeHtml(item.name || item.label || "情景")}</strong>
+    <span>${escapeHtml(item.trigger || "条件未定义")}</span>
+    <p>${escapeHtml(item.implication || item.outcome || "重新评估")}</p>
+  </div>`).join("")}</div>`;
+}
+
+function assistantStringList(items, emptyMessage) {
+  const values = Array.isArray(items) ? items : [];
+  if (!values.length) return `<p class="section-note">${escapeHtml(emptyMessage)}</p>`;
+  return `<ul class="assistant-list">${values.map((item) => `<li>${escapeHtml(typeof item === "string" ? item : item.condition || item.label || JSON.stringify(item))}</li>`).join("")}</ul>`;
+}
+
+function assistantComparison(comparison) {
+  if (!comparison || comparison.available === false) return `<aside class="callout info"><strong>首次分析</strong><p>后续同标的分析会显示与上一份已保存记录的变化。</p></aside>`;
+  const changes = Array.isArray(comparison.changes) ? comparison.changes : [];
+  let fallback = "与上一份记录相比，主要状态未变化。";
+  if (comparison.conclusion_changed) {
+    fallback = `研究结论由 ${assistantConclusionLabel(comparison.previous_conclusion)} 变为 ${assistantConclusionLabel(comparison.current_conclusion)}。`;
+  } else if (comparison.data_advanced) {
+    fallback = "行情已推进到新的完整交易日，研究结论暂未变化。";
+  }
+  const summary = comparison.summary || (changes.length ? changes.join("；") : fallback);
+  return `<aside class="callout info"><strong>与上一份记录对比</strong><p>${escapeHtml(summary)}</p></aside>`;
+}
+
+function assistantHistoryMarkup(history, activeId) {
+  return `
+    <section class="panel">
+      ${panelHeader("分析历史", "按当前登录账户隔离保存在本机")}
+      <div class="table-wrap">
+        <table class="data-table compact">
+          <thead><tr><th>生成时间</th><th>标的</th><th>数据日期</th><th>模式</th><th>结论</th><th>查看</th></tr></thead>
+          <tbody>${history.length ? history.map((item) => `<tr${item.analysis_id === activeId ? ` class="active-history-row"` : ""}>
+            <td>${formatDate(item.created_at, true)}</td>
+            <td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || instrumentName(item.symbol))}</span></td>
+            <td class="mono">${escapeHtml(item.data_date || "—")}</td>
+            <td>${escapeHtml(item.mode === "model" ? (item.validation?.model_enhanced ? "模型增强" : "模型回退") : "本地规则")}</td>
+            <td>${statusChip(assistantConclusionLabel(item.assessment?.conclusion || item.conclusion), assistantConclusionKind(item.assessment?.conclusion || item.conclusion))}</td>
+            <td><button class="button secondary history-button" type="button" data-assistant-history="${escapeHtml(item.analysis_id)}">查看</button></td>
+          </tr>`).join("") : emptyRow(6, "尚无分析记录")}</tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function assistantConclusionLabel(value) {
+  return ASSISTANT_CONCLUSIONS[value] || value || "证据不足";
+}
+
+function assistantConclusionKind(value) {
+  return { REVIEW_CANDIDATE: "warning", WATCH: "info", REDUCE_RISK: "danger", NO_ACTION: "neutral" }[value] || "neutral";
+}
+
+function assistantConclusionTone(value) {
+  return { REVIEW_CANDIDATE: "tone-warning", REDUCE_RISK: "tone-negative", WATCH: "tone-info" }[value] || "";
+}
+
+function assistantTerm(value) {
+  const terms = {
+    bullish: "偏强", bearish: "偏弱", neutral: "中性", up: "上行", down: "下行",
+    sideways: "震荡", trend: "趋势", range: "区间", expansion: "波动扩张",
+    contraction: "波动收缩", high: "高", medium: "中", low: "低",
+    mixed: "方向混合", normal: "常态", unknown: "未知", insufficient: "数据不足",
+    proceed: "进入风险复核", watch: "继续观察", stop: "证据不足", insufficient_data: "数据不足",
+  };
+  const normalized = String(value || "").toLowerCase();
+  return terms[normalized] || value || "—";
+}
+
+function assistantKind(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (["bullish", "up", "low"].includes(normalized)) return "success";
+  if (["bearish", "down", "high", "reduce_risk"].includes(normalized)) return "danger";
+  if (["medium", "sideways", "contraction", "expansion"].includes(normalized)) return "warning";
+  return "neutral";
+}
+
+function assistantTone(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (["bullish", "up"].includes(normalized)) return "tone-positive";
+  if (["bearish", "down"].includes(normalized)) return "tone-negative";
+  return "";
+}
+
+function assistantBudget(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  return formatPercent(parsed > 1 ? parsed / 100 : parsed);
+}
+
+function assistantWarning(value) {
+  const text = String(value || "");
+  if (text.includes("model_rate_limited")) return "模型服务触发限流，本次已明确回退到本地规则。";
+  if (text.includes("model_response_too_large")) return "模型响应超过安全上限，本次已明确回退到本地规则。";
+  if (text.includes("invalid_model_response")) return "模型返回内容未通过结构校验，本次已明确回退到本地规则。";
+  if (text.includes("unsafe_model_redirect")) return "模型端点发生不安全跳转，本次请求已阻断并回退到本地规则。";
+  return "模型服务当前不可用，本次已明确回退到本地规则。";
+}
+
+async function runAssistantAnalysis(form) {
+  if (state.assistantBusy) return;
+  const values = new FormData(form);
+  state.assistantBusy = true;
+  const button = form.querySelector("button[type='submit']");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "分析中";
+  }
+  try {
+    const result = await api("/api/assistant/analyze", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify({
+        symbol: String(values.get("symbol") || ""),
+        lookback: Number(values.get("lookback")),
+        mode: String(values.get("mode") || "local"),
+      }),
+    });
+    state.assistantResult = result;
+    const payload = state.data.get("assistant") || {};
+    payload.history = [result, ...(payload.history || []).filter((item) => item.analysis_id !== result.analysis_id)];
+    state.data.set("assistant", payload);
+    if (state.route === "assistant") renderRoute(payload);
+    notify("分析已完成并保存到本机历史");
+  } catch (error) {
+    notify(error.message || "分析失败", true);
+  } finally {
+    state.assistantBusy = false;
+    if (state.route === "assistant") {
+      const current = state.data.get("assistant");
+      if (current) renderRoute(current);
+    }
+  }
 }
 
 function renderPortfolio(data) {
@@ -1668,6 +2035,19 @@ document.addEventListener("click", (event) => {
     startJob(action.dataset.jobAction);
     return;
   }
+  const assistantHistory = event.target.closest("[data-assistant-history]");
+  if (assistantHistory) {
+    const payload = state.data.get("assistant") || {};
+    const selected = (payload.history || []).find(
+      (item) => item.analysis_id === assistantHistory.dataset.assistantHistory
+    );
+    if (selected) {
+      state.assistantResult = selected;
+      renderRoute(payload);
+      main.focus({ preventScroll: true });
+    }
+    return;
+  }
   const retry = event.target.closest("[data-retry]");
   if (retry) {
     loadRoute();
@@ -1697,7 +2077,10 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.id === "universe-date-form") {
+  if (event.target.id === "assistant-analysis-form") {
+    event.preventDefault();
+    runAssistantAnalysis(event.target);
+  } else if (event.target.id === "universe-date-form") {
     event.preventDefault();
     const form = new FormData(event.target);
     state.universeDate = String(form.get("date") || "");

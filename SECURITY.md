@@ -18,9 +18,21 @@ Future live submission requires every independent gate: current paper-account co
 
 Never commit or paste broker passwords, fund passwords, beta password files, exported beta-user bundles, API secrets, session cookies, private keys, or recovery phrases. Portable beta-user bundles contain offline password verifiers: distribute them privately and rotate affected passwords if a bundle leaks. The project never requires a crypto-wallet signature, token purchase, or deposit to unlock features.
 
+## AI Assistant Boundary
+
+The K-line assistant is always `research_only`. Its only valid conclusions are `NO_ACTION`, `WATCH`, `REVIEW_CANDIDATE`, and `REDUCE_RISK`. These values are research labels, not order sides. In particular, `REDUCE_RISK` means that a person should review exposure; it is not permission to sell, resize, cancel, or submit an order.
+
+Assistant output cannot create an order intent, target position, quantity, entry, stop, take-profit value, broker request, or portfolio mutation. It cannot satisfy or alter paper-promotion evidence, adapter installation, sandbox reconciliation, kill-switch state, live authorization, process confirmation, or any other trading gate. Model output remains untrusted data even after schema validation, and no response may be presented as guaranteed, profitable, certain, or suitable for a particular user.
+
+Local assistant mode works without an API key. Model-enhanced mode reads `AI_TRADE_AI_BASE_URL`, `AI_TRADE_AI_MODEL`, `AI_TRADE_AI_API_KEY`, and `AI_TRADE_AI_TIMEOUT_SECONDS` from the current Windows user's environment. Remote endpoints must use HTTPS. Plain HTTP is accepted only for a loopback host; URL credentials, query strings, fragments, and cross-origin redirects are rejected. Configure the values with `scripts/configure_ai.ps1`, which reads the key with `SecureString` and does not echo it or write a repository credential file. Use `scripts/configure_ai.ps1 -Disable` to remove all four user/process variables, then restart the workstation.
+
+The application must not persist an AI API key in assistant history, reports, logs, browser payloads, R2 snapshots, or release artifacts. Current-user environment variables are not a dedicated secret vault: any process running as that user may be able to read them. Use a provider key with the narrowest available privileges, rotate it after suspected exposure, and remember that disabling the local variables does not revoke the provider credential.
+
+Model-enhanced mode sends bounded indicators and evidence derived from the selected completed K-line window to the configured provider. Before enabling it, review the provider's retention, training, residency, and account policies. Never include broker or fund passwords, tokens, private positions, personal identifiers, material non-public information, or third-party confidential text in assistant input. A timeout, stale snapshot, malformed response, unknown conclusion, or provider failure must fail closed and never become approval to trade.
+
 ## Local Data
 
-Market caches, account state, trade journals, reports, logs, `.env`, and virtual environments are excluded from Git. Review `git status` before every push. Treat generated reports as potentially sensitive because they can reveal capital and positions.
+Market caches, assistant history, account state, trade journals, reports, logs, `.env`, and virtual environments are excluded from Git. Assistant records live under `state/assistant/`, covered by the existing `state/*` ignore rule. They are also outside the R2 market-cache allowlist, and release verification rejects any `state/` member. Review `git status` before every push. Treat generated reports and assistant history as potentially sensitive because they can reveal research interests, capital, or positions.
 
 ## Optional Cloud Storage
 
@@ -33,3 +45,5 @@ Cloud restores are fail-closed and staging-only. Archives must pass size, SHA-25
 ## Generated and External Code
 
 Review third-party strategies and patches before execution. The bundled Vibe-Trading checkout used during development is a read-only external reference and is not part of this repository.
+
+The public workflow of `rosemarycox5334-debug/PA_Agent` was reviewed only as a clean-room product reference for the K-line assistant. AI Trade does not include, adapt, or depend on PA_Agent's AGPL source code, prompts, schemas, UI, assets, or documentation text. Report any accidental provenance overlap as a security and release-integrity issue before distribution.

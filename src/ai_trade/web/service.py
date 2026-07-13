@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
+from ..assistant import AssistantEngine
 from ..broker.live_guard import evaluate_live_readiness
 from ..broker.paper import paper_status
 from ..broker.paper_audit import audit_paper
@@ -25,6 +26,7 @@ class DashboardService:
         self._lock = threading.RLock()
         self._market: MarketData | None = None
         self._market_signature: tuple[tuple[str, int], ...] | None = None
+        self._assistant: AssistantEngine | None = None
 
     def overview(self) -> dict[str, Any]:
         backtest = self._json_report("backtest_summary.json") or {}
@@ -329,6 +331,41 @@ class DashboardService:
 
         return cloud_dashboard_status(self.config, refresh=refresh)
 
+    def assistant(self, *, user_id: str) -> dict[str, Any]:
+        market = self.market()
+        available = set(market.symbols)
+        engine = self._assistant_engine()
+        return {
+            "status": engine.status(),
+            "instruments": [
+                {"symbol": item.symbol, "name": item.name}
+                for item in self.config.instruments
+                if item.symbol in available
+            ],
+            "defaults": {
+                "symbol": self.config.strategy.benchmark,
+                "lookback": 180,
+                "mode": "local",
+            },
+            "history": engine.history(user_id, limit=20),
+        }
+
+    def assistant_analyze(
+        self,
+        *,
+        symbol: str,
+        lookback: int,
+        mode: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        return self._assistant_engine().analyze(
+            self.market(),
+            symbol,
+            lookback=lookback,
+            mode=mode,
+            user_id=user_id,
+        )
+
     def save_storage_preferences(self, payload: dict[str, object]) -> dict[str, Any]:
         from ..cloud import save_cloud_dashboard_preferences
 
@@ -347,6 +384,12 @@ class DashboardService:
                 self._market = MarketData(self.config)
                 self._market_signature = signature
             return self._market
+
+    def _assistant_engine(self) -> AssistantEngine:
+        with self._lock:
+            if self._assistant is None:
+                self._assistant = AssistantEngine(self.config)
+            return self._assistant
 
     def _signal(
         self, market: MarketData, state: dict[str, Any] | None

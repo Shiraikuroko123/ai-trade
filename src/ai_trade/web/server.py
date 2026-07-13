@@ -33,6 +33,10 @@ from .service import DashboardService
 LOGGER = logging.getLogger(__name__)
 SESSION_COOKIE_NAME = "ai_trade_session"
 REPORT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+ASSISTANT_SYMBOL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:=+-]{0,63}\Z")
+ASSISTANT_MODES = frozenset({"local", "model"})
+ASSISTANT_MIN_LOOKBACK = 60
+ASSISTANT_MAX_LOOKBACK = 500
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -221,6 +225,12 @@ def _handler_factory(
                     self._json(service.system())
                 elif parsed.path == "/api/storage":
                     self._json(service.storage())
+                elif parsed.path == "/api/assistant":
+                    if parsed.query:
+                        raise ValueError(
+                            "Assistant status does not accept query parameters"
+                        )
+                    self._json(service.assistant(user_id=_assistant_user_id(context)))
                 elif parsed.path == "/api/jobs":
                     self._json({"jobs": jobs.list()})
                 elif parsed.path.startswith("/api/jobs/"):
@@ -265,7 +275,8 @@ def _handler_factory(
                     headers={"Set-Cookie": self._clear_session_cookie()},
                 )
                 return
-            if self._authorize_write() is None:
+            context = self._authorize_write()
+            if context is None:
                 return
             try:
                 if parsed.path == "/api/jobs":
@@ -277,6 +288,18 @@ def _handler_factory(
                     self._json(service.save_storage_preferences(self._read_json()))
                 elif parsed.path == "/api/storage/refresh":
                     self._json(service.storage(refresh=True))
+                elif parsed.path == "/api/assistant/analyze":
+                    symbol, lookback, mode = _parse_assistant_analyze_payload(
+                        self._read_json()
+                    )
+                    self._json(
+                        service.assistant_analyze(
+                            symbol=symbol,
+                            lookback=lookback,
+                            mode=mode,
+                            user_id=_assistant_user_id(context),
+                        )
+                    )
                 else:
                     self._json_error(HTTPStatus.NOT_FOUND, "API endpoint not found")
             except ValueError as exc:
@@ -624,6 +647,47 @@ def jobs_action_names() -> tuple[str, ...]:
     from .jobs import COMMANDS
 
     return tuple(COMMANDS)
+
+
+def _assistant_user_id(context: tuple[str, Session | None] | None) -> str:
+    if context is None or context[1] is None:
+        return "local-owner"
+    return context[1].username
+
+
+def _parse_assistant_analyze_payload(
+    payload: dict[str, object],
+) -> tuple[str, int, str]:
+    allowed = {"symbol", "lookback", "mode"}
+    unsupported = sorted(set(payload) - allowed)
+    if unsupported:
+        raise ValueError(
+            "Unsupported assistant analysis fields: " + ", ".join(unsupported)
+        )
+
+    symbol = payload.get("symbol")
+    if (
+        not isinstance(symbol, str)
+        or symbol != symbol.strip()
+        or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
+    ):
+        raise ValueError("symbol must be a valid market instrument identifier")
+
+    lookback = payload.get("lookback", 180)
+    if (
+        isinstance(lookback, bool)
+        or not isinstance(lookback, int)
+        or not ASSISTANT_MIN_LOOKBACK <= lookback <= ASSISTANT_MAX_LOOKBACK
+    ):
+        raise ValueError(
+            f"lookback must be an integer between {ASSISTANT_MIN_LOOKBACK} "
+            f"and {ASSISTANT_MAX_LOOKBACK}"
+        )
+
+    mode = payload.get("mode", "local")
+    if not isinstance(mode, str) or mode not in ASSISTANT_MODES:
+        raise ValueError("mode must be local or model")
+    return symbol, lookback, mode
 
 
 def _require_loopback(host: str) -> None:

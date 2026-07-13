@@ -231,6 +231,37 @@ class WebTests(unittest.TestCase):
             finally:
                 manager.close()
 
+    def test_job_subprocess_does_not_inherit_assistant_credentials(self):
+        config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())
+        captured = []
+
+        def start_process(*args, **kwargs):
+            captured.append(kwargs["env"])
+            return _FakeProcess(output="done\n", return_code=0)
+
+        sensitive = {
+            "AI_TRADE_AI_API_KEY": "model-secret-value",
+            "AI_TRADE_AI_BASE_URL": "https://models.example.test/v1",
+            "AI_TRADE_AI_MODEL": "example-model",
+            "AI_TRADE_AI_TIMEOUT_SECONDS": "30",
+        }
+        with (
+            patch.dict(os.environ, sensitive, clear=False),
+            patch("ai_trade.web.jobs.subprocess.Popen", side_effect=start_process),
+        ):
+            manager = JobManager(config)
+            try:
+                job = manager.submit("backtest")
+                _wait_for_job(job)
+                self.assertEqual(job.status, "succeeded", job.output)
+            finally:
+                manager.close()
+
+        self.assertEqual(len(captured), 1)
+        self.assertFalse(
+            any(name.startswith("AI_TRADE_AI_") for name in captured[0])
+        )
+
     def test_close_stops_active_startup_and_never_runs_queued_job(self):
         config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())
         popen_entered = threading.Event()

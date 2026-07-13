@@ -5,9 +5,9 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[架构](docs/ARCHITECTURE.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.9.0` 增加了可选择的“仅本地 / 本地 + R2”存储策略、云端快照清点，以及容量和 A/B 类操作的本机预算视图；腾讯网络回退、可恢复的整套缓存事务、浏览器研究工作台、内测登录、券商插件契约、订单账本与多重实盘门禁继续保留，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.10.0` 增加了可选的 AI K 线助理：无需 Key 的本地模式始终可用，模型增强模式也只能产生 `research_only` 研究结论。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、浏览器工作台、内测登录、券商插件契约、订单账本与多重实盘门禁继续保留，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
 系统已经贯通以下流程：
 
@@ -19,7 +19,8 @@
 6. 维护支持断档逐日追赶、风险冷却和幂等执行的本地模拟账户。
 7. 生成 HTML、CSV、JSON 和 Markdown 审计报告。
 8. 通过只绑定回环地址的本地浏览器工作台复盘信号、组合、交易、风险、数据和任务。
-9. 在同一工作台管理本地 / 混合存储策略、云端清点、快照备份和本机预算。
+9. 用本地规则或用户自行配置的模型复核已收盘 K 线，但只返回四类研究结论，不生成订单或改变门禁。
+10. 在同一工作台管理本地 / 混合存储策略、云端清点、快照备份和本机预算。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -49,6 +50,28 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 ![AI Trade 本地投资工作台](docs/assets/workstation-overview.png)
 
 工作台可以刷新行情、运行回测/滚动验证/稳健性验证、初始化和推进模拟账户、查看成交与拒单、审查风险门禁、下载本地报告。真实订单按钮在券商适配器、模拟门禁、沙箱对账、紧急停止和限时人工授权全部通过前保持禁用。
+
+## 可选 AI K 线助理
+
+完成上面的启动步骤后，打开命令打印的回环地址，在左侧导航选择 **AI 分析**。默认本地模式不需要 API Key；选择标的和 **回看交易日** 后即可对已完成 K 线做研究复核。助理结论只有 `NO_ACTION`、`WATCH`、`REVIEW_CANDIDATE` 和 `REDUCE_RISK`：它们都不是买卖指令，其中 `REDUCE_RISK` 也只表示需要人工检查风险，不表示自动卖出或调整仓位。
+
+需要使用自己的 OpenAI 兼容模型端点时，在 PowerShell 运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1
+# 配置完成后停止并重新启动工作台
+.\.venv\Scripts\python.exe -m ai_trade.cli serve --owner-local
+```
+
+脚本默认 Base URL 为 `https://api.openai.com/v1`，交互设置当前 Windows 用户的 `AI_TRADE_AI_BASE_URL`、`AI_TRADE_AI_MODEL`、`AI_TRADE_AI_API_KEY` 和 `AI_TRADE_AI_TIMEOUT_SECONDS`。Key 通过 `SecureString` 输入，不回显，也不会写入仓库配置、助理历史、R2 快照或发行包。远程地址必须使用 HTTPS；HTTP 只允许本机 loopback。设置后必须重启工作台，让新进程读取用户环境变量。
+
+关闭模型增强模式并继续使用零 Key 本地模式：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
+```
+
+助理始终为 `research_only`：不能创建订单意图、目标仓位、入场/止损/止盈价格，不能解锁模拟晋级、沙箱对账、人工授权、紧急停止或真实交易门禁，也不提供收益承诺。每个本地用户的历史位于 Git 忽略的 `state/assistant/`，不会进入 R2 或发行版。完整模式说明、变量约束、数据边界和故障处理见 [AI K线助理](docs/AI_ASSISTANT.md)。
 
 命令行研究流程仍可独立运行：
 
@@ -107,6 +130,7 @@ ai-trade/
 ├── local/                   # Git 忽略的云快照恢复暂存区
 ├── scripts/                 # Windows 初始化与计划任务脚本
 ├── src/ai_trade/
+│   ├── assistant/           # research-only K 线复核与本地历史存储
 │   ├── broker/              # 模拟账户、前向审计和实盘阻断
 │   ├── data/                # 行情下载、校验、快照和市场访问
 │   ├── web/                 # 零运行依赖的本地工作台、任务队列和 HTTP 防护
@@ -121,7 +145,7 @@ ai-trade/
 └── README.md
 ```
 
-行情缓存、模拟账户、成交与净值账本、日志、报告、云恢复暂存区、虚拟环境和 `.env` 不会上传 GitHub。
+行情缓存、助理历史、模拟账户、成交与净值账本、日志、报告、云恢复暂存区、虚拟环境和 `.env` 不会上传 GitHub。
 
 ## 数据安全
 
@@ -133,6 +157,8 @@ ai-trade/
 - 腾讯历史 K 线成交额按当前接口观测到的两位“万元”量化保留，即 100 元分辨率；只有在按四舍五入解释时，名义单条误差界限才是 50 元。最新日若可与报价接口严格对应，会用报价字段覆盖并在 manifest 中标记。流动性和容量判断应考虑这一非交易所担保的精度边界。
 - `MarketData` 会核对 manifest 中的 SHA-256；混合快照或手工改坏的缓存会被拒绝。
 - `doctor` 显示共同数据截止日、各标的覆盖范围、哈希及被排除的未完成日期。
+- 模型增强模式只读取当前 Windows 用户环境变量；应用不会把 API Key 写入项目文件、助理历史、报告、R2 快照或发行包。用户环境变量不是专用保险库，同一 Windows 用户下的其他进程仍可能读取它。
+- 助理历史位于 `state/assistant/`。现有 `state/*` 忽略规则阻止它进入 Git，R2 的行情 allowlist 不会读取它，发行校验也拒绝任何 `state/` 成员。
 
 ## 行情连接与降级
 
@@ -227,13 +253,15 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 
 更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。`v0.8.0` 提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的券商连接器。
 
-## 与 Vibe-Trading 的关系
+## 与外部参考项目的关系
 
 [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) 是本项目的只读 MIT 许可设计参考。本项目借鉴了它的统计验证、组合优化、换手约束、交易日志和 shadow-account 分层思路，但没有导入其 Python 包，也没有复制其 FastAPI、React、多智能体、因子库或券商连接器。
 
 当前实现按本项目的零第三方依赖要求重新编写：风险平价使用坐标下降法，统计验证使用移动区块自助法，并围绕本地 ETF 日线和模拟账户建立。任何复杂算法都必须先在连续样本外和未来模拟盘中证明不劣于简单基线，才能升级为默认值。
 
 除 Vibe-Trading 外，项目还对照了 LEAN、Qlib、NautilusTrader、VeighNa、RQAlpha、vectorbt、OpenBB、PyPortfolioOpt、cvxportfolio、Riskfolio-Lib、FinRL 和 Freqtrade。具体借鉴边界与分层路线见 [系统对照](docs/ECOSYSTEM.md)；本项目采用能力边界和设计思想，不把多个大型框架直接拼接进同一运行时。
+
+`v0.10.0` 的 AI K 线助理还以 clean-room 方式观察了公开仓库 [rosemarycox5334-debug/PA_Agent](https://github.com/rosemarycox5334-debug/PA_Agent) 的用户可见研究流程。本项目只参考“结构化行情输入、可观察分析阶段、研究结论留痕”这类抽象工作流；没有复制、改写或导入 PA_Agent 的 AGPL 源代码、Prompt、Schema、UI、资产或文档文本，也不把它作为运行时依赖。AI Trade 的助理契约、数据结构、实现和界面均为独立设计。
 
 ## 验证
 

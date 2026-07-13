@@ -11,6 +11,7 @@ from datetime import date
 from getpass import getpass
 from pathlib import Path
 
+from .assistant import AssistantEngine
 from .backtest import BacktestEngine
 from .broker.live_guard import BrokerNotConfigured, require_live_confirmation
 from .broker.paper import initialize_paper, paper_status, run_paper
@@ -93,6 +94,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     signal = subparsers.add_parser("signal", help="Show the latest target weights")
     signal.add_argument("--refresh", action="store_true")
+
+    assistant_analyze = subparsers.add_parser(
+        "assistant-analyze", help="Run one research-only assistant analysis"
+    )
+    assistant_analyze.add_argument("--symbol", required=True)
+    assistant_analyze.add_argument("--lookback", type=int, default=180)
+    assistant_analyze.add_argument(
+        "--mode", choices=("local", "model"), default="local"
+    )
 
     paper_init = subparsers.add_parser(
         "paper-init", help="Initialize the paper account"
@@ -384,6 +394,17 @@ def main(argv: list[str] | None = None) -> int:
                 market, market.latest_date()
             )
             print(json.dumps(_signal_payload(signal), ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "assistant-analyze":
+            _ensure_cache(config)
+            result = AssistantEngine(config).analyze(
+                MarketData(config),
+                args.symbol,
+                lookback=args.lookback,
+                mode=args.mode,
+                user_id="local-owner",
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "paper-init":
             state = initialize_paper(config, args.cash, args.overwrite)

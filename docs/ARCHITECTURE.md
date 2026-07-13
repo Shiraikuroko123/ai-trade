@@ -45,6 +45,34 @@ Tencent's currently observed historical kline amount field uses two decimal plac
 
 The workstation has two explicit local access profiles. Beta mode protects every data API, job, and report with a password-authenticated in-memory session and a session-bound CSRF token. Owner-local mode deliberately bypasses that login for one trusted loopback-only process; it is a convenience profile, not a remotely enforceable license.
 
+## Research-only Assistant Boundary
+
+```text
+validated completed K-line snapshot
+                 |
+                 v
+       bounded assistant input
+          |             |
+          v             v
+    local analysis   configured model API
+          |             |
+          +------+------+
+                 v
+        research_only assessment
+        NO_ACTION | WATCH
+        REVIEW_CANDIDATE | REDUCE_RISK
+                 |
+                 +------> state/assistant/ local history
+                 |
+                 X  no order intent, broker call, or gate mutation
+```
+
+The assistant is a parallel research projection from the validated market snapshot, not a stage in the order pipeline. Local mode requires no API key. Model-enhanced mode uses only the current Windows user's `AI_TRADE_AI_BASE_URL`, `AI_TRADE_AI_MODEL`, `AI_TRADE_AI_API_KEY`, and `AI_TRADE_AI_TIMEOUT_SECONDS`; a remote Base URL must use HTTPS, while plain HTTP is accepted only on a loopback host. The API key is not part of an assistant request payload, result record, report, cloud snapshot, browser response, or release artifact except where the upstream protocol carries it as an authentication header.
+
+Assistant conclusions are a closed enum. `REVIEW_CANDIDATE` requests human research review, and `REDUCE_RISK` requests human exposure review; neither is an order side or approval. Enforcement outside the model fixes `authority="research_only"` and prevents assistant data from creating an order intent, target position, entry/exit price, paper-promotion fact, sandbox reconciliation, live authorization, or changed kill-switch state. Provider failures, stale inputs, malformed responses, and unsupported conclusions fail closed.
+
+Per-user assistant records are stored under `state/assistant/`. The repository-wide `state/*` ignore rule excludes them from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history is therefore local operational state rather than a portable report or cloud backup.
+
 Future broker integrations stay outside the core runtime and enter through the `ai_trade.brokers` entry-point group:
 
 ```text
@@ -77,6 +105,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/ledger.py`: idempotent order intents, broker order events, and fills.
 - `broker/live_guard.py`: paper, configuration, adapter, reconciliation, kill-switch, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
+- `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
 - `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
 - `web/`: loopback-only authenticated HTTP server, background job manager, dashboard service, and packaged static application.
 
@@ -93,4 +122,8 @@ validated data/cache allowlist -> ZIP + snapshot manifest + SHA-256 -> private R
 private R2 namespace -> size/hash/schema/path verification -> local/cloud-restore staging
 ```
 
-R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/`, `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.
+R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/` (including `state/assistant/`), `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.
+
+## Clean-room Reference Boundary
+
+The K-line assistant was independently designed after reviewing only the public, observable research workflow of `rosemarycox5334-debug/PA_Agent`. PA_Agent is not a dependency. No AGPL source code, prompt text, schemas, UI implementation, assets, or documentation text was copied, translated, or adapted into AI Trade. The assistant's module boundaries, contracts, storage format, provider controls, and workstation presentation are native AI Trade designs.

@@ -25,6 +25,20 @@ class DistributionVerificationTests(unittest.TestCase):
         self.assertIn("ai_trade/cloud_usage.py", WHEEL_REQUIRED)
         self.assertIn("src/ai_trade/cloud_usage.py", SDIST_REQUIRED)
 
+    def test_assistant_release_surface_is_required_in_both_artifacts(self):
+        for module in (
+            "__init__.py",
+            "engine.py",
+            "features.py",
+            "provider.py",
+            "store.py",
+        ):
+            with self.subTest(module=module):
+                self.assertIn(f"ai_trade/assistant/{module}", WHEEL_REQUIRED)
+                self.assertIn(f"src/ai_trade/assistant/{module}", SDIST_REQUIRED)
+        self.assertIn("docs/AI_ASSISTANT.md", SDIST_REQUIRED)
+        self.assertIn("scripts/configure_ai.ps1", SDIST_REQUIRED)
+
     def test_disabling_cloud_preserves_the_installation_identity(self):
         source = (REPOSITORY_ROOT / "scripts/configure_cloud.ps1").read_text(
             encoding="utf-8"

@@ -179,6 +179,9 @@ class JobManager:
                 *COMMANDS[job.action],
             ]
             environment = os.environ.copy()
+            for name in tuple(environment):
+                if name.startswith("AI_TRADE_AI_"):
+                    environment.pop(name, None)
             environment["PYTHONUTF8"] = "1"
             environment[_WEB_JOB_PROTOCOL_ENV] = "1"
             creation_flags = (

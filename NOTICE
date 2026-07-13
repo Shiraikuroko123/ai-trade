@@ -8,3 +8,10 @@ https://github.com/HKUDS/Vibe-Trading
 AI Trade does not import Vibe-Trading packages or include copied Vibe-Trading
 source modules. Portfolio, validation, data, and paper-account implementations
 in this repository were independently written for this project.
+
+The public, observable research workflow of rosemarycox5334-debug/PA_Agent was
+reviewed as a clean-room product reference for the AI Trade K-line assistant.
+PA_Agent is distributed under AGPL-3.0-or-later. AI Trade does not import,
+copy, translate, or adapt PA_Agent source code, prompts, schemas, UI, assets,
+or documentation text. The assistant implementation and product contract were
+independently designed for AI Trade and PA_Agent is not a runtime dependency.
