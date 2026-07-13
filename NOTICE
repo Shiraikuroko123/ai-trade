@@ -1,0 +1,10 @@
+AI Trade
+Copyright (c) 2026 Shiraikuroko123
+
+Architecture and research-workflow concepts were informed by HKUDS/Vibe-Trading,
+which is distributed under the MIT License:
+https://github.com/HKUDS/Vibe-Trading
+
+AI Trade does not import Vibe-Trading packages or include copied Vibe-Trading
+source modules. Portfolio, validation, data, and paper-account implementations
+in this repository were independently written for this project.

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-trade"
+version = "0.4.0"
+description = "Auditable ETF rotation research, backtest, and paper-trading system"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+license = {file = "LICENSE"}
+authors = [{name = "Shiraikuroko123"}]
+keywords = ["etf", "backtest", "paper-trading", "risk-management", "china-market"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial :: Investment",
+]
+
+[project.urls]
+Homepage = "https://github.com/Shiraikuroko123/ai-trade"
+Repository = "https://github.com/Shiraikuroko123/ai-trade"
+Issues = "https://github.com/Shiraikuroko123/ai-trade/issues"
+
+[project.scripts]
+ai-trade = "ai_trade.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ai_trade = ["default_config.json"]

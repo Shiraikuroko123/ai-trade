@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/Shiraikuroko123/ai-trade/security/advisories/new
+    about: Report vulnerabilities and credential exposure privately.

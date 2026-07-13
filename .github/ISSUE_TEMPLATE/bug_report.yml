@@ -1,0 +1,41 @@
+name: Bug report
+description: Report incorrect behavior or a reproducible failure
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Run `python -m ai_trade.cli ...`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Remove credentials, account values, and sensitive positions before posting.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "Windows 11 / Python 3.10"
+    validations:
+      required: true

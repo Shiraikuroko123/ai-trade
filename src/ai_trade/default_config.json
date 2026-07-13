@@ -1,0 +1,64 @@
+{
+  "data": {
+    "provider": "eastmoney",
+    "start": "2013-01-01",
+    "end": "2099-12-31",
+    "cache_dir": "data/cache",
+    "timeout_seconds": 20,
+    "market_close_time": "15:30",
+    "adjustment": "forward"
+  },
+  "universe": [
+    {"symbol": "510300", "name": "沪深300ETF", "market": "SH", "asset": "China large cap", "lot_size": 100},
+    {"symbol": "510500", "name": "中证500ETF", "market": "SH", "asset": "China mid cap", "lot_size": 100},
+    {"symbol": "159915", "name": "创业板ETF", "market": "SZ", "asset": "China growth", "lot_size": 100},
+    {"symbol": "512100", "name": "中证1000ETF", "market": "SH", "asset": "China small cap", "lot_size": 100},
+    {"symbol": "513100", "name": "纳指ETF", "market": "SH", "asset": "US technology", "lot_size": 100},
+    {"symbol": "513500", "name": "标普500ETF", "market": "SH", "asset": "US large cap", "lot_size": 100},
+    {"symbol": "518880", "name": "黄金ETF", "market": "SH", "asset": "Gold", "lot_size": 100},
+    {"symbol": "511010", "name": "国债ETF", "market": "SH", "asset": "China treasury", "lot_size": 100}
+  ],
+  "strategy": {
+    "benchmark": "510300",
+    "rebalance_days": 20,
+    "lookback_days": 126,
+    "skip_days": 5,
+    "trend_sma_days": 200,
+    "volatility_days": 20,
+    "top_n": 3,
+    "minimum_momentum": 0.0,
+    "target_annual_volatility": 0.12,
+    "minimum_cash_weight": 0.05,
+    "max_position_weight": 0.35,
+    "covariance_days": 60,
+    "covariance_shrinkage": 0.25,
+    "minimum_average_amount": 5000000.0,
+    "minimum_rebalance_weight": 0.02,
+    "weighting_method": "inverse_volatility",
+    "risk_model": "conservative_sum"
+  },
+  "risk": {
+    "max_portfolio_drawdown": 0.15,
+    "max_daily_loss": 0.035,
+    "cooldown_days": 20
+  },
+  "costs": {
+    "commission_bps": 2.0,
+    "slippage_bps": 3.0,
+    "minimum_commission": 5.0
+  },
+  "backtest": {
+    "initial_cash": 100000.0,
+    "start": "2016-01-01",
+    "end": "2099-12-31"
+  },
+  "paper": {
+    "initial_cash": 100000.0,
+    "state_file": "state/paper_state.json",
+    "trades_file": "state/paper_trades.csv",
+    "equity_file": "state/paper_equity.csv",
+    "minimum_promotion_sessions": 60
+  },
+  "reports_dir": "reports",
+  "logs_dir": "logs"
+}
