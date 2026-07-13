@@ -3,6 +3,11 @@ include NOTICE
 include README.md
 include CHANGELOG.md
 include SECURITY.md
+include PRODUCT.md
+include DESIGN.md
 recursive-include config *.json
 recursive-include docs *.md
+recursive-include docs/assets *.png
 recursive-include scripts *.ps1
+recursive-include scripts *.py
+recursive-include src/ai_trade/web/assets *.html *.css *.js

@@ -141,7 +141,7 @@ def download_instrument(
     }
     request = urllib.request.Request(
         f"{ENDPOINT}?{urllib.parse.urlencode(params)}",
-        headers={"User-Agent": "Mozilla/5.0 ai-trade/0.5.0"},
+        headers={"User-Agent": "Mozilla/5.0 ai-trade/0.6.0"},
     )
     timeout = int(config.raw["data"].get("timeout_seconds", 20))
     payload = None

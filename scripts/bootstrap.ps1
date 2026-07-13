@@ -9,8 +9,8 @@ if (-not (Test-Path $Python)) {
 
 & $Python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
 if ($LASTEXITCODE -ne 0) { throw "AI Trade requires Python 3.10 or newer" }
-& $Python -m pip install --disable-pip-version-check wheel==0.45.1
-if ($LASTEXITCODE -ne 0) { throw "Failed to install the pinned build dependency" }
+& $Python -m pip install --disable-pip-version-check --upgrade setuptools==82.0.1 wheel==0.45.1
+if ($LASTEXITCODE -ne 0) { throw "Failed to install the pinned build dependencies" }
 & $Python -m pip install --disable-pip-version-check --no-build-isolation -e $ProjectRoot
 if ($LASTEXITCODE -ne 0) { throw "Failed to install AI Trade" }
 & $Python -m unittest discover -s (Join-Path $ProjectRoot 'tests') -v

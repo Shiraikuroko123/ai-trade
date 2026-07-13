@@ -83,6 +83,19 @@
     "rejections_file": "state/paper_rejections.csv",
     "minimum_promotion_sessions": 60
   },
+  "broker": {
+    "mode": "disabled",
+    "adapter": null,
+    "account_id": null,
+    "sandbox_minimum_reconciliations": 20,
+    "reconciliation_file": "state/broker_reconciliation.csv",
+    "orders_file": "state/broker_orders.csv",
+    "fills_file": "state/broker_fills.csv",
+    "authorization_file": "state/live_authorization.json",
+    "kill_switch_file": "state/LIVE_KILL_SWITCH",
+    "max_order_notional": 50000.0,
+    "max_daily_notional": 100000.0
+  },
   "reports_dir": "reports",
   "logs_dir": "logs"
 }

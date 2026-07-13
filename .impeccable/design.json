@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-13T15:02:52.9195344+08:00",
+  "title": "Design System: AI Trade",
+  "extensions": {
+    "colorMeta": {
+      "closing-bell-honey": {
+        "role": "primary",
+        "displayName": "Closing Bell Honey",
+        "canonical": "oklch(0.76 0.15 78)",
+        "tonalRamp": ["oklch(0.18 0.05 78)", "oklch(0.28 0.07 78)", "oklch(0.40 0.10 78)", "oklch(0.52 0.13 78)", "oklch(0.64 0.15 78)", "oklch(0.76 0.15 78)", "oklch(0.86 0.10 78)", "oklch(0.95 0.04 78)"]
+      },
+      "ledger-teal": {
+        "role": "secondary",
+        "displayName": "Ledger Teal",
+        "canonical": "oklch(0.45 0.09 195)",
+        "tonalRamp": ["oklch(0.16 0.04 195)", "oklch(0.27 0.06 195)", "oklch(0.38 0.08 195)", "oklch(0.49 0.09 195)", "oklch(0.60 0.08 195)", "oklch(0.72 0.06 195)", "oklch(0.84 0.04 195)", "oklch(0.95 0.02 195)"]
+      },
+      "graphite-ink": {
+        "role": "neutral",
+        "displayName": "Graphite Ink",
+        "canonical": "oklch(0.24 0.018 250)",
+        "tonalRamp": ["oklch(0.15 0.015 250)", "oklch(0.24 0.018 250)", "oklch(0.36 0.018 250)", "oklch(0.48 0.016 250)", "oklch(0.60 0.014 250)", "oklch(0.72 0.012 250)", "oklch(0.84 0.008 250)", "oklch(0.96 0.004 250)"]
+      },
+      "clear-desk": {
+        "role": "neutral",
+        "displayName": "Clear Desk",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": ["oklch(0.20 0 0)", "oklch(0.32 0 0)", "oklch(0.44 0 0)", "oklch(0.56 0 0)", "oklch(0.68 0 0)", "oklch(0.80 0 0)", "oklch(0.92 0 0)", "oklch(1 0 0)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": {"displayName": "Page Headline", "purpose": "Compact workflow titles only."},
+      "body": {"displayName": "Operational Body", "purpose": "Sustained review copy and explanations."},
+      "numeric": {"displayName": "Ledger Numeric", "purpose": "Comparable figures and identifiers."}
+    },
+    "shadows": [],
+    "motion": [
+      {"name": "state-fast", "value": "170ms ease-out", "purpose": "Button and compact state feedback."},
+      {"name": "state-standard", "value": "220ms ease-out", "purpose": "Panel and navigation state changes."}
+    ],
+    "breakpoints": [
+      {"name": "compact-mobile", "value": "560px"},
+      {"name": "mobile-navigation", "value": "820px"},
+      {"name": "compact-desktop", "value": "1120px"}
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single highest-authority command in a workflow region.",
+      "html": "<button class=\"ds-button-primary\">运行模拟日</button>",
+      "css": ".ds-button-primary { min-height: 44px; padding: 0.55rem 0.85rem; border: 1px solid var(--honey); border-radius: 6px; background: var(--honey); color: var(--ink); font: 680 0.83rem 'Segoe UI', sans-serif; transition: background-color 170ms ease-out, border-color 170ms ease-out; } .ds-button-primary:hover { background: var(--honey-hover); border-color: var(--honey-hover); } .ds-button-primary:focus-visible { outline: 3px solid color-mix(in oklch, var(--focus) 42%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A familiar bordered command for non-primary operations.",
+      "html": "<button class=\"ds-button-secondary\">刷新视图</button>",
+      "css": ".ds-button-secondary { min-height: 44px; padding: 0.55rem 0.85rem; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--desk); color: var(--ink); font: 680 0.83rem 'Segoe UI', sans-serif; transition: background-color 170ms ease-out, border-color 170ms ease-out; } .ds-button-secondary:hover { background: var(--surface-strong); border-color: var(--ink-soft); } .ds-button-secondary:focus-visible { outline: 3px solid color-mix(in oklch, var(--focus) 42%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "A compact text-bearing status; semantic color never stands alone.",
+      "html": "<span class=\"ds-status-chip\">当前阶段</span>",
+      "css": ".ds-status-chip { display: inline-flex; align-items: center; min-height: 28px; padding: 0.2rem 0.55rem; border: 1px solid var(--warning); border-radius: 999px; background: var(--warning-soft); color: var(--warning); font: 650 0.75rem 'Segoe UI', sans-serif; }"
+    },
+    {
+      "name": "Date Field",
+      "kind": "input",
+      "description": "A standard native field for historical snapshot selection.",
+      "html": "<label class=\"ds-field\">历史截面日期<input type=\"date\" value=\"2026-07-10\"></label>",
+      "css": ".ds-field { display: grid; gap: 0.25rem; color: var(--ink-soft); font: 400 0.875rem 'Segoe UI', sans-serif; } .ds-field input { min-height: 44px; padding: 0.45rem 0.65rem; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--desk); color: var(--ink); } .ds-field input:focus-visible { outline: 3px solid color-mix(in oklch, var(--focus) 42%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Active Navigation Item",
+      "kind": "nav",
+      "description": "Current location with stable geometry and scarce honey emphasis.",
+      "html": "<a class=\"ds-nav-active\" href=\"#overview\">总览</a>",
+      "css": ".ds-nav-active { display: flex; align-items: center; min-height: 44px; padding: 0.55rem 0.75rem; border-radius: 6px; background: var(--honey-soft); color: var(--ink); font: 600 0.9rem 'Segoe UI', sans-serif; text-decoration: none; } .ds-nav-active:focus-visible { outline: 3px solid color-mix(in oklch, var(--focus) 42%, transparent); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Closing Desk",
+    "overview": "AI Trade feels like a well-run investment desk after the market closes: bright enough for sustained review, dense enough for evidence comparison, and quiet enough that warnings and permissions remain unmistakable.",
+    "keyCharacteristics": [
+      "Evidence appears before action.",
+      "Honey-amber is reserved for current authority and primary commands.",
+      "Tables, charts, ledgers, and gate checks share one compact vocabulary.",
+      "Research, paper, sandbox, and live-disabled stages are never visually conflated.",
+      "Motion communicates state in 150–250 ms and disappears under reduced-motion preferences."
+    ],
+    "rules": [
+      {"name": "The Ten Percent Rule", "body": "Closing Bell Honey occupies no more than ten percent of a screen. Its rarity tells the user where authority sits.", "section": "colors"},
+      {"name": "The Signed State Rule", "body": "Profit, loss, success, and failure always pair color with a sign, label, or familiar symbol.", "section": "colors"},
+      {"name": "The Numeric Alignment Rule", "body": "Comparable financial figures use tabular numerals and align by sign or decimal.", "section": "typography"},
+      {"name": "The Accounting Surface Rule", "body": "A shadow never implies accounting ownership. Ledgers, positions, and limits use structure and labels.", "section": "elevation"}
+    ],
+    "dos": [
+      "Do show data dates, model configuration, account stage, and live permissions near decision surfaces.",
+      "Do keep repeated workflows compact, keyboard-accessible, and readable at 200% zoom.",
+      "Do explain errors as what happened, why it matters, and the next valid action.",
+      "Do preserve every core workflow on mobile through structural reflow.",
+      "Do keep real-order controls visibly disabled until every independent gate passes."
+    ],
+    "donts": [
+      "Don't use profit-guarantee marketing, countdown urgency, social proof, or language implying the model cannot lose.",
+      "Don't use flashing red/green gambling-terminal aesthetics or decorative ticker walls.",
+      "Don't use opaque AI-agent theatre where commentary replaces deterministic evidence, parameters, and code.",
+      "Don't use marketing hero layouts, oversized slogans, glassmorphism, purple-blue gradients, or endless decorative card grids.",
+      "Don't hide stale data, rejected orders, drawdown, configuration drift, or unavailable live permissions."
+    ]
+  }
+}

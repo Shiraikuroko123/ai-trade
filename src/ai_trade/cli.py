@@ -15,6 +15,7 @@ from .broker.paper_audit import audit_paper, save_paper_audit
 from .config import AppConfig, load_config
 from .data.eastmoney import download_universe
 from .data.market import MarketData
+from .diagnostics import diagnose
 from .report import save_backtest_report
 from .strategy import MomentumTrendStrategy
 from .validation import run_robustness_validation, save_validation_report
@@ -64,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
     universe.add_argument("--date", help="YYYY-MM-DD; defaults to today")
     subparsers.add_parser("doctor", help="Check configuration, cache, and latest market date")
     subparsers.add_parser("live-check", help="Verify the live-trading guard; does not submit orders")
+    serve = subparsers.add_parser("serve", help="Start the local AI Trade workstation")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--no-open", action="store_true", help="Do not open a browser")
     return parser
 
 
@@ -170,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor":
             _ensure_cache(config)
             market = MarketData(config)
-            diagnosis = _doctor(config, market)
+            diagnosis = diagnose(config, market)
             print(json.dumps(diagnosis, ensure_ascii=False, indent=2))
             return 0 if diagnosis["status"] == "OK" else 1
         if args.command == "live-check":
@@ -178,6 +183,16 @@ def main(argv: list[str] | None = None) -> int:
             raise BrokerNotConfigured(
                 "Live guard is open, but no broker adapter is configured. Select a broker before live use."
             )
+        if args.command == "serve":
+            from .web.server import serve_dashboard
+
+            serve_dashboard(
+                config,
+                host=args.host,
+                port=args.port,
+                open_browser=not args.no_open,
+            )
+            return 0
     except Exception as exc:
         logging.getLogger(__name__).exception("Command failed")
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -251,55 +266,6 @@ def _signal_payload(signal) -> dict[str, object]:
         "reason": signal.reason,
         "diagnostics": signal.diagnostics,
         "ranking": [item.__dict__ for item in signal.ranked],
-    }
-
-
-def _doctor(config: AppConfig, market: MarketData) -> dict[str, object]:
-    coverage = {}
-    latest_dates = []
-    active_symbols = set(market.active_symbols(market.latest_date()))
-    active_symbols.add(config.strategy.benchmark)
-    for symbol, item in market.symbols.items():
-        if symbol in active_symbols:
-            latest_dates.append(item.bars[-1].date)
-        coverage[symbol] = {
-            "name": item.instrument.name,
-            "active": symbol in active_symbols,
-            "rows": len(item.bars),
-            "first": item.bars[0].date.isoformat(),
-            "last": item.bars[-1].date.isoformat(),
-            "sha256": market.file_hashes[symbol],
-            "excluded_incomplete_dates": [
-                value.isoformat() for value in market.excluded_dates[symbol]
-            ],
-        }
-    aligned = len(set(latest_dates)) == 1
-    research_warnings = []
-    if config.security_master.metadata.get("selection_method") == "curated_static":
-        research_warnings.append(
-            "Default universe is curated_static and does not remove survivorship bias"
-        )
-    if config.raw["data"].get("adjustment") != "none":
-        research_warnings.append(
-            "Adjusted bars are still used for simulated execution; raw prices and corporate "
-            "actions are not yet separated"
-        )
-    return {
-        "status": "OK" if aligned else "WARNING",
-        "config": str(config.path),
-        "completed_session_cutoff": market.completed_through.isoformat(),
-        "latest_market_date": market.latest_date().isoformat(),
-        "universe_latest_dates_aligned": aligned,
-        "point_in_time_universe": {
-            "name": config.universe_name,
-            "active_count": len(market.active_symbols(market.latest_date())),
-            "loaded_instrument_count": len(config.instruments),
-            "selection_method": config.security_master.metadata.get("selection_method"),
-            "security_master_sha256": config.security_master.fingerprint(),
-        },
-        "research_warnings": research_warnings,
-        "coverage": coverage,
-        "live_trading": "DISABLED",
     }
 
 

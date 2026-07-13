@@ -26,7 +26,26 @@ point-in-time universe -> signal factors -> portfolio constraints
                     |                               |
                     +---------------+---------------+
                                     v
-                             auditable reports
+                         auditable reports
+                                    |
+                                    v
+                    loopback-only local workstation
+```
+
+Future broker integrations stay outside the core runtime and enter through the `ai_trade.brokers` entry-point group:
+
+```text
+frozen paper epoch -> promotion gate -> broker sandbox adapter
+                                          |
+                         account / position / order reconciliation
+                                          |
+                         consecutive clean reconciliation gate
+                                          |
+                    expiring account-bound human authorization
+                                          |
+                kill switch + pre-trade limits + live environment check
+                                          |
+                              live order router
 ```
 
 ## Boundaries
@@ -40,7 +59,13 @@ point-in-time universe -> signal factors -> portfolio constraints
 - `validation.py`: moving-block bootstrap, cost stress, sensitivity, and regime diagnostics.
 - `broker/paper.py`: locked, idempotent, append-only local paper execution.
 - `broker/paper_audit.py`: independent-forward ledger checks and promotion gates.
+- `broker/base.py`: broker environments, account/position/order/fill contracts, and plugin discovery.
+- `broker/reconciliation.py`: account and position comparison plus append-only sandbox evidence.
+- `broker/ledger.py`: idempotent order intents, broker order events, and fills.
+- `broker/live_guard.py`: paper, configuration, adapter, reconciliation, kill-switch, authorization, and process-confirmation gates.
+- `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
+- `web/`: loopback-only HTTP server, background job manager, dashboard service, and packaged static application.
 
-Live broker submission is deliberately absent.
+No broker adapter ships with the project. The live route exists so its safety contract can be tested before credentials or broker-specific code are introduced; with the default configuration it cannot submit an order.
 
 The security-master schema removes a fixed instrument-count assumption, but the default master remains a curated ETF universe. A professional stock universe additionally requires licensed or independently verified point-in-time constituent and corporate-action data; the architecture does not treat a current constituent list as historical truth.

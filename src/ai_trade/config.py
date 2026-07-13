@@ -12,6 +12,10 @@ from .models import CostSettings, Instrument, RiskSettings, StrategySettings
 from .security import SecurityMaster
 
 
+DEFAULT_BROKER_MAX_ORDER_NOTIONAL = 50_000.0
+DEFAULT_BROKER_MAX_DAILY_NOTIONAL = 100_000.0
+
+
 @dataclass(frozen=True)
 class AppConfig:
     path: Path
@@ -57,6 +61,42 @@ class AppConfig:
     def paper_rejections_file(self) -> Path:
         return self.resolve(
             self.raw["paper"].get("rejections_file", "state/paper_rejections.csv")
+        )
+
+    @property
+    def broker_reconciliation_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("broker", {}).get(
+                "reconciliation_file", "state/broker_reconciliation.csv"
+            )
+        )
+
+    @property
+    def broker_orders_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("broker", {}).get("orders_file", "state/broker_orders.csv")
+        )
+
+    @property
+    def broker_fills_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("broker", {}).get("fills_file", "state/broker_fills.csv")
+        )
+
+    @property
+    def live_authorization_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("broker", {}).get(
+                "authorization_file", "state/live_authorization.json"
+            )
+        )
+
+    @property
+    def live_kill_switch_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("broker", {}).get(
+                "kill_switch_file", "state/LIVE_KILL_SWITCH"
+            )
         )
 
     def active_symbols(self, on_date: date) -> tuple[str, ...]:
@@ -229,6 +269,7 @@ def _validate(
         raise ValueError("paper.initial_cash must be positive")
     if int(raw["paper"].get("minimum_promotion_sessions", 60)) < 20:
         raise ValueError("paper.minimum_promotion_sessions must be at least 20")
+    _validate_broker(raw.get("broker", {}))
 
 
 def _validate_costs(costs: CostSettings) -> None:
@@ -281,3 +322,52 @@ def _validate_costs(costs: CostSettings) -> None:
             previous_end = previous[1]
             if previous_end is None or current[0] <= previous_end:
                 raise ValueError(f"Overlapping cost history for {instrument_type}")
+
+
+def _validate_broker(value: dict[str, Any]) -> None:
+    mode = value.get("mode", "disabled")
+    if mode not in {"disabled", "sandbox", "live"}:
+        raise ValueError("broker.mode must be disabled, sandbox, or live")
+    if mode in {"sandbox", "live"}:
+        for name in ("adapter", "account_id"):
+            configured = value.get(name)
+            if not isinstance(configured, str) or not configured.strip():
+                raise ValueError(f"broker.{name} is required in {mode} mode")
+    raw_minimum = value.get("sandbox_minimum_reconciliations", 20)
+    if isinstance(raw_minimum, bool) or not isinstance(raw_minimum, int):
+        raise ValueError("broker.sandbox_minimum_reconciliations must be an integer")
+    minimum = raw_minimum
+    if minimum < 5:
+        raise ValueError("broker.sandbox_minimum_reconciliations must be at least 5")
+    defaults = {
+        "max_order_notional": DEFAULT_BROKER_MAX_ORDER_NOTIONAL,
+        "max_daily_notional": DEFAULT_BROKER_MAX_DAILY_NOTIONAL,
+    }
+    for name, default in defaults.items():
+        raw_amount = value.get(name, default)
+        if isinstance(raw_amount, bool):
+            raise ValueError(f"broker.{name} must be finite and positive")
+        amount = float(raw_amount)
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError(f"broker.{name} must be finite and positive")
+    if float(value.get("max_daily_notional", defaults["max_daily_notional"])) < float(
+        value.get("max_order_notional", defaults["max_order_notional"])
+    ):
+        raise ValueError("broker.max_daily_notional must cover at least one maximum order")
+    path_defaults = {
+        "reconciliation_file": "state/broker_reconciliation.csv",
+        "orders_file": "state/broker_orders.csv",
+        "fills_file": "state/broker_fills.csv",
+        "authorization_file": "state/live_authorization.json",
+        "kill_switch_file": "state/LIVE_KILL_SWITCH",
+    }
+    configured_paths: dict[str, str] = {}
+    for name, default_path in path_defaults.items():
+        raw_path = value.get(name, default_path)
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError(f"broker.{name} must be a non-empty path")
+        normalized = str(Path(raw_path)).casefold()
+        previous = configured_paths.get(normalized)
+        if previous is not None:
+            raise ValueError(f"broker.{name} must differ from broker.{previous}")
+        configured_paths[normalized] = name

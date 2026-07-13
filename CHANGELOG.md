@@ -2,6 +2,17 @@
 
 All notable changes are documented here. The project follows semantic versioning while it remains experimental.
 
+## 0.6.0 - 2026-07-13
+
+- Added a packaged, zero-runtime-dependency local workstation with overview, research, portfolio, trading, risk, universe, and system views.
+- Added loopback-only HTTP serving with strict Host validation, per-process write tokens, cross-origin write denial, security headers, and scoped local report downloads.
+- Added cancellable serialized background jobs for data refresh, research validation, paper initialization, paper execution, and paper audit.
+- Added broker plugin contracts, sandbox/live environments, account/position/order/fill models, append-only intent/order/fill ledgers, and configuration-bound reconciliation evidence.
+- Added fail-closed live readiness gates for current paper evidence, installed adapter/account identity, consecutive sandbox reconciliation, kill switch, expiring authorization, live configuration fingerprint, and explicit process confirmation.
+- Added pre-trade checks for point-in-time universe membership, trading status, lots, ticks, daily price limits, available cash/positions, cumulative sells, order limits, and atomically reserved daily notional.
+- Added market freshness and report-snapshot diagnostics, first-use recovery states, visible strategy/risk configuration, and responsive browser QA across desktop and mobile layouts.
+- Hardened clean bootstrap, wheel/sdist content verification, fresh-environment installation smoke tests, and CI release checks.
+
 ## 0.5.0 - 2026-07-13
 
 - Added a versioned security master with listing/delisting dates, dated universe memberships, trading-status periods, provenance, and a point-in-time inspection command.

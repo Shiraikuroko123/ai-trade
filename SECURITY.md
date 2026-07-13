@@ -10,7 +10,9 @@ Do not open a public issue for credential exposure, command execution, data-inte
 
 ## Trading Boundary
 
-AI Trade is a research and local paper-trading tool. It has no working live-broker adapter. The `live-check` command requires an explicit environment confirmation and still fails because no broker is configured.
+AI Trade is a research and local paper-trading tool. It has no bundled working live-broker adapter. The local workstation binds only to a loopback address, validates the Host header, denies cross-origin writes, and requires a per-process write token for state-changing jobs.
+
+Future live submission requires every independent gate: current paper-account configuration, forward promotion eligibility, an installed adapter and account, consecutive clean sandbox reconciliations bound to the active configuration, a clear kill switch, a matching unexpired authorization file, explicit live mode, and the exact process-level risk confirmation. Pre-trade checks also enforce the active universe, lot and tick sizes, daily price limits, broker-available cash/positions, single-order limits, and reserved daily notional.
 
 Never commit or paste broker passwords, fund passwords, API secrets, session cookies, private keys, or recovery phrases. The project never requires a crypto-wallet signature, token purchase, or deposit to unlock features.
 

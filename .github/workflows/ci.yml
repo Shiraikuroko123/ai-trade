@@ -34,9 +34,13 @@ jobs:
 
   powershell:
     runs-on: windows-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
       - name: Parse PowerShell scripts
         shell: powershell
         run: |
@@ -53,3 +57,38 @@ jobs:
             $errors
             exit 1
           }
+      - name: Bootstrap clean checkout
+        shell: powershell
+        run: .\scripts\bootstrap.ps1
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install build frontend
+        run: python -m pip install --disable-pip-version-check build==1.2.2.post1
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Verify distribution contents
+        run: python scripts/verify_distribution.py dist
+      - name: Smoke-test wheel installation
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -c "from importlib.resources import files; root = files('ai_trade.web.assets'); assert all(root.joinpath(name).is_file() for name in ('index.html', 'app.css', 'app.js'))"
+          "$RUNNER_TEMP/wheel-venv/bin/ai-trade" --help
+          "$RUNNER_TEMP/wheel-venv/bin/ai-trade" init --directory "$RUNNER_TEMP/wheel-workspace"
+      - name: Smoke-test source distribution installation
+        run: |
+          python -m venv "$RUNNER_TEMP/sdist-venv"
+          "$RUNNER_TEMP/sdist-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --no-deps dist/*.tar.gz
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/sdist-venv/bin/python" -c "from importlib.resources import files; root = files('ai_trade.web.assets'); assert all(root.joinpath(name).is_file() for name in ('index.html', 'app.css', 'app.js'))"
+          "$RUNNER_TEMP/sdist-venv/bin/ai-trade" --help
+          "$RUNNER_TEMP/sdist-venv/bin/ai-trade" init --directory "$RUNNER_TEMP/sdist-workspace"

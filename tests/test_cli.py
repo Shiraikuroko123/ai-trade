@@ -3,10 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_trade.cli import main
+from ai_trade.cli import build_parser, main
 
 
 class CliTests(unittest.TestCase):
+    def test_serve_parser_defaults_to_loopback(self):
+        args = build_parser().parse_args(["serve"])
+        self.assertEqual(args.host, "127.0.0.1")
+        self.assertEqual(args.port, 8765)
+
     def test_packaged_default_matches_repository_config(self):
         root = Path(__file__).resolve().parents[1]
         repository = json.loads((root / "config/default.json").read_text(encoding="utf-8"))

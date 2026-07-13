@@ -1,8 +1,13 @@
 # AI Trade
 
-[架构](docs/ARCHITECTURE.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[![CI](https://github.com/Shiraikuroko123/ai-trade/actions/workflows/ci.yml/badge.svg)](https://github.com/Shiraikuroko123/ai-trade/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Shiraikuroko123/ai-trade)](https://github.com/Shiraikuroko123/ai-trade/releases)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-这是一个可审计的系统化投资研究与模拟交易工程。默认策略仍使用 A 股场内 ETF 日线，只做多、不加杠杆；底层标的池已改为时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。实盘下单没有实现，并由安全检查保持关闭。
+[架构](docs/ARCHITECTURE.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+
+这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.6.0` 增加了浏览器工作台、后台研究任务、券商插件契约、沙箱对账、订单账本与多重实盘门禁，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
 系统已经贯通以下流程：
 
@@ -13,6 +18,7 @@
 5. 运行历史回测、沪深 300 ETF 基准对比和连续滚动样本外验证。
 6. 维护支持断档逐日追赶、风险冷却和幂等执行的本地模拟账户。
 7. 生成 HTML、CSV、JSON 和 Markdown 审计报告。
+8. 通过只绑定回环地址的本地浏览器工作台复盘信号、组合、交易、风险、数据和任务。
 
 历史收益不代表未来结果。本项目不承诺盈利，不应在未经人工检查、数据口径确认和长期模拟验证的情况下用于实盘。
 
@@ -25,6 +31,18 @@ git clone https://github.com/Shiraikuroko123/ai-trade.git
 cd ai-trade
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 .\.venv\Scripts\python.exe -m ai_trade.cli download --force
+.\.venv\Scripts\python.exe -m ai_trade.cli serve
+```
+
+`serve` 会打印并打开类似 `http://127.0.0.1:8765/` 的地址。必须使用命令行实际打印的 HTTP 地址；不要直接双击 `src/ai_trade/web/assets/index.html`。端口占用时可以使用 `serve --port 8877`。
+
+![AI Trade 本地投资工作台](docs/assets/workstation-overview.png)
+
+工作台可以刷新行情、运行回测/滚动验证/稳健性验证、初始化和推进模拟账户、查看成交与拒单、审查风险门禁、下载本地报告。真实订单按钮在券商适配器、模拟门禁、沙箱对账、紧急停止和限时人工授权全部通过前保持禁用。
+
+命令行研究流程仍可独立运行：
+
+```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli universe-status
 .\.venv\Scripts\python.exe -m ai_trade.cli doctor
 .\.venv\Scripts\python.exe -m ai_trade.cli backtest
@@ -63,6 +81,7 @@ ai-trade/
 ├── src/ai_trade/
 │   ├── broker/              # 模拟账户、前向审计和实盘阻断
 │   ├── data/                # 行情下载、校验、快照和市场访问
+│   ├── web/                 # 零运行依赖的本地工作台、任务队列和 HTTP 防护
 │   ├── backtest.py          # 事件驱动回测
 │   ├── security.py          # 时点证券主数据与动态标的池
 │   ├── strategy.py          # 信号、流动性和组合风险预算
@@ -104,7 +123,7 @@ ai-trade/
 
 ## 当前研究证据
 
-数据截止 2026-07-10，`v0.5.0` 默认配置的全历史年化收益约 10.16%、Sharpe 约 1.12、最大回撤约 -11.81%；连续滚动样本外账户年化约 11.28%、Sharpe 约 1.23、最大回撤约 -14.01%。1,000 次移动区块 Bootstrap 的年化收益 95% 区间约为 4.21% 至 17.45%，较差 5% 路径的最大回撤约 -23.78%。
+数据截止 2026-07-10，`v0.6.0` 默认配置的全历史年化收益约 10.16%、Sharpe 约 1.12、最大回撤约 -11.81%；连续滚动样本外账户年化约 11.28%、Sharpe 约 1.23、最大回撤约 -14.01%。1,000 次移动区块 Bootstrap 的年化收益 95% 区间约为 4.21% 至 17.45%，较差 5% 路径的最大回撤约 -23.78%。
 
 这些历史窗口已经用于工程和模型判断，不再是独立最终检验集。它们只能说明当前实现值得继续模拟，不能说明未来会取得相同收益；下一份真正独立的证据来自版本冻结后的未来模拟盘。
 
@@ -123,6 +142,8 @@ ai-trade/
 - `state/paper_rejections.csv`：停牌、涨跌停或前置卖单失败造成的可审计拒单账本。
 - `state/paper_equity.csv`：带配置指纹和行情快照 ID 的逐交易日前向净值账本。
 - `paper_audit.json`、`paper_audit.md`：账本完整性、前向指标和券商沙盒晋级门槛。
+
+工作台“系统”页会验证报告是否与当前行情快照一致，并允许在本机下载已生成的 `.html`、`.json`、`.csv` 和 `.md` 报告；路径穿越和其他文件后缀会被拒绝。
 
 ## 模拟盘语义
 
@@ -160,7 +181,7 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 - 股票池扩容前仍缺少可靠的历史成分、ST/停复牌、退市、逐时点复权因子与公司行动数据；仅把今天的沪深 300 名单塞进回测会产生错误结论。
 - 当前 500 万元流动性阈值和风险模型已经参考过现有历史及滚动窗口结果，因此这些“样本外”窗口也已成为开发数据，不再是完全未触碰的最终检验集。下一阶段独立证据只能来自未来模拟盘。
 
-更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。
+更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。`v0.6.0` 提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的券商连接器。
 
 ## 与 Vibe-Trading 的关系
 

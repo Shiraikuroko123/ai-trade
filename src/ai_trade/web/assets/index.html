@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
+  <title>AI Trade | 投资工作台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="app.css?v=0.6.0">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">AT</div>
+        <div>
+          <strong>AI Trade</strong>
+          <span>投资工作台</span>
+        </div>
+      </div>
+
+      <div class="operating-stage">
+        <span class="stage-label">当前权限</span>
+        <strong>前向模拟</strong>
+        <span class="stage-lock">真实下单已锁定</span>
+      </div>
+
+      <nav class="primary-nav" aria-label="工作台视图">
+        <a href="#overview" data-route="overview">总览</a>
+        <a href="#research" data-route="research">研究</a>
+        <a href="#portfolio" data-route="portfolio">组合</a>
+        <a href="#trading" data-route="trading">交易</a>
+        <a href="#risk" data-route="risk">风险</a>
+        <a href="#universe" data-route="universe">数据</a>
+        <a href="#system" data-route="system">系统</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="connection-line">
+          <span id="connection-dot" class="connection-dot" aria-hidden="true"></span>
+          <span id="connection-label">正在连接本机</span>
+        </span>
+        <span id="version-label">AI Trade</span>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div class="topbar-title">
+          <strong class="mobile-brand">AI Trade</strong>
+          <span id="route-context">投资工作台</span>
+          <h1 id="route-title">总览</h1>
+        </div>
+        <div class="topbar-tools">
+          <span id="market-date" class="quiet-meta">数据日期待确认</span>
+          <span id="job-indicator" class="status-chip neutral">无运行任务</span>
+          <button id="refresh-view" class="button secondary" type="button">刷新视图</button>
+        </div>
+      </header>
+
+      <main id="main-content" tabindex="-1" aria-busy="true"></main>
+    </section>
+  </div>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="app.js?v=0.6.0" defer></script>
+</body>
+</html>
