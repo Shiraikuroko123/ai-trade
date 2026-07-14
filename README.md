@@ -55,6 +55,93 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 
 `serve --owner-local` 只适合工作区所有者在自己的可信电脑上使用，它保留回环地址限制但跳过内测登录。命令会打印并打开类似 `http://127.0.0.1:8765/` 的地址；不要直接双击 `src/ai_trade/web/assets/index.html`。端口占用时可以增加 `--port 8877`。
 
+### Windows 后台运行与登录自启
+
+工作台必须有一个本地 Python 进程运行，但不需要一直显示 PowerShell 窗口。源码克隆用户完成 `bootstrap.ps1` 后，可以在仓库根目录执行以下命令隐藏启动一次：
+
+```powershell
+$Root = (Get-Location).Path
+$Python = Join-Path $Root '.venv\Scripts\python.exe'
+$Config = Join-Path $Root 'config\default.json'
+
+if (Get-NetTCPConnection -LocalPort 8877 -State Listen -ErrorAction SilentlyContinue) {
+    throw '8877 端口已经被占用；请先确认现有服务。'
+}
+
+Start-Process `
+  -FilePath $Python `
+  -ArgumentList @(
+    '-m', 'ai_trade.cli',
+    '--config', $Config,
+    'serve', '--owner-local',
+    '--host', '127.0.0.1',
+    '--port', '8877',
+    '--no-open'
+  ) `
+  -WorkingDirectory $Root `
+  -WindowStyle Hidden
+```
+
+若希望每次登录 Windows 自动启动，在仓库根目录用普通 PowerShell 执行一次下面的注册命令，不需要另外保存脚本文件：
+
+```powershell
+$Root = (Get-Location).Path
+$Python = Join-Path $Root '.venv\Scripts\python.exe'
+$Config = Join-Path $Root 'config\default.json'
+$User = "$env:USERDOMAIN\$env:USERNAME"
+$ServerCommand = "& '$Python' -m ai_trade.cli --config '$Config' serve --owner-local --host 127.0.0.1 --port 8877 --no-open"
+
+$Action = New-ScheduledTaskAction `
+  -Execute 'powershell.exe' `
+  -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$ServerCommand`"" `
+  -WorkingDirectory $Root
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
+$Principal = New-ScheduledTaskPrincipal `
+  -UserId $User `
+  -LogonType Interactive `
+  -RunLevel Limited
+$Settings = New-ScheduledTaskSettingsSet `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -RestartCount 3 `
+  -RestartInterval (New-TimeSpan -Minutes 1) `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) `
+  -MultipleInstances IgnoreNew
+
+Register-ScheduledTask `
+  -TaskName 'AI Trade Workstation' `
+  -Action $Action `
+  -Trigger $Trigger `
+  -Principal $Principal `
+  -Settings $Settings `
+  -Description 'Start the loopback-only AI Trade workstation at sign-in.' `
+  -Force
+Start-ScheduledTask -TaskName 'AI Trade Workstation'
+```
+
+等待数秒后打开 `http://127.0.0.1:8877/`，并检查版本：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8877/api/bootstrap |
+  Select-Object version
+```
+
+更新代码或用户级 AI/R2 环境变量后，重启任务让新进程重新读取配置：
+
+```powershell
+Stop-ScheduledTask -TaskName 'AI Trade Workstation' -ErrorAction SilentlyContinue
+Start-ScheduledTask -TaskName 'AI Trade Workstation'
+```
+
+不再需要自动启动时执行：
+
+```powershell
+Stop-ScheduledTask -TaskName 'AI Trade Workstation' -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
+```
+
+任务只绑定 `127.0.0.1`，并从当前 Windows 用户环境继承可选 AI/R2 配置；密钥不写入任务参数。共享电脑或朋友部署不要使用 `--owner-local`，应改用内测登录模式。wheel 用户也可以使用同一方法，但要把 `$Python` 和 `$Config` 改为自己的虚拟环境与独立工作区路径。
+
 朋友或其他内测部署默认需要账号。用户文件只保存加盐密码验证器并位于 Git 忽略的 `state/`：
 
 ```powershell
