@@ -16,6 +16,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [Riskfolio-Lib](https://github.com/dcajasn/Riskfolio-Lib) | Broad portfolio-risk optimization | Reference for CVaR and hierarchical risk research |
 | [FinRL](https://github.com/AI4Finance-Foundation/FinRL) | Reinforcement-learning experiments | Isolated research only; never promoted without strict leakage and forward tests |
 | [Freqtrade](https://github.com/freqtrade/freqtrade) | Operational lifecycle, monitoring and strategy deployment | Reference for health checks and promotion stages; crypto execution is out of scope |
+| [KLineChart](https://github.com/klinecharts/KLineChart) | Browser K-line rendering and interaction | Pinned local 10.0.0 renderer for read-only completed-session charts; AI Trade owns data, aggregation, indicators, provenance, and trading boundaries |
 
 ## Hosted Platforms Worth Comparing
 
@@ -34,6 +35,8 @@ Hosted results depend on each provider's data license, adjustment policy, fill m
 5. Execution applies date-effective fees and market rules, records rejections, and sells before buying.
 6. Accounting and audit remain independent from strategy ranking.
 7. Historical validation can promote a model only to future paper testing, never directly to live trading.
+8. Eastmoney is a bounded primary data route and Tencent Finance is an auditable network fallback; neither public endpoint is treated as exchange-certified or guaranteed.
+9. The market workstation renders only local validated completed snapshots. Indicator and chart controls are observations, not strategy mutations or order signals.
 
 ## What Is Deliberately Not Adopted
 

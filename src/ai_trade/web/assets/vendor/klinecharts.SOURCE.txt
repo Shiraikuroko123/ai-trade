@@ -1,0 +1,32 @@
+KLineChart browser bundle provenance
+
+Package: klinecharts@10.0.0
+Registry tarball: https://registry.npmjs.org/klinecharts/-/klinecharts-10.0.0.tgz
+Source repository: https://github.com/klinecharts/KLineChart
+License: Apache-2.0
+Retrieved: 2026-07-14
+
+npm dist shasum (SHA-1): 0c40e7eeafd72b31c2e49f851cb5ad5f353da27a
+npm dist integrity: sha512-njopc5Wwff83l9R750Yrj+EcmQUe7JUwN4xgmmwhUPX30jd7ZLabBQT5s2+yTaAk98MMqglCE6vqrSnek/ppbg==
+Downloaded tarball SHA-256: 6ce59e6080abfc4768ae9c294964168d979d5c3821c366635ae3da0a96eafd6f
+
+Vendored files copied without modification from the npm package:
+
+klinecharts.min.js
+  Upstream path: dist/umd/klinecharts.min.js
+  SHA-256: 00eb7cd35fc003f733a430fd7381283def849fca0aa08b1fccdb17a49c73fd15
+
+klinecharts.LICENSE.txt
+  Upstream path: LICENSE
+  SHA-256: ff8311d55ca5766d3888c688b0ecc0f292289a659e45bfee4dfc0870ab74e4ca
+
+klinecharts.NOTICE.txt
+  Upstream path: NOTICE
+  SHA-256: e2a48226872b013c897676c3ae1b65dbebcbdd8d3fdcc29fed5073c3d6e5e231
+
+lightweight-charts.LICENSE.txt
+  Upstream path: licenses/LICENSE-lightweight-charts
+  SHA-256: 53c3bce42b068bd4c9a7831e18d4d7e7eab1b9cd00b8a3faac0aa96793c99bc5
+
+The UMD bundle exposes globalThis.klinecharts and reports version 10.0.0.
+The package does not ship or require a separate CSS file.

@@ -2,7 +2,7 @@
 
 ## Supported Version
 
-Only the latest release on `main` is supported.
+Only `v0.12.0`, the latest release on `main`, is supported. Earlier prerelease tags and GitHub Release objects are not supported distribution channels.
 
 ## Reporting a Vulnerability
 
@@ -13,6 +13,8 @@ Do not open a public issue for credential exposure, command execution, data-inte
 AI Trade is a research and local paper-trading tool. It has no bundled working live-broker adapter. The local workstation binds only to a loopback address, validates the Host header, and denies cross-origin writes. Beta mode stores only PBKDF2 password verifiers in the Git-ignored `state/` directory, keeps sessions in memory, uses `HttpOnly`/`SameSite=Strict` cookies, and binds every write token to the authenticated session. `serve --owner-local` deliberately bypasses beta login for the owner on a trusted local machine; it must never be treated as remote access control.
 
 Neither a successful Eastmoney/Tencent refresh nor a cloud backup is a live-trading authorization or a warranty of data fitness. Public provider responses can be unavailable, revised, rounded, or inconsistent with exchange-grade feeds. The manifest records provider routing and declared precision so operators can audit a snapshot, but that evidence does not replace independent data validation. The project provides no investment advice, performance guarantee, or bundled route capable of placing a real order.
+
+The market-chart API is authenticated and read-only. It accepts only configured instruments, bounded bar counts, and daily/weekly/monthly periods; it reads verified completed-session files without downloading data, creating transaction locks, recovering interrupted writes, changing strategies, or mutating account state. A pending or changing snapshot fails closed into an unavailable response. Chart indicators are derived display values, not order instructions.
 
 Future live submission requires every independent gate: current paper-account configuration, forward promotion eligibility, an installed adapter and account, consecutive clean sandbox reconciliations bound to the active configuration, a clear kill switch, a matching unexpired authorization file, explicit live mode, and the exact process-level risk confirmation. Pre-trade checks also enforce the active universe, lot and tick sizes, daily price limits, broker-available cash/positions, single-order limits, and reserved daily notional.
 
@@ -45,5 +47,7 @@ Cloud restores are fail-closed and staging-only. Archives must pass size, SHA-25
 ## Generated and External Code
 
 Review third-party strategies and patches before execution. The bundled Vibe-Trading checkout used during development is a read-only external reference and is not part of this repository.
+
+The release vendors KLineChart `10.0.0` under Apache-2.0. Its bundle, notices, license texts, and provenance record are shipped locally and verified by fixed SHA-256 values in both wheel and source distributions. Changing any vendored byte requires an explicit version, license, provenance, hash, and browser review.
 
 The public workflow of `rosemarycox5334-debug/PA_Agent` was reviewed only as a clean-room product reference for the K-line assistant. AI Trade does not include, adapt, or depend on PA_Agent's AGPL source code, prompts, schemas, UI, assets, or documentation text. Report any accidental provenance overlap as a security and release-integrity issue before distribution.

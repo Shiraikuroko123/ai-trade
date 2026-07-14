@@ -9,7 +9,7 @@ import json
 from ..config import AppConfig
 from ..models import Bar, Instrument
 from ..security import TradingStatus
-from .cache_snapshot import readable_snapshot
+from .cache_snapshot import non_mutating_snapshot, readable_snapshot
 from .eastmoney import completed_session_cutoff, load_cached_bars
 
 
@@ -22,9 +22,16 @@ class SymbolData:
 
 
 class MarketData:
-    def __init__(self, config: AppConfig, as_of: datetime | None = None):
+    def __init__(
+        self,
+        config: AppConfig,
+        as_of: datetime | None = None,
+        *,
+        recover_snapshot: bool = True,
+    ):
         self.config = config
-        with readable_snapshot(config.cache_dir):
+        snapshot = readable_snapshot if recover_snapshot else non_mutating_snapshot
+        with snapshot(config.cache_dir):
             self._initialize(as_of)
 
     def _initialize(self, as_of: datetime | None) -> None:
@@ -138,10 +145,16 @@ class MarketData:
 
     def _load_and_validate_manifest(self) -> dict[str, object] | None:
         path = self.config.cache_dir / "manifest.json"
+        self.manifest_sha256: str | None = None
         if not path.exists():
             return None
         try:
-            manifest = json.loads(path.read_text(encoding="utf-8"))
+            raw_manifest = path.read_bytes()
+            manifest = json.loads(raw_manifest.decode("utf-8"))
+            if not isinstance(manifest, dict):
+                raise RuntimeError(
+                    f"Invalid cache manifest: {path}: top-level JSON must be an object"
+                )
             if manifest.get("provider") != self.config.raw["data"]["provider"]:
                 raise RuntimeError("Cache manifest provider does not match configuration")
             configured_adjustment = self.config.raw["data"].get("adjustment", "none")
@@ -154,6 +167,7 @@ class MarketData:
                     raise RuntimeError(
                         f"Cache hash mismatch for {symbol}; refresh the complete data snapshot"
                     )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.manifest_sha256 = sha256(raw_manifest).hexdigest()
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Invalid cache manifest: {path}: {exc}") from exc
         return manifest

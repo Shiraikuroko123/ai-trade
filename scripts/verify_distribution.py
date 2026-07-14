@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from email.parser import Parser
+import hashlib
 import re
 import tarfile
 import zipfile
@@ -32,6 +33,11 @@ WHEEL_REQUIRED = {
     "ai_trade/web/assets/auth.css",
     "ai_trade/web/assets/auth.js",
     "ai_trade/web/assets/login.html",
+    "ai_trade/web/assets/vendor/klinecharts.min.js",
+    "ai_trade/web/assets/vendor/klinecharts.LICENSE.txt",
+    "ai_trade/web/assets/vendor/klinecharts.NOTICE.txt",
+    "ai_trade/web/assets/vendor/klinecharts.SOURCE.txt",
+    "ai_trade/web/assets/vendor/lightweight-charts.LICENSE.txt",
     "ai_trade/web/auth.py",
 }
 
@@ -84,7 +90,30 @@ SDIST_REQUIRED = {
     "src/ai_trade/web/assets/auth.css",
     "src/ai_trade/web/assets/auth.js",
     "src/ai_trade/web/assets/login.html",
+    "src/ai_trade/web/assets/vendor/klinecharts.min.js",
+    "src/ai_trade/web/assets/vendor/klinecharts.LICENSE.txt",
+    "src/ai_trade/web/assets/vendor/klinecharts.NOTICE.txt",
+    "src/ai_trade/web/assets/vendor/klinecharts.SOURCE.txt",
+    "src/ai_trade/web/assets/vendor/lightweight-charts.LICENSE.txt",
     "src/ai_trade/web/auth.py",
+}
+
+VENDORED_FILES_SHA256 = {
+    "vendor/klinecharts.min.js": (
+        "00eb7cd35fc003f733a430fd7381283def849fca0aa08b1fccdb17a49c73fd15"
+    ),
+    "vendor/klinecharts.LICENSE.txt": (
+        "ff8311d55ca5766d3888c688b0ecc0f292289a659e45bfee4dfc0870ab74e4ca"
+    ),
+    "vendor/klinecharts.NOTICE.txt": (
+        "e2a48226872b013c897676c3ae1b65dbebcbdd8d3fdcc29fed5073c3d6e5e231"
+    ),
+    "vendor/klinecharts.SOURCE.txt": (
+        "5cc1c693d4c4343721c3ea6826298276444be7ab0e4e6ea98a7b3b84b1d362e1"
+    ),
+    "vendor/lightweight-charts.LICENSE.txt": (
+        "53c3bce42b068bd4c9a7831e18d4d7e7eab1b9cd00b8a3faac0aa96793c99bc5"
+    ),
 }
 
 BANNED_PARTS = {
@@ -218,6 +247,14 @@ def main(argv: list[str] | None = None) -> int:
         wheel_names = archive.namelist()
         _verify_safe_unique_names(wheel_names, wheel.name)
         _scan_zip_text(archive, wheel_names, wheel.name)
+        _verify_zip_hashes(
+            archive,
+            {
+                f"ai_trade/web/assets/{name}": digest
+                for name, digest in VENDORED_FILES_SHA256.items()
+            },
+            wheel.name,
+        )
         wheel_version = _wheel_version(archive, wheel_names, wheel.name)
     wheel_members = set(wheel_names)
     _require_members(wheel_members, WHEEL_REQUIRED, wheel.name)
@@ -229,6 +266,15 @@ def main(argv: list[str] | None = None) -> int:
         sdist_names = [member.name for member in archive_members]
         _verify_safe_unique_names(sdist_names, sdist.name)
         _scan_tar_text(archive, archive_members, sdist.name)
+        _verify_tar_hashes(
+            archive,
+            archive_members,
+            {
+                f"src/ai_trade/web/assets/{name}": digest
+                for name, digest in VENDORED_FILES_SHA256.items()
+            },
+            sdist.name,
+        )
         sdist_version = _sdist_version(archive, archive_members, sdist.name)
     sdist_members = _strip_sdist_root(sdist_names, sdist.name)
     _require_members(sdist_members, SDIST_REQUIRED, sdist.name)
@@ -425,6 +471,53 @@ def _scan_tar_text(
         if handle is None:
             raise SystemExit(f"{archive_name} could not read text file: {member.name}")
         _verify_text_content(member.name, handle.read(), archive_name)
+
+
+def _verify_zip_hashes(
+    archive: zipfile.ZipFile,
+    expected: dict[str, str],
+    archive_name: str,
+) -> None:
+    for name, digest in expected.items():
+        try:
+            content = archive.read(name)
+        except KeyError as exc:
+            raise SystemExit(f"{archive_name} is missing hashed file: {name}") from exc
+        _verify_sha256(name, content, digest, archive_name)
+
+
+def _verify_tar_hashes(
+    archive: tarfile.TarFile,
+    members: list[tarfile.TarInfo],
+    expected: dict[str, str],
+    archive_name: str,
+) -> None:
+    files: dict[str, tarfile.TarInfo] = {}
+    for member in members:
+        path = PurePosixPath(member.name)
+        if member.isfile() and len(path.parts) > 1:
+            files[PurePosixPath(*path.parts[1:]).as_posix()] = member
+    for name, digest in expected.items():
+        member = files.get(name)
+        if member is None:
+            raise SystemExit(f"{archive_name} is missing hashed file: {name}")
+        handle = archive.extractfile(member)
+        if handle is None:
+            raise SystemExit(f"{archive_name} could not read hashed file: {name}")
+        _verify_sha256(name, handle.read(), digest, archive_name)
+
+
+def _verify_sha256(
+    name: str,
+    content: bytes,
+    expected: str,
+    archive_name: str,
+) -> None:
+    actual = hashlib.sha256(content).hexdigest()
+    if actual != expected:
+        raise SystemExit(
+            f"{archive_name} has an unexpected SHA-256 for {name}: {actual}"
+        )
 
 
 def _is_text_member(name: str) -> bool:

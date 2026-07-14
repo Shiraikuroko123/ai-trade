@@ -28,6 +28,11 @@ include src/ai_trade/web/assets/auth.css
 include src/ai_trade/web/assets/auth.js
 include src/ai_trade/web/assets/index.html
 include src/ai_trade/web/assets/login.html
+include src/ai_trade/web/assets/vendor/klinecharts.min.js
+include src/ai_trade/web/assets/vendor/klinecharts.LICENSE.txt
+include src/ai_trade/web/assets/vendor/klinecharts.NOTICE.txt
+include src/ai_trade/web/assets/vendor/klinecharts.SOURCE.txt
+include src/ai_trade/web/assets/vendor/lightweight-charts.LICENSE.txt
 prune local
 prune tests
 prune state

@@ -1,5 +1,6 @@
 ---
 name: AI Trade
+version: "0.12.0"
 description: A calm, auditable workstation for systematic investment decisions.
 colors:
   closing-bell-honey: "oklch(0.76 0.15 78)"
@@ -94,6 +95,7 @@ This is an operational product, not a marketing surface. Information arrives in 
 
 **Key Characteristics:**
 
+- The release baseline is the `v0.12.0` local workstation, including the professional read-only market view.
 - Evidence appears before action.
 - Honey-amber is reserved for current authority and primary commands.
 - Tables, charts, ledgers, and gate checks share one compact vocabulary.
@@ -191,11 +193,16 @@ Desktop uses a fixed 224px sidebar with compact 44px rows. Mobile replaces it at
 
 Canvas charts have fixed responsive height, high-DPI rendering, two named series at most, restrained grid lines, three date labels, and a visible text summary. A chart with insufficient points renders an explanatory state rather than an empty canvas.
 
+### Market Workstation
+
+The market route uses locally vendored KLineChart assets and keeps price, volume, and one oscillator in a stable three-pane layout. Daily, weekly, and monthly modes share one control vocabulary. Source provider, adjustment, data date, completion cutoff, manifest hash, symbol-file hash, and stale/missing status remain adjacent to the chart. A-share red-up/green-down color always carries signed text, and mobile reorders the quote strip below the chart so the primary inspection surface appears first without hiding evidence.
+
 ## 6. Do's and Don'ts
 
 ### Do:
 
 - **Do** show data dates, model configuration, account stage, and live permissions near decision surfaces.
+- **Do** keep chart controls usable at 320px and destroy chart instances when leaving the market route.
 - **Do** keep repeated workflows compact, keyboard-accessible, and readable at 200% zoom.
 - **Do** explain errors as what happened, why it matters, and the next valid action.
 - **Do** preserve every core workflow on mobile through structural reflow.
@@ -208,4 +215,5 @@ Canvas charts have fixed responsive height, high-DPI rendering, two named series
 - **Don't** use opaque AI-agent theatre where commentary replaces deterministic evidence, parameters, and code.
 - **Don't** use marketing hero layouts, oversized slogans, glassmorphism, purple-blue gradients, or endless decorative card grids.
 - **Don't** hide stale data, rejected orders, drawdown, configuration drift, or unavailable live permissions.
+- **Don't** imply that a daily chart is intraday, real-time, exchange-certified, or an order-entry surface.
 - **Don't** use colored side-stripe borders, gradient text, decorative grid backgrounds, or shadows on ordinary accounting surfaces.

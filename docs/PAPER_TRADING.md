@@ -1,5 +1,7 @@
 # Paper Trading Operations
 
+This document describes the `v0.12.0` first-public-release paper-account baseline. Paper execution remains isolated from the read-only market chart, AI assistant, strategy-lab candidate editing, cloud backup, and the unavailable live-broker route.
+
 ## Daily Flow
 
 ```powershell
@@ -26,6 +28,8 @@ Changing the strategy, risk, dated fee tables, security-master contents, selecte
 ```powershell
 python -m ai_trade.cli paper-init --overwrite
 ```
+
+A strategy-lab approval or activation does not modify this default account. Its exported configuration forces `broker.mode=disabled` and uses candidate-specific state and report paths; the operator must initialize and advance that separate paper profile explicitly.
 
 ## Promotion
 

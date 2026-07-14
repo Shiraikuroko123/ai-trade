@@ -7,7 +7,7 @@
 
 [架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。`v0.11.0` 增加了策略实验室：人工调参与无需 Key 的本地 AI 建议具有相同权限，只能创建不可变候选；候选必须使用同一行情快照完成基线对照、留出集、成本、回撤与稳定性验证，再经人工批准，才能导出为独立模拟配置。可选 AI K 线助理仍只有 `research_only` 权限。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商插件契约、订单账本与多重实盘门禁继续保留，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+`v0.12.0` 是 AI Trade 的首个公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商插件契约、订单账本与多重实盘门禁均已纳入首发基线，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
 系统已经贯通以下流程：
 
@@ -19,13 +19,29 @@
 6. 维护支持断档逐日追赶、风险冷却和幂等执行的本地模拟账户。
 7. 生成 HTML、CSV、JSON 和 Markdown 审计报告。
 8. 通过只绑定回环地址的本地浏览器工作台复盘信号、组合、交易、风险、数据和任务。
-9. 用本地规则或用户自行配置的模型复核已收盘 K 线，但只返回四类研究结论，不生成订单或改变门禁。
-10. 在同一工作台管理本地 / 混合存储策略、云端清点、快照备份和本机预算。
-11. 在每个登录用户隔离的策略实验室中创建、验证、批准、导出、激活和回滚模拟策略版本。
+9. 在独立行情页审阅日/周/月 OHLCV、技术指标、快照证据和当前模拟账户成交标记，不隐式刷新或写入状态。
+10. 用本地规则或用户自行配置的模型复核已收盘 K 线，但只返回四类研究结论，不生成订单或改变门禁。
+11. 在同一工作台管理本地 / 混合存储策略、云端清点、快照备份和本机预算。
+12. 在每个登录用户隔离的策略实验室中创建、验证、批准、导出、激活和回滚模拟策略版本。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
 ## 快速开始
+
+推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.12.0) 安装首个公开发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
+
+```powershell
+New-Item -ItemType Directory -Force .\AI-Trade-v0.12.0 | Out-Null
+Set-Location .\AI-Trade-v0.12.0
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.12.0/ai_trade-0.12.0-py3-none-any.whl"
+.\.venv\Scripts\ai-trade.exe init --directory .\workspace
+Set-Location .\workspace
+..\.venv\Scripts\ai-trade.exe download --force
+..\.venv\Scripts\ai-trade.exe serve --owner-local
+```
+
+Release 页面同时提供源码包和 `SHA256SUMS.txt`；下载文件后可用 `Get-FileHash .\文件名 -Algorithm SHA256` 与清单核对。开发者或需要配置脚本的用户可克隆源码：
 
 在 PowerShell 中运行：
 
@@ -51,6 +67,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 ![AI Trade 本地投资工作台](docs/assets/workstation-overview.png)
 
 工作台可以刷新行情、运行回测/滚动验证/稳健性验证、初始化和推进模拟账户、查看成交与拒单、审查风险门禁、下载本地报告。真实订单按钮在券商适配器、模拟门禁、沙箱对账、紧急停止和限时人工授权全部通过前保持禁用。
+
+## 专业行情工作台
+
+左侧 **行情** 视图使用随 wheel 本地分发的 KLineChart 10.0.0，不访问 CDN。后端只接受配置证券、`day/week/month` 周期和有界根数；周/月 OHLCV 由已验证日线按自然周期确定性聚合，日期使用该周期最后一个实际交易日，不补造交易会话。页面同时显示配置数据源、实际回退来源、复权口径、已完成交易日、manifest 与行情文件指纹。缓存缺失或陈旧时会明确显示恢复状态，不会在 GET 请求中下载或改写数据。
+
+图表操作只改变当前浏览器视图。指标切换、缩放、十字线和模拟成交标记不会修改策略候选、活动模拟配置、持仓账本、云端快照或券商权限。分钟线、分时、盘口和实时推送尚未接入；项目不会用日线伪造这些数据。
 
 ## 可选 AI K 线助理
 
@@ -165,7 +187,7 @@ ai-trade/
 
 东方财富历史 K 线是公开外部接口，可能在 DNS、TCP 和 TLS 均正常时，仍对特定历史请求在返回 HTTP 状态码前主动断开。这类 `RemoteDisconnected` 通常表示路径级限流、WAF 或区域边缘节点异常，不代表整个东方财富网站不可达，也不能通过反复快速重试可靠修复。
 
-`v0.8.0` 默认把东方财富限制为每支证券最多 2 次请求；明确的解析、业务响应和本地校验错误不会重试。刷新级传输熔断打开后，剩余证券直接走腾讯网络回退，避免继续扩大上游限制。可在 `data/cache/manifest.json` 的 `source`、`network_errors` 和 `request_policy.eastmoney_circuit_breaker` 中审计实际路线，或运行：
+首发版本默认把东方财富限制为每支证券最多 2 次请求；明确的解析、业务响应和本地校验错误不会重试。刷新级传输熔断打开后，剩余证券直接走腾讯网络回退，避免继续扩大上游限制。可在 `data/cache/manifest.json` 的 `source`、`network_errors` 和 `request_policy.eastmoney_circuit_breaker` 中审计实际路线，或运行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli doctor
@@ -193,7 +215,7 @@ ai-trade/
 
 ## 当前研究证据
 
-数据截止 2026-07-13，这组研究证据由 `v0.8.0` 在同一默认策略配置下重建：全历史年化收益约 10.00%、Sharpe 约 1.10、最大回撤约 -11.81%；连续滚动样本外账户年化约 11.12%、Sharpe 约 1.21、最大回撤约 -14.01%。1,000 次移动区块 Bootstrap 的年化收益 95% 区间约为 4.66% 至 17.34%，较差 5% 路径的最大回撤约 -24.12%。4/4 研究门槛通过，但 `live_ready=false`，这些结果仍不是实盘授权。
+数据截止 2026-07-13，这组首发研究证据在同一默认策略配置下重建：全历史年化收益约 10.00%、Sharpe 约 1.10、最大回撤约 -11.81%；连续滚动样本外账户年化约 11.12%、Sharpe 约 1.21、最大回撤约 -14.01%。1,000 次移动区块 Bootstrap 的年化收益 95% 区间约为 4.66% 至 17.34%，较差 5% 路径的最大回撤约 -24.12%。4/4 研究门槛通过，但 `live_ready=false`，这些结果仍不是实盘授权。
 
 这些历史窗口已经用于工程和模型判断，不再是独立最终检验集。它们只能说明当前实现值得继续模拟，不能说明未来会取得相同收益；下一份真正独立的证据来自版本冻结后的未来模拟盘。
 
@@ -252,7 +274,7 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 - 股票池扩容前仍缺少可靠的历史成分、ST/停复牌、退市、逐时点复权因子与公司行动数据；仅把今天的沪深 300 名单塞进回测会产生错误结论。
 - 当前 500 万元流动性阈值和风险模型已经参考过现有历史及滚动窗口结果，因此这些“样本外”窗口也已成为开发数据，不再是完全未触碰的最终检验集。下一阶段独立证据只能来自未来模拟盘。
 
-更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。`v0.8.0` 提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的券商连接器。
+更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。首发版本提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的券商连接器。
 
 ## 与外部参考项目的关系
 
@@ -262,12 +284,18 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 
 除 Vibe-Trading 外，项目还对照了 LEAN、Qlib、NautilusTrader、VeighNa、RQAlpha、vectorbt、OpenBB、PyPortfolioOpt、cvxportfolio、Riskfolio-Lib、FinRL 和 Freqtrade。具体借鉴边界与分层路线见 [系统对照](docs/ECOSYSTEM.md)；本项目采用能力边界和设计思想，不把多个大型框架直接拼接进同一运行时。
 
-`v0.10.0` 的 AI K 线助理还以 clean-room 方式观察了公开仓库 [rosemarycox5334-debug/PA_Agent](https://github.com/rosemarycox5334-debug/PA_Agent) 的用户可见研究流程。本项目只参考“结构化行情输入、可观察分析阶段、研究结论留痕”这类抽象工作流；没有复制、改写或导入 PA_Agent 的 AGPL 源代码、Prompt、Schema、UI、资产或文档文本，也不把它作为运行时依赖。AI Trade 的助理契约、数据结构、实现和界面均为独立设计。
+首发版本的 AI K 线助理还以 clean-room 方式观察了公开仓库 [rosemarycox5334-debug/PA_Agent](https://github.com/rosemarycox5334-debug/PA_Agent) 的用户可见研究流程。本项目只参考“结构化行情输入、可观察分析阶段、研究结论留痕”这类抽象工作流；没有复制、改写或导入 PA_Agent 的 AGPL 源代码、Prompt、Schema、UI、资产或文档文本，也不把它作为运行时依赖。AI Trade 的助理契约、数据结构、实现和界面均为独立设计。
 
 ## 验证
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m ruff check src tests scripts
+.\.venv\Scripts\python.exe -m compileall -q src tests scripts
+node --check .\src\ai_trade\web\assets\app.js
+.\.venv\Scripts\python.exe -m pip install build==1.2.2.post1
+.\.venv\Scripts\python.exe -m build
+.\.venv\Scripts\python.exe .\scripts\verify_distribution.py .\dist
 .\.venv\Scripts\python.exe -m ai_trade.cli doctor
 .\.venv\Scripts\python.exe -m ai_trade.cli validate
 .\.venv\Scripts\python.exe -m ai_trade.cli live-check

@@ -15,3 +15,12 @@ PA_Agent is distributed under AGPL-3.0-or-later. AI Trade does not import,
 copy, translate, or adapt PA_Agent source code, prompts, schemas, UI, assets,
 or documentation text. The assistant implementation and product contract were
 independently designed for AI Trade and PA_Agent is not a runtime dependency.
+
+This distribution includes the KLineChart 10.0.0 browser bundle, distributed
+under the Apache License 2.0:
+https://github.com/klinecharts/KLineChart
+
+KLineChart includes portions of TradingView Lightweight Charts. The upstream
+notices and complete license texts are preserved in
+src/ai_trade/web/assets/vendor/ (source distribution) and
+ai_trade/web/assets/vendor/ (installed package).

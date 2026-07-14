@@ -38,6 +38,10 @@ ASSISTANT_SYMBOL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:=+-]{0,63}\Z")
 ASSISTANT_MODES = frozenset({"local", "model"})
 ASSISTANT_MIN_LOOKBACK = 60
 ASSISTANT_MAX_LOOKBACK = 500
+MARKET_CHART_PERIODS = frozenset({"day", "week", "month"})
+MARKET_CHART_MIN_LIMIT = 60
+MARKET_CHART_MAX_LIMIT = 1500
+MARKET_CHART_DEFAULT_LIMIT = 240
 STRATEGY_LAB_CANDIDATE_PATH = re.compile(
     r"/api/strategy-lab/candidates/(cand_[0-9a-f]{32})(?:/(validate|approve|export|activate))?\Z"
 )
@@ -232,6 +236,15 @@ def _handler_factory(
                     self._json(service.system())
                 elif parsed.path == "/api/storage":
                     self._json(service.storage())
+                elif parsed.path == "/api/market-chart":
+                    symbol, period, limit = _parse_market_chart_query(parsed.query)
+                    self._json(
+                        service.market_chart(
+                            symbol=symbol,
+                            period=period,
+                            limit=limit,
+                        )
+                    )
                 elif parsed.path == "/api/assistant":
                     if parsed.query:
                         raise ValueError(
@@ -657,6 +670,7 @@ def _handler_factory(
                 "/index.html": "index.html",
                 "/app.css": "app.css",
                 "/app.js": "app.js",
+                "/vendor/klinecharts.min.js": "vendor/klinecharts.min.js",
                 "/login": "login.html",
                 "/login.html": "login.html",
                 "/auth.css": "auth.css",
@@ -825,6 +839,50 @@ def _parse_assistant_analyze_payload(
     if not isinstance(mode, str) or mode not in ASSISTANT_MODES:
         raise ValueError("mode must be local or model")
     return symbol, lookback, mode
+
+
+def _parse_market_chart_query(query: str) -> tuple[str, str, int]:
+    if len(query) > 256:
+        raise ValueError("Market chart query is too long")
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=10,
+        )
+    except ValueError as exc:
+        raise ValueError("Market chart query is invalid") from exc
+    unsupported = sorted(set(values) - {"symbol", "period", "limit"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported market chart query parameters: " + ", ".join(unsupported)
+        )
+    if "symbol" not in values or len(values["symbol"]) != 1:
+        raise ValueError("symbol must be provided exactly once")
+    for field in ("period", "limit"):
+        if field in values and len(values[field]) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+
+    symbol = values["symbol"][0]
+    if (
+        symbol != symbol.strip()
+        or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
+    ):
+        raise ValueError("symbol must be a valid market instrument identifier")
+    period = values.get("period", ["day"])[0]
+    if period not in MARKET_CHART_PERIODS:
+        raise ValueError("period must be day, week, or month")
+    raw_limit = values.get("limit", [str(MARKET_CHART_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not MARKET_CHART_MIN_LIMIT <= limit <= MARKET_CHART_MAX_LIMIT:
+        raise ValueError(
+            f"limit must be between {MARKET_CHART_MIN_LIMIT} and "
+            f"{MARKET_CHART_MAX_LIMIT}"
+        )
+    return symbol, period, limit
 
 
 def _parse_strategy_lab_manual_payload(

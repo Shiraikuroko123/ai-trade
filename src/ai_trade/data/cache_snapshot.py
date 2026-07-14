@@ -56,6 +56,31 @@ def readable_snapshot(cache_dir: Path) -> Iterator[None]:
         yield
 
 
+@contextmanager
+def non_mutating_snapshot(cache_dir: Path) -> Iterator[None]:
+    """Verify a stable active snapshot without creating locks or recovering it."""
+
+    if not cache_dir.is_dir():
+        raise FileNotFoundError(f"Cache directory is unavailable: {cache_dir}")
+    marker = cache_dir / MARKER_NAME
+    if marker.exists():
+        raise CacheSnapshotRecoveryError(
+            "Cache snapshot has a pending transaction; run a data refresh before "
+            "read-only access"
+        )
+    before = _active_snapshot_signature(cache_dir)
+    yield
+    if marker.exists():
+        raise CacheSnapshotRecoveryError(
+            "Cache snapshot changed during read-only access; retry after the active "
+            "data refresh finishes"
+        )
+    if _active_snapshot_signature(cache_dir) != before:
+        raise CacheSnapshotRecoveryError(
+            "Cache snapshot files changed during read-only access; retry the request"
+        )
+
+
 def recover_pending_snapshot(cache_dir: Path) -> None:
     """Recover or discard a transaction left by an interrupted process."""
 
@@ -689,6 +714,27 @@ def _file_sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _active_snapshot_signature(
+    cache_dir: Path,
+) -> tuple[tuple[str, int, int, int, int, int], ...]:
+    values = []
+    for path in cache_dir.iterdir():
+        if path.name != "manifest.json" and path.suffix.casefold() != ".csv":
+            continue
+        stat = path.stat()
+        values.append(
+            (
+                path.name,
+                stat.st_dev,
+                stat.st_ino,
+                stat.st_size,
+                stat.st_mtime_ns,
+                stat.st_ctime_ns,
+            )
+        )
+    return tuple(sorted(values))
 
 
 def _sync_directory(path: Path) -> None:

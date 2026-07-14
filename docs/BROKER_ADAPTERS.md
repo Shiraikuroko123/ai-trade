@@ -1,6 +1,6 @@
 # Broker Adapter Boundary
 
-AI Trade `v0.8.0` defines and tests a broker boundary but intentionally ships no broker-specific implementation. Installing an adapter does not unlock live trading.
+AI Trade `v0.12.0`, the first public release, defines and tests a broker boundary but intentionally ships no broker-specific implementation. Installing an adapter does not unlock live trading.
 
 ## Plugin Contract
 

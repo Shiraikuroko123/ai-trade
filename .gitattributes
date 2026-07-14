@@ -1,0 +1,5 @@
+src/ai_trade/web/assets/vendor/klinecharts.min.js -text
+src/ai_trade/web/assets/vendor/klinecharts.LICENSE.txt -text
+src/ai_trade/web/assets/vendor/klinecharts.NOTICE.txt -text
+src/ai_trade/web/assets/vendor/klinecharts.SOURCE.txt -text
+src/ai_trade/web/assets/vendor/lightweight-charts.LICENSE.txt -text -whitespace

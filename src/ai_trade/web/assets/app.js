@@ -2,6 +2,7 @@
 
 const ROUTES = {
   overview: { title: "总览", context: "每日收盘复盘" },
+  market: { title: "行情", context: "只读 K 线与行情证据" },
   research: { title: "研究", context: "历史证据与稳健性" },
   assistant: { title: "AI 分析", context: "收盘 K 线诊断与风险复核" },
   "strategy-lab": { title: "策略实验室", context: "候选版本、验证与模拟晋级" },
@@ -22,6 +23,26 @@ const INSTRUMENT_NAMES = {
   "513100": "纳指ETF",
   "513500": "标普500ETF",
   "518880": "黄金ETF",
+};
+
+const MARKET_PERIODS = {
+  day: { label: "日线", chart: { type: "day", span: 1 } },
+  week: { label: "周线", chart: { type: "week", span: 1 } },
+  month: { label: "月线", chart: { type: "month", span: 1 } },
+};
+
+const MARKET_OVERLAYS = {
+  MA: "MA",
+  EMA: "EMA",
+  BOLL: "BOLL",
+  none: "不显示",
+};
+
+const MARKET_OSCILLATORS = {
+  MACD: "MACD",
+  KDJ: "KDJ",
+  RSI: "RSI",
+  ATR: "ATR",
 };
 
 const JOB_LABELS = {
@@ -86,6 +107,14 @@ const state = {
   strategyLabMode: "manual",
   strategyCandidateId: "",
   strategyActionBusy: false,
+  marketSymbol: "510300",
+  marketPeriod: "day",
+  marketLimit: 240,
+  marketOverlay: "MA",
+  marketOscillator: "MACD",
+  marketChart: null,
+  marketIndicatorIds: {},
+  marketResizeObserver: null,
   resizeTimer: 0,
 };
 
@@ -243,6 +272,9 @@ function skeletonPage() {
 
 function friendlyError(message) {
   const value = String(message || "请求失败");
+  if (value.includes("Market data is unavailable")) {
+    return "本地行情缓存不可用。刷新行情后，系统会重新校验已完成交易日和快照指纹。";
+  }
   if (value.includes("Missing cache") || value.includes("run download")) {
     return "本机尚无完整行情缓存。刷新行情后，系统会重新校验数据覆盖。";
   }
@@ -372,20 +404,43 @@ function setRouteChrome(route) {
 
 async function loadRoute() {
   state.controller?.abort();
-  state.controller = new AbortController();
-  const signal = state.controller.signal;
-  setRouteChrome(state.route);
+  destroyMarketChart();
+  const controller = new AbortController();
+  const requestedRoute = state.route;
+  state.controller = controller;
+  const signal = controller.signal;
+  const isCurrentRequest = () => (
+    state.controller === controller
+    && state.route === requestedRoute
+    && !signal.aborted
+  );
+  setRouteChrome(requestedRoute);
   main.setAttribute("aria-busy", "true");
   main.innerHTML = skeletonPage();
   try {
     let payload;
-    if (state.route === "risk") {
+    if (requestedRoute === "market") {
+      const chartPath = `/api/market-chart?symbol=${encodeURIComponent(state.marketSymbol)}&period=${encodeURIComponent(state.marketPeriod)}&limit=${encodeURIComponent(state.marketLimit)}`;
+      const [chartResult, universeResult] = await Promise.allSettled([
+        api(chartPath, { signal }),
+        api("/api/universe", { signal }),
+      ]);
+      if (chartResult.status === "rejected" && universeResult.status === "rejected") {
+        throw chartResult.reason;
+      }
+      payload = {
+        chart: chartResult.status === "fulfilled" ? chartResult.value : null,
+        chart_error: chartResult.status === "rejected" ? friendlyError(chartResult.reason?.message) : "",
+        universe: universeResult.status === "fulfilled" ? universeResult.value : { instruments: [] },
+        universe_error: universeResult.status === "rejected" ? friendlyError(universeResult.reason?.message) : "",
+      };
+    } else if (requestedRoute === "risk") {
       const [overview, research] = await Promise.all([
         api("/api/overview", { signal }),
         api("/api/research", { signal }),
       ]);
       payload = { overview, research };
-    } else if (state.route === "system") {
+    } else if (requestedRoute === "system") {
       const [system, jobs] = await Promise.all([
         api("/api/system", { signal }),
         api("/api/jobs", { signal }),
@@ -402,25 +457,30 @@ async function loadRoute() {
         universe: `/api/universe${state.universeDate ? `?date=${encodeURIComponent(state.universeDate)}` : ""}`,
         storage: "/api/storage",
       };
-      payload = await api(endpoints[state.route], { signal });
+      payload = await api(endpoints[requestedRoute], { signal });
     }
-    state.data.set(state.route, payload);
+    if (!isCurrentRequest()) return;
+    state.data.set(requestedRoute, payload);
     renderRoute(payload);
     setConnection(true);
   } catch (error) {
-    if (error.name !== "AbortError") {
+    if (error.name !== "AbortError" && isCurrentRequest()) {
       setConnection(false);
       renderError(error);
     }
   } finally {
-    main.setAttribute("aria-busy", "false");
+    if (state.controller === controller && state.route === requestedRoute) {
+      main.setAttribute("aria-busy", "false");
+    }
   }
 }
 
 function renderRoute(payload) {
+  destroyMarketChart();
   state.charts.clear();
   const renderers = {
     overview: renderOverview,
+    market: renderMarket,
     research: renderResearch,
     assistant: renderAssistant,
     "strategy-lab": renderStrategyLab,
@@ -434,7 +494,10 @@ function renderRoute(payload) {
   main.innerHTML = renderers[state.route](payload);
   updateRouteDate(payload);
   updateJobButtons();
-  requestAnimationFrame(drawCharts);
+  requestAnimationFrame(() => {
+    drawCharts();
+    if (state.route === "market") initMarketChart(payload);
+  });
 }
 
 function updateRouteDate(payload) {
@@ -442,6 +505,8 @@ function updateRouteDate(payload) {
   if (state.route === "overview") {
     value = payload.market?.date;
     if (payload.version) versionLabel.textContent = `AI Trade v${payload.version}`;
+  } else if (state.route === "market") {
+    value = payload.chart?.data_date;
   } else if (state.route === "research") {
     value = payload.backtest?.metadata?.end;
   } else if (state.route === "assistant") {
@@ -467,6 +532,574 @@ function updateRouteDate(payload) {
     value = payload.system?.diagnosis?.latest_market_date;
   }
   marketDate.textContent = value ? `数据日期 ${value}` : "数据日期不可用";
+}
+
+function marketProviderLabel(value) {
+  return {
+    eastmoney: "东方财富",
+    tencent: "腾讯行情",
+    tencent_network_fallback: "腾讯网络回退",
+    tencent_newfqkline: "腾讯前复权行情",
+    eastmoney_network: "东方财富网络行情",
+  }[String(value || "").toLowerCase()] || value || "未说明";
+}
+
+function marketAdjustmentLabel(value) {
+  return {
+    forward: "前复权",
+    backward: "后复权",
+    none: "不复权",
+    raw: "不复权",
+  }[String(value || "").toLowerCase()] || value || "未说明";
+}
+
+function formatMarketAmount(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  if (Math.abs(parsed) >= 100000000) return `${formatNumber(parsed / 100000000)} 亿元`;
+  if (Math.abs(parsed) >= 10000) return `${formatNumber(parsed / 10000)} 万元`;
+  return `${formatNumber(parsed)} 元`;
+}
+
+function marketDirection(change) {
+  const parsed = finite(change);
+  if (parsed === null || parsed === 0) {
+    return { label: "平盘", className: "market-flat", sign: "" };
+  }
+  return parsed > 0
+    ? { label: "上涨", className: "market-up", sign: "+" }
+    : { label: "下跌", className: "market-down", sign: "" };
+}
+
+function marketInstruments(data) {
+  const chartInstrument = data.chart?.instrument || {};
+  const rows = Array.isArray(data.universe?.instruments)
+    ? data.universe.instruments.map((item) => ({ ...item }))
+    : [];
+  if (chartInstrument.symbol && !rows.some((item) => item.symbol === chartInstrument.symbol)) {
+    rows.push({ ...chartInstrument, active: true, tradable: true });
+  }
+  if (!rows.some((item) => item.symbol === state.marketSymbol)) {
+    rows.push({
+      symbol: state.marketSymbol,
+      name: instrumentName(state.marketSymbol),
+      active: false,
+      tradable: false,
+    });
+  }
+  return rows
+    .filter((item) => item.symbol)
+    .sort((left, right) => {
+      const leftRank = Number(Boolean(left.active)) + Number(Boolean(left.tradable));
+      const rightRank = Number(Boolean(right.active)) + Number(Boolean(right.tradable));
+      return rightRank - leftRank || String(left.symbol).localeCompare(String(right.symbol));
+    });
+}
+
+function marketEvidenceValue(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (Array.isArray(value)) return value.map(marketEvidenceValue).join(" · ");
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, item]) => item !== null && item !== undefined && item !== "")
+      .map(([key, item]) => `${key}: ${marketEvidenceValue(item)}`)
+      .join(" · ") || "—";
+  }
+  return String(value);
+}
+
+function marketProvenanceSummary(provenance) {
+  if (!provenance || typeof provenance !== "object") return "未提供";
+  const values = [
+    provenance.manifest_available ? "清单已校验" : "缺少清单",
+    provenance.downloaded_at ? `下载于 ${formatDate(provenance.downloaded_at, true)}` : "下载时间未知",
+    {
+      full: "全量更新",
+      full_history: "全量历史更新",
+      full_rebuild_after_overlap_mismatch: "重叠校验失败后全量重建",
+      incremental: "增量更新",
+      fallback: "网络回退",
+    }[provenance.source_mode] || provenance.source_mode,
+    {
+      provider_reported: "提供方原始成交额",
+      provider_reported_rounded: "提供方四舍五入成交额",
+      calculated: "本地估算成交额",
+    }[provenance.amount_quality] || provenance.amount_quality,
+  ];
+  return values.filter(Boolean).join(" · ");
+}
+
+function marketDiagnosticMessages(diagnostics) {
+  if (Array.isArray(diagnostics)) {
+    return diagnostics.map((item) => marketEvidenceValue(item)).filter((item) => item !== "—");
+  }
+  if (!diagnostics || typeof diagnostics !== "object") return [];
+  const messages = [];
+  for (const key of ["warnings", "messages", "data_warnings"]) {
+    const values = diagnostics[key];
+    if (Array.isArray(values)) {
+      messages.push(...values.map((item) => friendlyError(marketEvidenceValue(item))));
+    } else if (typeof values === "string" && values) {
+      messages.push(values);
+    }
+  }
+  if (diagnostics.missing) {
+    messages.push("本地没有可验证的行情缓存，请刷新行情后重试。");
+  }
+  if (diagnostics.stale) {
+    messages.push(`数据截至 ${diagnostics.latest_completed_bar || "未知日期"}，早于已完成交易日 ${diagnostics.completed_session_cutoff || "未知日期"}。`);
+  }
+  if (finite(diagnostics.excluded_incomplete_count) > 0) {
+    messages.push(`已排除 ${formatInteger(diagnostics.excluded_incomplete_count)} 个尚未完成的未来日期。`);
+  }
+  if (diagnostics.trade_markers_truncated) {
+    messages.push("模拟成交标记数量超过显示上限，仅保留最近记录。");
+  }
+  if (diagnostics.stale_reason) messages.push(String(diagnostics.stale_reason));
+  return [...new Set(messages.filter(Boolean))];
+}
+
+function marketSnapshotFingerprint(snapshot, key) {
+  return snapshot?.[key]
+    || snapshot?.manifest?.[key]
+    || snapshot?.file?.[key]
+    || "—";
+}
+
+function marketUnavailableMessage(data, diagnostics) {
+  if (data.chart_error) return data.chart_error;
+  if (diagnostics.code === "market_data_unavailable") {
+    return "本地行情缓存不可用。刷新行情后，系统会重新校验已完成交易日和快照指纹。";
+  }
+  if (diagnostics.message) return friendlyError(diagnostics.message);
+  return "至少需要两根有效 K 线才能建立主图和指标窗格。";
+}
+
+function renderMarket(data) {
+  const chart = data.chart || {};
+  const bars = Array.isArray(chart.bars) ? chart.bars : [];
+  const latest = bars[bars.length - 1] || null;
+  const previous = bars[bars.length - 2] || null;
+  const change = latest && previous ? finite(latest.close) - finite(previous.close) : null;
+  const changeRatio = change !== null && finite(previous?.close)
+    ? change / finite(previous.close)
+    : null;
+  const direction = marketDirection(change);
+  const instrument = chart.instrument
+    || marketInstruments(data).find((item) => item.symbol === state.marketSymbol)
+    || { symbol: state.marketSymbol, name: instrumentName(state.marketSymbol) };
+  const periodLabel = MARKET_PERIODS[state.marketPeriod]?.label || state.marketPeriod;
+  const diagnostics = chart.diagnostics || {};
+  const diagnosticMessages = marketDiagnosticMessages(diagnostics);
+  const stale = diagnostics.stale === true || diagnostics.is_stale === true;
+  const chartSummary = latest
+    ? `${instrumentName(instrument.symbol, instrument.name)} ${periodLabel}最新一根为 ${latest.date}，开盘 ${formatNumber(latest.open, 3)}，最高 ${formatNumber(latest.high, 3)}，最低 ${formatNumber(latest.low, 3)}，收盘 ${formatNumber(latest.close, 3)}；较上一根${direction.label} ${direction.sign}${formatNumber(change, 3)}，${direction.sign}${formatPercent(changeRatio)}。`
+    : `${instrumentName(instrument.symbol, instrument.name)} 暂无可绘制的 ${periodLabel} 数据。`;
+  const options = marketInstruments(data).map((item) => {
+    const availability = item.active ? "" : " · 非当前有效";
+    return `<option value="${escapeHtml(item.symbol)}"${item.symbol === state.marketSymbol ? " selected" : ""}>${escapeHtml(item.symbol)} · ${escapeHtml(instrumentName(item.symbol, item.name))}${availability}</option>`;
+  }).join("");
+  const periodButtons = Object.entries(MARKET_PERIODS).map(([value, meta]) => `
+    <button type="button" data-market-period="${value}" aria-pressed="${value === state.marketPeriod}">${meta.label}</button>`).join("");
+  const overlayOptions = Object.entries(MARKET_OVERLAYS).map(([value, label]) =>
+    `<option value="${value}"${value === state.marketOverlay ? " selected" : ""}>${label}</option>`
+  ).join("");
+  const oscillatorOptions = Object.entries(MARKET_OSCILLATORS).map(([value, label]) =>
+    `<option value="${value}"${value === state.marketOscillator ? " selected" : ""}>${label}</option>`
+  ).join("");
+  const actualSource = chart.provenance?.source_provider || chart.provenance?.source;
+  const source = actualSource ? marketProviderLabel(actualSource) : "未验证";
+  const configuredProvider = marketProviderLabel(chart.provider);
+  const adjustment = marketAdjustmentLabel(chart.adjustment);
+  const snapshot = chart.snapshot || {};
+  const chartBody = bars.length >= 2
+    ? `<figure class="market-chart-figure">
+        <div id="market-kline-chart" class="market-kline-chart" role="img" tabindex="0" aria-label="${escapeHtml(chartSummary)}">
+          <span class="market-chart-loading">正在准备 K 线</span>
+        </div>
+        <figcaption>${escapeHtml(chartSummary)}</figcaption>
+      </figure>`
+    : `<section class="empty-state market-empty" role="status">
+        <h2>当前标的没有足够的行情数据</h2>
+        <p>${escapeHtml(marketUnavailableMessage(data, diagnostics))}</p>
+        <div class="action-row"><button class="button secondary" type="button" data-retry>重新加载</button>${actionButton("refresh-data", "primary")}</div>
+      </section>`;
+  let dataStatus = statusChip("收盘快照", "info");
+  if (data.chart_error || chart.available === false || diagnostics.missing) {
+    dataStatus = statusChip("行情不可用", "danger");
+  } else if (stale) {
+    dataStatus = statusChip("快照已陈旧", "warning");
+  } else if (diagnostics.status === "warning") {
+    dataStatus = statusChip("证据有警告", "warning");
+  }
+
+  return `
+    <div class="market-page">
+      ${pageIntro(
+        `${instrumentName(instrument.symbol, instrument.name)} · ${instrument.symbol}`,
+        `${periodLabel} · ${source} · ${adjustment} · ${bars.length} 根有效 K 线`,
+        `<div class="market-status-line">${statusChip("只读", "neutral")}${dataStatus}</div>`,
+      )}
+
+      <section class="market-command-band" aria-label="行情筛选">
+        <form id="market-controls-form" class="market-controls">
+          <div class="field market-symbol-field">
+            <label for="market-symbol">证券</label>
+            <select id="market-symbol" name="symbol">${options}</select>
+          </div>
+          <fieldset class="market-period-field">
+            <legend>周期</legend>
+            <div class="segmented market-periods">${periodButtons}</div>
+          </fieldset>
+          <div class="field market-range-field">
+            <label for="market-limit">数据范围</label>
+            <select id="market-limit" name="limit">
+              ${[120, 240, 500, 1000, 1500].map((value) => `<option value="${value}"${value === state.marketLimit ? " selected" : ""}>近 ${value} 根</option>`).join("")}
+            </select>
+          </div>
+          <button class="button secondary market-apply" type="submit">应用</button>
+        </form>
+      </section>
+
+      <section class="market-quote-strip" aria-label="最新行情摘要">
+        <div class="market-last-price">
+          <span>最新收盘</span>
+          <strong class="${direction.className}">${formatNumber(latest?.close, 3)}</strong>
+          <span class="market-change ${direction.className}">${direction.label} ${direction.sign}${formatNumber(change, 3)} · ${direction.sign}${formatPercent(changeRatio)}</span>
+        </div>
+        <dl>
+          <div><dt>开盘</dt><dd>${formatNumber(latest?.open, 3)}</dd></div>
+          <div><dt>最高</dt><dd>${formatNumber(latest?.high, 3)}</dd></div>
+          <div><dt>最低</dt><dd>${formatNumber(latest?.low, 3)}</dd></div>
+          <div><dt>成交量</dt><dd>${finite(latest?.volume) === null ? "—" : compactFormatter.format(finite(latest.volume))}</dd></div>
+          <div><dt>成交额</dt><dd>${formatMarketAmount(latest?.amount)}</dd></div>
+          <div><dt>交易日</dt><dd>${escapeHtml(latest?.date || chart.data_date || "—")}</dd></div>
+        </dl>
+      </section>
+
+      <section class="market-chart-panel" aria-labelledby="market-chart-title">
+        <header class="market-chart-header">
+          <div>
+            <h2 id="market-chart-title">价格与成交</h2>
+            <span>${escapeHtml(periodLabel)} · OHLCV</span>
+            <strong class="market-mobile-quote ${direction.className}" aria-hidden="true">${formatNumber(latest?.close, 3)} · ${direction.label} ${direction.sign}${formatPercent(changeRatio)}</strong>
+          </div>
+          <div class="market-indicator-controls">
+            <div class="field">
+              <label for="market-overlay">主图指标</label>
+              <select id="market-overlay" data-market-overlay>${overlayOptions}</select>
+            </div>
+            <div class="field">
+              <label for="market-oscillator">副图指标</label>
+              <select id="market-oscillator" data-market-oscillator>${oscillatorOptions}</select>
+            </div>
+          </div>
+        </header>
+        ${chartBody}
+      </section>
+
+      <section class="market-evidence-layout" aria-label="行情证据">
+        <article class="panel">
+          ${panelHeader("数据证据", "当前图表对应的只读缓存快照")}
+          <div class="path-list">
+            <div class="path-row"><span>实际来源</span><code>${escapeHtml(source)}</code></div>
+            <div class="path-row"><span>配置数据源</span><code>${escapeHtml(configuredProvider)}</code></div>
+            <div class="path-row"><span>复权口径</span><code>${escapeHtml(adjustment)}</code></div>
+            <div class="path-row"><span>数据截止</span><code>${escapeHtml(chart.data_date || latest?.date || "—")}</code></div>
+            <div class="path-row"><span>完成截止</span><code>${escapeHtml(snapshot.completed_session_cutoff || diagnostics.completed_session_cutoff || "—")}</code></div>
+            <div class="path-row"><span>快照标识</span><code>${escapeHtml(snapshot.id || snapshot.snapshot_id || chart.snapshot_id || "—")}</code></div>
+            <div class="path-row"><span>清单指纹</span><code>${escapeHtml(marketSnapshotFingerprint(snapshot, "manifest_sha256"))}</code></div>
+            <div class="path-row"><span>行情指纹</span><code>${escapeHtml(marketSnapshotFingerprint(snapshot, "file_sha256"))}</code></div>
+          </div>
+        </article>
+        <article class="panel">
+          ${panelHeader("完整性", stale ? "该快照需要刷新" : "聚合未制造不存在的交易日")}
+          <div class="market-integrity-list">
+            <div><span>请求周期</span><strong>${escapeHtml(periodLabel)}</strong></div>
+            <div><span>返回根数</span><strong>${formatInteger(bars.length)}</strong></div>
+            <div><span>模拟成交标记</span><strong>${formatInteger(chart.trade_markers?.length || 0)}</strong></div>
+            <div><span>来源说明</span><strong>${escapeHtml(marketProvenanceSummary(chart.provenance))}</strong></div>
+          </div>
+          ${diagnosticMessages.length ? `<details class="market-diagnostics"><summary>查看数据诊断（${diagnosticMessages.length}）</summary><ul>${diagnosticMessages.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : ""}
+          ${data.universe_error ? `<div class="callout warning"><strong>证券主数据未完整加载</strong><p>${escapeHtml(data.universe_error)}</p></div>` : ""}
+        </article>
+      </section>
+    </div>`;
+}
+
+function marketPricePrecision(bars) {
+  let precision = 2;
+  for (const bar of bars) {
+    for (const key of ["open", "high", "low", "close"]) {
+      const value = finite(bar[key]);
+      if (value === null) continue;
+      const fraction = String(value).split(".")[1] || "";
+      precision = Math.max(precision, Math.min(fraction.length, 4));
+    }
+  }
+  return precision;
+}
+
+function marketChartBars(bars) {
+  return bars.map((bar) => ({
+    timestamp: Date.parse(`${bar.date}T00:00:00+08:00`),
+    open: finite(bar.open),
+    high: finite(bar.high),
+    low: finite(bar.low),
+    close: finite(bar.close),
+    volume: finite(bar.volume) ?? 0,
+    turnover: finite(bar.amount) ?? 0,
+  })).filter((bar) => Number.isFinite(bar.timestamp)
+    && [bar.open, bar.high, bar.low, bar.close].every((value) => value !== null))
+    .sort((left, right) => left.timestamp - right.timestamp);
+}
+
+function marketIndicatorDefinition(name, paneId) {
+  const calcParams = {
+    MA: [5, 10, 20, 60],
+    EMA: [5, 10, 20, 60],
+    BOLL: [20, 2],
+  }[name];
+  return { name, paneId, ...(calcParams ? { calcParams } : {}) };
+}
+
+function sizeMarketPanes(chart, container) {
+  const height = Math.max(container.clientHeight, 440);
+  const candleHeight = Math.max(240, Math.floor(height * 0.57));
+  const volumeHeight = Math.max(84, Math.floor(height * 0.17));
+  const oscillatorHeight = Math.max(104, height - candleHeight - volumeHeight - 28);
+  chart.setPaneOptions({ id: "candle_pane", height: candleHeight, minHeight: 220, order: 0 });
+  chart.setPaneOptions({ id: "volume_pane", height: volumeHeight, minHeight: 72, order: 1 });
+  chart.setPaneOptions({ id: "oscillator_pane", height: oscillatorHeight, minHeight: 88, order: 2 });
+}
+
+function ensureMarketIndicators(library) {
+  const supported = typeof library.getSupportedIndicators === "function"
+    ? library.getSupportedIndicators()
+    : [];
+  if (supported.includes("ATR")) return;
+  library.registerIndicator({
+    name: "ATR",
+    shortName: "ATR",
+    precision: 4,
+    calcParams: [14],
+    figures: [{ key: "atr", title: "ATR: ", type: "line" }],
+    calc(dataList, indicator) {
+      const requested = Number(indicator.calcParams?.[0]);
+      const period = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : 14;
+      let trueRangeSum = 0;
+      let previousAtr = null;
+      return dataList.map((bar, index) => {
+        const previousClose = index > 0 ? Number(dataList[index - 1].close) : Number(bar.close);
+        const trueRange = Math.max(
+          Number(bar.high) - Number(bar.low),
+          Math.abs(Number(bar.high) - previousClose),
+          Math.abs(Number(bar.low) - previousClose),
+        );
+        if (index < period) trueRangeSum += trueRange;
+        if (index < period - 1) return {};
+        previousAtr = index === period - 1
+          ? trueRangeSum / period
+          : ((previousAtr * (period - 1)) + trueRange) / period;
+        return { atr: previousAtr };
+      });
+    },
+  });
+}
+
+function addMarketTradeMarkers(chart, markers) {
+  if (!Array.isArray(markers)) return;
+  for (const marker of markers.slice(-120)) {
+    const timestamp = Date.parse(`${marker.bar_date}T00:00:00+08:00`);
+    const price = finite(marker.price);
+    const quantity = finite(marker.quantity);
+    if (!Number.isFinite(timestamp) || price === null || quantity === null) continue;
+    const buying = marker.side === "BUY";
+    const color = buying ? "#a8322d" : "#197149";
+    chart.createOverlay({
+      name: "simpleAnnotation",
+      paneId: "candle_pane",
+      lock: true,
+      zLevel: 20,
+      points: [{ timestamp, value: price }],
+      extendData: `${buying ? "模买" : "模卖"} ${formatInteger(quantity)}`,
+      styles: {
+        line: { color, style: "dashed", size: 1, dashedValue: [3, 3] },
+        polygon: { color, borderColor: color },
+        text: { color, size: 11 },
+      },
+    });
+  }
+}
+
+function initMarketChart(data) {
+  const container = document.getElementById("market-kline-chart");
+  const bars = marketChartBars(data.chart?.bars || []);
+  if (!container || bars.length < 2) return;
+  const library = window.klinecharts;
+  if (!library || typeof library.init !== "function") {
+    container.innerHTML = '<div class="market-chart-failure" role="alert"><strong>K 线组件未加载</strong><span>请重新启动当前版本的本地服务。</span></div>';
+    return;
+  }
+  container.replaceChildren();
+  try {
+    ensureMarketIndicators(library);
+    const compactChart = container.clientWidth < 480;
+    const chart = library.init(container, {
+      locale: "zh-CN",
+      timezone: "Asia/Shanghai",
+      styles: {
+        grid: {
+          show: true,
+          horizontal: { show: true, color: "#e7eaec", size: 1, style: "dashed", dashedValue: [3, 3] },
+          vertical: { show: true, color: "#eff1f2", size: 1, style: "dashed", dashedValue: [3, 3] },
+        },
+        candle: {
+          type: "candle_solid",
+          bar: {
+            compareRule: "previous_close",
+            upColor: "#b83a34",
+            downColor: "#21835a",
+            noChangeColor: "#6b7280",
+            upBorderColor: "#b83a34",
+            downBorderColor: "#21835a",
+            noChangeBorderColor: "#6b7280",
+            upWickColor: "#b83a34",
+            downWickColor: "#21835a",
+            noChangeWickColor: "#6b7280",
+          },
+          priceMark: {
+            high: { color: "#475569" },
+            low: { color: "#475569" },
+            last: {
+              compareRule: "previous_close",
+              upColor: "#b83a34",
+              downColor: "#21835a",
+              noChangeColor: "#6b7280",
+            },
+          },
+          tooltip: { showRule: compactChart ? "follow_cross" : "always" },
+        },
+        indicator: {
+          ohlc: {
+            compareRule: "previous_close",
+            upColor: "#b83a34",
+            downColor: "#21835a",
+            noChangeColor: "#6b7280",
+          },
+          lines: [
+            { color: "#267a86" },
+            { color: "#b57c18" },
+            { color: "#6f5aa8" },
+            { color: "#64748b" },
+          ],
+          bars: [{
+            upColor: "#b83a34",
+            downColor: "#21835a",
+            noChangeColor: "#6b7280",
+          }],
+          tooltip: { showRule: compactChart ? "follow_cross" : "always" },
+        },
+        xAxis: {
+          axisLine: { color: "#d9dee2" },
+          tickLine: { color: "#d9dee2" },
+          tickText: { color: "#66717d", family: "Cascadia Mono, Consolas, monospace" },
+        },
+        yAxis: {
+          axisLine: { color: "#d9dee2" },
+          tickLine: { color: "#d9dee2" },
+          tickText: { color: "#66717d", family: "Cascadia Mono, Consolas, monospace" },
+        },
+        separator: { color: "#d9dee2", activeBackgroundColor: "#f1f4f5" },
+        crosshair: {
+          horizontal: { line: { color: "#697782" } },
+          vertical: { line: { color: "#697782" } },
+        },
+      },
+    });
+    if (!chart) throw new Error("KLineChart init returned no chart instance");
+    state.marketChart = chart;
+    chart.setDataLoader({
+      getBars({ type, callback }) {
+        callback(type === "init" ? bars : [], { backward: false, forward: false });
+      },
+    });
+    const instrument = data.chart?.instrument || {};
+    chart.setSymbol({
+      ticker: instrument.symbol || state.marketSymbol,
+      name: instrumentName(instrument.symbol || state.marketSymbol, instrument.name),
+      pricePrecision: marketPricePrecision(bars),
+      volumePrecision: 0,
+    });
+    state.marketIndicatorIds.volume = chart.createIndicator({ name: "VOL", paneId: "volume_pane" }, false);
+    if (state.marketOverlay !== "none") {
+      state.marketIndicatorIds.overlay = chart.createIndicator(
+        marketIndicatorDefinition(state.marketOverlay, "candle_pane"),
+        true,
+      );
+    }
+    state.marketIndicatorIds.oscillator = chart.createIndicator(
+      marketIndicatorDefinition(state.marketOscillator, "oscillator_pane"),
+      false,
+    );
+    sizeMarketPanes(chart, container);
+    chart.setOffsetRightDistance(36);
+    chart.setPeriod(MARKET_PERIODS[state.marketPeriod]?.chart || MARKET_PERIODS.day.chart);
+    addMarketTradeMarkers(chart, data.chart?.trade_markers || []);
+    state.marketResizeObserver = new ResizeObserver(() => {
+      if (state.marketChart !== chart || !container.isConnected) return;
+      chart.resize();
+      sizeMarketPanes(chart, container);
+    });
+    state.marketResizeObserver.observe(container);
+  } catch (error) {
+    destroyMarketChart();
+    container.innerHTML = `<div class="market-chart-failure" role="alert"><strong>K 线绘制失败</strong><span>${escapeHtml(error.message || error)}</span></div>`;
+  }
+}
+
+function destroyMarketChart() {
+  state.marketResizeObserver?.disconnect();
+  state.marketResizeObserver = null;
+  if (state.marketChart && window.klinecharts?.dispose) {
+    try {
+      window.klinecharts.dispose(state.marketChart);
+    } catch {
+      // The chart DOM may already have been replaced during route navigation.
+    }
+  }
+  state.marketChart = null;
+  state.marketIndicatorIds = {};
+}
+
+function setMarketIndicator(kind, value) {
+  const chart = state.marketChart;
+  if (kind === "overlay") {
+    state.marketOverlay = value;
+  } else {
+    state.marketOscillator = value;
+  }
+  if (!chart) {
+    const payload = state.data.get("market");
+    if (payload) renderRoute(payload);
+    return;
+  }
+  const currentId = state.marketIndicatorIds[kind];
+  if (currentId) chart.removeIndicator({ id: currentId });
+  state.marketIndicatorIds[kind] = null;
+  if (kind === "overlay" && value === "none") return;
+  const paneId = kind === "overlay" ? "candle_pane" : "oscillator_pane";
+  const indicatorId = chart.createIndicator(
+    marketIndicatorDefinition(value, paneId),
+    kind === "overlay",
+  );
+  if (!indicatorId) {
+    notify(`${value} 指标不可用`, true);
+    return;
+  }
+  state.marketIndicatorIds[kind] = indicatorId;
+  const container = document.getElementById("market-kline-chart");
+  if (container) sizeMarketPanes(chart, container);
 }
 
 function renderOverview(data) {
@@ -2528,6 +3161,15 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const marketPeriod = event.target.closest("[data-market-period]");
+  if (marketPeriod) {
+    const period = marketPeriod.dataset.marketPeriod;
+    if (MARKET_PERIODS[period] && period !== state.marketPeriod) {
+      state.marketPeriod = period;
+      loadRoute();
+    }
+    return;
+  }
   const action = event.target.closest("[data-job-action]");
   if (action) {
     startJob(action.dataset.jobAction);
@@ -2634,6 +3276,16 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const marketOverlay = event.target.closest("[data-market-overlay]");
+  if (marketOverlay && Object.prototype.hasOwnProperty.call(MARKET_OVERLAYS, marketOverlay.value)) {
+    setMarketIndicator("overlay", marketOverlay.value);
+    return;
+  }
+  const marketOscillator = event.target.closest("[data-market-oscillator]");
+  if (marketOscillator && Object.prototype.hasOwnProperty.call(MARKET_OSCILLATORS, marketOscillator.value)) {
+    setMarketIndicator("oscillator", marketOscillator.value);
+    return;
+  }
   const confirmation = event.target.closest(".strategy-confirmation-form input[name='confirmed']");
   if (!confirmation) return;
   const form = confirmation.closest("form");
@@ -2642,7 +3294,15 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.id === "assistant-analysis-form") {
+  if (event.target.id === "market-controls-form") {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    const symbol = String(values.get("symbol") || "");
+    const limit = Number(values.get("limit"));
+    if (symbol) state.marketSymbol = symbol;
+    if ([120, 240, 500, 1000, 1500].includes(limit)) state.marketLimit = limit;
+    loadRoute();
+  } else if (event.target.id === "assistant-analysis-form") {
     event.preventDefault();
     runAssistantAnalysis(event.target);
   } else if (event.target.id === "strategy-manual-form") {
@@ -2696,6 +3356,8 @@ window.addEventListener("resize", () => {
   window.clearTimeout(state.resizeTimer);
   state.resizeTimer = window.setTimeout(drawCharts, 120);
 });
+
+window.addEventListener("pagehide", destroyMarketChart);
 
 if (!location.hash) {
   history.replaceState(null, "", "#overview");

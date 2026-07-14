@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 from pathlib import Path
 
 from scripts.verify_distribution import (
     SDIST_REQUIRED,
+    VENDORED_FILES_SHA256,
     WHEEL_REQUIRED,
     _is_text_member,
     _verify_safe_unique_names,
@@ -46,6 +48,21 @@ class DistributionVerificationTests(unittest.TestCase):
             with self.subTest(module=module):
                 self.assertIn(f"ai_trade/strategy_lab/{module}", WHEEL_REQUIRED)
                 self.assertIn(f"src/ai_trade/strategy_lab/{module}", SDIST_REQUIRED)
+
+    def test_vendored_klinecharts_is_required_and_matches_upstream(self):
+        assets = REPOSITORY_ROOT / "src" / "ai_trade" / "web" / "assets"
+        for name, expected in VENDORED_FILES_SHA256.items():
+            with self.subTest(name=name):
+                self.assertIn(f"ai_trade/web/assets/{name}", WHEEL_REQUIRED)
+                self.assertIn(f"src/ai_trade/web/assets/{name}", SDIST_REQUIRED)
+                actual = hashlib.sha256((assets / name).read_bytes()).hexdigest()
+                self.assertEqual(actual, expected)
+        self.assertIn(
+            "ai_trade/web/assets/vendor/klinecharts.SOURCE.txt", WHEEL_REQUIRED
+        )
+        self.assertIn(
+            "src/ai_trade/web/assets/vendor/klinecharts.SOURCE.txt", SDIST_REQUIRED
+        )
 
     def test_disabling_cloud_preserves_the_installation_identity(self):
         source = (REPOSITORY_ROOT / "scripts/configure_cloud.ps1").read_text(

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import threading
+from collections import deque
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +25,11 @@ from ..strategy import MomentumTrendStrategy
 
 
 _STRATEGY_VALIDATION_LOCK = threading.Lock()
+_MARKET_CHART_PERIODS = frozenset({"day", "week", "month"})
+_MARKET_CHART_MIN_LIMIT = 60
+_MARKET_CHART_MAX_LIMIT = 1500
+_MARKET_CHART_MAX_TRADE_MARKERS = 500
+_MARKET_CHART_MAX_EXCLUDED_DATES = 20
 
 
 class DashboardService:
@@ -289,6 +297,144 @@ class DashboardService:
         snapshot["errors"] = [market_issue] if market_issue else []
         return snapshot
 
+    def market_chart(
+        self, *, symbol: str, period: str = "day", limit: int = 240
+    ) -> dict[str, Any]:
+        instruments = {item.symbol: item for item in self.config.instruments}
+        if symbol not in instruments:
+            raise ValueError("symbol must be an instrument in the configured universe")
+        if period not in _MARKET_CHART_PERIODS:
+            raise ValueError("period must be day, week, or month")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not _MARKET_CHART_MIN_LIMIT <= limit <= _MARKET_CHART_MAX_LIMIT
+        ):
+            raise ValueError(
+                f"limit must be an integer between {_MARKET_CHART_MIN_LIMIT} "
+                f"and {_MARKET_CHART_MAX_LIMIT}"
+            )
+
+        instrument = instruments[symbol]
+        try:
+            market = self.market(recover_snapshot=False)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return self._unavailable_market_chart(instrument, period, exc)
+        if symbol not in market.symbols:
+            return self._unavailable_market_chart(
+                instrument,
+                period,
+                RuntimeError("The validated cache snapshot omits the requested symbol"),
+            )
+
+        daily_bars = market.symbols[symbol].bars
+        aggregate_bars = _aggregate_market_chart_bars(daily_bars, period)
+        selected = aggregate_bars[-limit:]
+        if not selected:
+            return self._unavailable_market_chart(
+                instrument,
+                period,
+                RuntimeError("No completed bars are available for the requested symbol"),
+            )
+
+        latest_daily_date = daily_bars[-1].date
+        completed_cutoff = market.completed_through
+        stale = latest_daily_date < completed_cutoff
+        lag_days = max(0, (completed_cutoff - latest_daily_date).days)
+        manifest = market.manifest if isinstance(market.manifest, dict) else None
+        manifest_file = _manifest_symbol_entry(manifest, symbol)
+        warnings = []
+        if stale:
+            warnings.append(
+                f"Data ends on {latest_daily_date.isoformat()}, before the completed-session "
+                f"cutoff {completed_cutoff.isoformat()}. Refresh data or verify an exchange "
+                "holiday."
+            )
+        if manifest is None:
+            warnings.append(
+                "The cache manifest is missing, so snapshot provenance cannot be verified."
+            )
+        excluded_dates = market.excluded_dates.get(symbol, [])
+        if excluded_dates:
+            warnings.append(
+                "One or more cache rows after the completed-session cutoff were excluded."
+            )
+
+        trade_markers, markers_truncated = self._paper_trade_markers(
+            symbol=symbol,
+            period=period,
+            selected_bars=selected,
+        )
+        response_bars = [_market_chart_bar_payload(value) for value in selected]
+        snapshot_digest = _market_chart_snapshot_digest(market)
+        snapshot_id = (
+            f"market-{market.latest_common_session.isoformat()}-"
+            f"{snapshot_digest[:12]}"
+        )
+        return {
+            "generated_at": _now(),
+            "available": True,
+            "symbol": symbol,
+            "name": instrument.name,
+            "instrument": {
+                "symbol": symbol,
+                "name": instrument.name,
+                "market": instrument.market,
+                "instrument_type": instrument.instrument_type,
+                "asset_class": instrument.asset_class,
+                "currency": instrument.currency,
+            },
+            "period": period,
+            "adjustment": self.config.raw["data"].get("adjustment", "none"),
+            "provider": self.config.raw["data"]["provider"],
+            "provenance": {
+                "manifest_available": manifest is not None,
+                "downloaded_at": _bounded_manifest_text(
+                    manifest.get("downloaded_at") if manifest else None
+                ),
+                "source": _bounded_manifest_text(manifest_file.get("source")),
+                "source_provider": _bounded_manifest_text(
+                    manifest_file.get("source_provider")
+                ),
+                "source_mode": _bounded_manifest_text(
+                    manifest_file.get("source_mode")
+                ),
+                "amount_quality": _bounded_manifest_text(
+                    manifest_file.get("amount_quality")
+                ),
+            },
+            "data_date": latest_daily_date.isoformat(),
+            "snapshot": {
+                "id": snapshot_id,
+                "snapshot_id": snapshot_id,
+                "dataset_sha256": snapshot_digest,
+                "completed_session_cutoff": completed_cutoff.isoformat(),
+                "latest_common_session": market.latest_common_session.isoformat(),
+                "manifest_sha256": getattr(market, "manifest_sha256", None),
+                "file_sha256": market.file_hashes[symbol],
+                "symbol_file_sha256": market.file_hashes[symbol],
+                "security_master_sha256": self.config.security_master.fingerprint(),
+            },
+            "bars": response_bars,
+            "summary": _market_chart_summary(response_bars),
+            "trade_markers": trade_markers,
+            "diagnostics": {
+                "status": "stale" if stale else "warning" if warnings else "ok",
+                "missing": False,
+                "stale": stale,
+                "lag_calendar_days": lag_days,
+                "completed_session_cutoff": completed_cutoff.isoformat(),
+                "latest_completed_bar": latest_daily_date.isoformat(),
+                "excluded_incomplete_count": len(excluded_dates),
+                "excluded_incomplete_dates": [
+                    value.isoformat()
+                    for value in excluded_dates[-_MARKET_CHART_MAX_EXCLUDED_DATES:]
+                ],
+                "trade_markers_truncated": markers_truncated,
+                "warnings": warnings,
+            },
+        }
+
     def system(self) -> dict[str, Any]:
         market_issue = None
         try:
@@ -486,7 +632,7 @@ class DashboardService:
 
         return save_cloud_dashboard_preferences(self.config, payload)
 
-    def market(self) -> MarketData:
+    def market(self, *, recover_snapshot: bool = True) -> MarketData:
         signature = tuple(
             sorted(
                 (str(path), path.stat().st_mtime_ns)
@@ -496,7 +642,9 @@ class DashboardService:
         )
         with self._lock:
             if self._market is None or signature != self._market_signature:
-                self._market = MarketData(self.config)
+                self._market = MarketData(
+                    self.config, recover_snapshot=recover_snapshot
+                )
                 self._market_signature = signature
             return self._market
 
@@ -563,6 +711,135 @@ class DashboardService:
             "recovery_action": "refresh-data",
             "recovery_command": "ai-trade download --force",
         }
+
+    def _unavailable_market_chart(
+        self, instrument: Any, period: str, exc: Exception
+    ) -> dict[str, Any]:
+        issue = self._market_issue(exc)
+        completed_cutoff = completed_session_cutoff(
+            market_close=self.config.raw["data"].get("market_close_time", "15:30")
+        ).isoformat()
+        return {
+            "generated_at": _now(),
+            "available": False,
+            "symbol": instrument.symbol,
+            "name": instrument.name,
+            "instrument": {
+                "symbol": instrument.symbol,
+                "name": instrument.name,
+                "market": instrument.market,
+                "instrument_type": instrument.instrument_type,
+                "asset_class": instrument.asset_class,
+                "currency": instrument.currency,
+            },
+            "period": period,
+            "adjustment": self.config.raw["data"].get("adjustment", "none"),
+            "provider": self.config.raw["data"]["provider"],
+            "provenance": {"manifest_available": False},
+            "data_date": None,
+            "snapshot": {
+                "id": None,
+                "snapshot_id": None,
+                "dataset_sha256": None,
+                "completed_session_cutoff": completed_cutoff,
+                "latest_common_session": None,
+                "manifest_sha256": None,
+                "file_sha256": None,
+                "symbol_file_sha256": None,
+                "security_master_sha256": self.config.security_master.fingerprint(),
+            },
+            "bars": [],
+            "summary": None,
+            "trade_markers": [],
+            "diagnostics": {
+                "status": "missing",
+                "missing": True,
+                "stale": None,
+                "lag_calendar_days": None,
+                "completed_session_cutoff": completed_cutoff,
+                "latest_completed_bar": None,
+                "excluded_incomplete_count": 0,
+                "excluded_incomplete_dates": [],
+                "trade_markers_truncated": False,
+                "code": issue["code"],
+                "message": issue["message"],
+                "detail": issue["detail"][:1000],
+                "recovery_action": issue["recovery_action"],
+                "recovery_command": issue["recovery_command"],
+                "warnings": [issue["message"]],
+            },
+        }
+
+    def _paper_trade_markers(
+        self,
+        *,
+        symbol: str,
+        period: str,
+        selected_bars: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        state = self._paper_state()
+        account_id = str((state or {}).get("account_id") or "")
+        path = self.config.paper_trades_file
+        if not account_id or not path.exists() or path.is_symlink():
+            return [], False
+        bar_dates = {
+            _market_chart_period_key(value["date"], period): value["date"]
+            for value in selected_bars
+        }
+        required = {
+            "account_id",
+            "trade_id",
+            "date",
+            "symbol",
+            "side",
+            "quantity",
+            "price",
+        }
+        markers: deque[dict[str, Any]] = deque(
+            maxlen=_MARKET_CHART_MAX_TRADE_MARKERS
+        )
+        accepted = 0
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                if not reader.fieldnames or not required.issubset(reader.fieldnames):
+                    return [], False
+                for row in reader:
+                    if row.get("account_id") != account_id or row.get("symbol") != symbol:
+                        continue
+                    try:
+                        trade_date = date.fromisoformat(str(row["date"]))
+                        side = str(row["side"])
+                        quantity = int(row["quantity"])
+                        price = float(row["price"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    bar_date = bar_dates.get(_market_chart_period_key(trade_date, period))
+                    trade_id = str(row["trade_id"])
+                    if (
+                        bar_date is None
+                        or side not in {"BUY", "SELL"}
+                        or len(trade_id) != 24
+                        or any(value not in "0123456789abcdef" for value in trade_id)
+                        or quantity <= 0
+                        or not math.isfinite(price)
+                        or price <= 0
+                    ):
+                        continue
+                    accepted += 1
+                    markers.append(
+                        {
+                            "trade_id": trade_id,
+                            "date": trade_date.isoformat(),
+                            "bar_date": bar_date.isoformat(),
+                            "side": side,
+                            "quantity": quantity,
+                            "price": price,
+                        }
+                    )
+        except (OSError, csv.Error):
+            return [], False
+        return list(markers), accepted > _MARKET_CHART_MAX_TRADE_MARKERS
 
     def _report_statuses(
         self,
@@ -790,6 +1067,111 @@ class DashboardService:
         except (OSError, csv.Error):
             return []
         return rows[-limit:] if limit else rows
+
+
+def _aggregate_market_chart_bars(
+    bars: list[Any], period: str
+) -> list[dict[str, Any]]:
+    groups: list[list[Any]] = []
+    for bar in bars:
+        key = _market_chart_period_key(bar.date, period)
+        if not groups or _market_chart_period_key(groups[-1][0].date, period) != key:
+            groups.append([bar])
+        else:
+            groups[-1].append(bar)
+
+    result = []
+    for values in groups:
+        try:
+            volume = math.fsum(float(value.volume) for value in values)
+            amount = math.fsum(float(value.amount) for value in values)
+        except OverflowError as exc:
+            raise RuntimeError(
+                "Aggregated market chart contains a non-finite value"
+            ) from exc
+        numbers = {
+            "open": float(values[0].open),
+            "high": max(float(value.high) for value in values),
+            "low": min(float(value.low) for value in values),
+            "close": float(values[-1].close),
+            "volume": volume,
+            "amount": amount,
+        }
+        if not all(math.isfinite(value) for value in numbers.values()):
+            raise RuntimeError("Aggregated market chart contains a non-finite value")
+        result.append({"date": values[-1].date, **numbers})
+    return result
+
+
+def _market_chart_period_key(value: date, period: str) -> object:
+    if period == "day":
+        return value
+    if period == "week":
+        calendar = value.isocalendar()
+        return calendar.year, calendar.week
+    if period == "month":
+        return value.year, value.month
+    raise ValueError("period must be day, week, or month")
+
+
+def _market_chart_bar_payload(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date": value["date"].isoformat(),
+        "open": value["open"],
+        "high": value["high"],
+        "low": value["low"],
+        "close": value["close"],
+        "volume": value["volume"],
+        "amount": value["amount"],
+    }
+
+
+def _market_chart_summary(bars: list[dict[str, Any]]) -> dict[str, Any]:
+    latest = bars[-1]
+    previous_close = bars[-2]["close"] if len(bars) > 1 else None
+    change = latest["close"] - previous_close if previous_close is not None else None
+    change_percent = change / previous_close if previous_close is not None else None
+    if change is not None and not math.isfinite(change):
+        raise RuntimeError("Market chart summary change is non-finite")
+    if change_percent is not None and not math.isfinite(change_percent):
+        raise RuntimeError("Market chart summary change percentage is non-finite")
+    return {
+        "latest_date": latest["date"],
+        "latest_open": latest["open"],
+        "latest_high": latest["high"],
+        "latest_low": latest["low"],
+        "latest_close": latest["close"],
+        "previous_close": previous_close,
+        "change": change,
+        "change_percent": change_percent,
+        "volume": latest["volume"],
+        "amount": latest["amount"],
+        "bar_count": len(bars),
+    }
+
+
+def _manifest_symbol_entry(
+    manifest: dict[str, Any] | None, symbol: str
+) -> dict[str, Any]:
+    files = manifest.get("files") if manifest else None
+    if not isinstance(files, dict):
+        return {}
+    value = files.get(symbol)
+    return value if isinstance(value, dict) else {}
+
+
+def _bounded_manifest_text(value: object, maximum: int = 128) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        return None
+    return value
+
+
+def _market_chart_snapshot_digest(market: Any) -> str:
+    values = [
+        f"manifest:{getattr(market, 'manifest_sha256', None) or 'missing'}",
+        *(f"{symbol}:{digest}" for symbol, digest in sorted(market.file_hashes.items())),
+    ]
+    return sha256("|".join(values).encode("utf-8")).hexdigest()
 
 
 def _sample(rows: list[dict[str, Any]], maximum: int) -> list[dict[str, Any]]:

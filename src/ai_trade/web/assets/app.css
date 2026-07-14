@@ -1598,6 +1598,278 @@ progress {
   white-space: nowrap;
 }
 
+.market-page {
+  display: grid;
+  gap: 1.35rem;
+}
+
+.market-status-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.market-command-band {
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  padding: 0.8rem 1rem;
+}
+
+.market-controls {
+  align-items: end;
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: minmax(240px, 1fr) auto minmax(138px, auto) auto;
+}
+
+.market-controls select,
+.market-indicator-controls select {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-period-field {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.market-period-field legend {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  margin-bottom: 0.25rem;
+}
+
+.market-periods button[aria-pressed="true"] {
+  background: var(--desk);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.market-quote-strip {
+  align-items: stretch;
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(0, 2.2fr);
+}
+
+.market-last-price {
+  align-content: center;
+  border-inline-end: 1px solid var(--rule);
+  display: grid;
+  min-height: 112px;
+  padding: 0.8rem 1rem;
+}
+
+.market-last-price > span:first-child,
+.market-quote-strip dt {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+}
+
+.market-last-price strong {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 1.65rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  line-height: 1.25;
+}
+
+.market-change {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-up {
+  color: #a8322d;
+}
+
+.market-down {
+  color: #197149;
+}
+
+.market-flat {
+  color: var(--ink-soft);
+}
+
+.market-quote-strip dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.market-quote-strip dl > div {
+  align-content: center;
+  display: grid;
+  min-height: 56px;
+  padding: 0.55rem 0.85rem;
+}
+
+.market-quote-strip dl > div:nth-child(-n + 3) {
+  border-bottom: 1px solid var(--rule);
+}
+
+.market-quote-strip dl > div:not(:nth-child(3n)) {
+  border-inline-end: 1px solid var(--rule);
+}
+
+.market-quote-strip dd {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.market-chart-panel {
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.market-chart-header {
+  align-items: end;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  min-height: 72px;
+  padding: 0.7rem 0.9rem;
+}
+
+.market-chart-header h2 {
+  font-size: 0.98rem;
+  margin: 0;
+}
+
+.market-chart-header > div > span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+}
+
+.market-mobile-quote {
+  display: none;
+}
+
+.market-indicator-controls {
+  align-items: end;
+  display: flex;
+  gap: 0.55rem;
+}
+
+.market-indicator-controls select {
+  min-width: 150px;
+}
+
+.market-chart-figure {
+  margin: 0;
+  min-width: 0;
+}
+
+.market-kline-chart {
+  contain: layout paint;
+  height: 640px;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.market-kline-chart:focus-visible {
+  outline-offset: -3px;
+}
+
+.market-chart-loading,
+.market-chart-failure {
+  align-items: center;
+  color: var(--ink-soft);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+}
+
+.market-chart-failure {
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+.market-chart-failure strong {
+  color: var(--negative);
+}
+
+.market-chart-figure figcaption {
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  margin: 0;
+  padding: 0.65rem 0.9rem;
+}
+
+.market-empty {
+  min-height: 520px;
+}
+
+.market-evidence-layout {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-integrity-list {
+  border-bottom: 1px solid var(--rule);
+}
+
+.market-integrity-list > div {
+  align-items: start;
+  border-top: 1px solid var(--rule);
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 110px minmax(0, 1fr);
+  padding: 0.65rem 0;
+}
+
+.market-integrity-list span {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+}
+
+.market-integrity-list strong {
+  font-size: 0.78rem;
+  font-weight: 620;
+  overflow-wrap: anywhere;
+}
+
+.market-diagnostics {
+  border-bottom: 1px solid var(--rule);
+  margin-top: 0.75rem;
+  padding-bottom: 0.65rem;
+}
+
+.market-diagnostics summary {
+  color: var(--teal-hover);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 650;
+  min-height: 44px;
+  padding-block: 0.65rem;
+}
+
+.market-diagnostics ul {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  margin: 0 0 0 1.1rem;
+  padding: 0;
+}
+
 .sr-only {
   clip: rect(0, 0, 0, 0);
   clip-path: inset(50%);
@@ -1661,6 +1933,10 @@ progress {
 
   .strategy-confirmation-form .button {
     grid-column: 2;
+  }
+
+  .market-kline-chart {
+    height: 590px;
   }
 }
 
@@ -1805,6 +2081,23 @@ progress {
 
   .strategy-candidate-item[aria-pressed="true"] {
     box-shadow: inset 0 -3px 0 var(--honey-hover);
+  }
+
+  .market-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .market-symbol-field {
+    grid-column: 1 / -1;
+  }
+
+  .market-evidence-layout {
+    gap: 1.5rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .market-kline-chart {
+    height: 550px;
   }
 
   .toast-region {
@@ -1972,6 +2265,118 @@ progress {
   .strategy-record-provenance {
     display: grid;
     gap: 0.3rem;
+  }
+
+  .market-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .market-controls .field label,
+  .market-period-field legend,
+  .market-indicator-controls .field label {
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  .market-symbol-field,
+  .market-period-field {
+    grid-column: 1 / -1;
+  }
+
+  .market-periods {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .market-apply {
+    grid-column: 2;
+    min-width: 72px;
+  }
+
+  .market-range-field {
+    grid-column: 1;
+  }
+
+  .market-page > .market-chart-panel {
+    order: 3;
+  }
+
+  .market-page > .market-quote-strip {
+    order: 4;
+  }
+
+  .market-page > .market-evidence-layout {
+    order: 5;
+  }
+
+  .market-quote-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .market-last-price {
+    border-bottom: 1px solid var(--rule);
+    border-inline-end: 0;
+  }
+
+  .market-quote-strip dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-quote-strip dl > div {
+    border-bottom: 1px solid var(--rule);
+    border-inline-end: 0 !important;
+  }
+
+  .market-quote-strip dl > div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .market-quote-strip dl > div:nth-child(odd) {
+    border-inline-end: 1px solid var(--rule) !important;
+  }
+
+  .market-chart-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 0.55rem 0.65rem;
+  }
+
+  .market-mobile-quote {
+    display: block;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+    margin-top: 0.3rem;
+  }
+
+  .market-indicator-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-indicator-controls select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .market-kline-chart {
+    height: 480px;
+  }
+
+  .market-empty {
+    min-height: 420px;
+  }
+
+  .market-integrity-list > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.2rem;
   }
 }
 

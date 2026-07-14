@@ -1,5 +1,9 @@
 # Product
 
+## Release Baseline
+
+`v0.12.0` is the first public release. It provides completed-session market review, research and strategy validation, paper accounting, optional private R2 backup, and broker-readiness controls. It does not provide intraday market data, a working live-broker adapter, or automatic real-money execution.
+
 ## Register
 
 product
@@ -12,7 +16,7 @@ The primary user is a Chinese-speaking individual investor working on one truste
 
 AI Trade is a local, end-to-end systematic investment workstation for China A-shares and exchange-traded funds. It unifies point-in-time security data, strategy signals, portfolio construction, historical validation, paper execution, accounting, risk controls, scheduled operations, and audit evidence behind one interface.
 
-Success means the user can answer five questions from one source of truth: what data the system used, why a position is proposed, what could go wrong, what the account currently owns, and whether the evidence is strong enough to advance to the next operating stage.
+Success means the user can answer six questions from one source of truth: what data the system used, how current and trustworthy that snapshot is, why a position is proposed, what could go wrong, what the account currently owns, and whether the evidence is strong enough to advance to the next operating stage.
 
 Future real-market trading is an explicit product goal, implemented through isolated broker adapters. Historical success never enables live trading. Promotion requires a frozen strategy version, sufficient independent paper sessions, a broker sandbox, order and position reconciliation, kill switches, credential isolation, and a separate human authorization for the selected broker account.
 
