@@ -280,11 +280,9 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 
 [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) 是本项目的只读 MIT 许可设计参考。本项目借鉴了它的统计验证、组合优化、换手约束、交易日志和 shadow-account 分层思路，但没有导入其 Python 包，也没有复制其 FastAPI、React、多智能体、因子库或券商连接器。
 
-当前实现按本项目的零第三方依赖要求重新编写：风险平价使用坐标下降法，统计验证使用移动区块自助法，并围绕本地 ETF 日线和模拟账户建立。任何复杂算法都必须先在连续样本外和未来模拟盘中证明不劣于简单基线，才能升级为默认值。
-
 除 Vibe-Trading 外，项目还对照了 LEAN、Qlib、NautilusTrader、VeighNa、RQAlpha、vectorbt、OpenBB、PyPortfolioOpt、cvxportfolio、Riskfolio-Lib、FinRL 和 Freqtrade。具体借鉴边界与分层路线见 [系统对照](docs/ECOSYSTEM.md)；本项目采用能力边界和设计思想，不把多个大型框架直接拼接进同一运行时。
 
-首发版本的 AI K 线助理还以 clean-room 方式观察了公开仓库 [rosemarycox5334-debug/PA_Agent](https://github.com/rosemarycox5334-debug/PA_Agent) 的用户可见研究流程。本项目只参考“结构化行情输入、可观察分析阶段、研究结论留痕”这类抽象工作流；没有复制、改写或导入 PA_Agent 的 AGPL 源代码、Prompt、Schema、UI、资产或文档文本，也不把它作为运行时依赖。AI Trade 的助理契约、数据结构、实现和界面均为独立设计。
+首发版本的 AI K 线助理还以 clean-room 方式观察了公开仓库 [rosemarycox5334-debug/PA_Agent](https://github.com/rosemarycox5334-debug/PA_Agent) 的用户可见研究流程。AI Trade 的助理契约、数据结构、实现和界面均为独立设计。
 
 ## 验证
 
