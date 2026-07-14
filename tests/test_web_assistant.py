@@ -95,7 +95,9 @@ class AssistantServiceTests(unittest.TestCase):
                 user_id="alice",
             )
 
-        self.assertEqual(status["instruments"], [{"symbol": "510300", "name": "沪深300ETF"}])
+        self.assertEqual(
+            status["instruments"], [{"symbol": "510300", "name": "沪深300ETF"}]
+        )
         self.assertEqual(
             status["defaults"],
             {"symbol": "510300", "lookback": 180, "mode": "local"},
@@ -122,9 +124,7 @@ class AssistantHttpTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["history"], [{"owner": "local-owner"}])
 
-            status, _ = _request(
-                port, "GET", "/api/assistant?user_id=someone-else"
-            )
+            status, _ = _request(port, "GET", "/api/assistant?user_id=someone-else")
             self.assertEqual(status, 400)
 
             status, body = _request_json(
@@ -145,9 +145,11 @@ class AssistantHttpTests(unittest.TestCase):
         service = _Service()
         alice_token = "a" * 32
         bob_token = "b" * 32
+        alice_account_id = "acct_" + "1" * 32
+        bob_account_id = "acct_" + "2" * 32
         sessions = {
-            alice_token: _session("alice", "alice-csrf"),
-            bob_token: _session("bob", "bob-csrf"),
+            alice_token: _session("alice", "alice-csrf", alice_account_id),
+            bob_token: _session("bob", "bob-csrf", bob_account_id),
         }
         with _running_server(service, auth=_Auth(sessions)) as port:
             status, _ = _request(port, "GET", "/api/assistant")
@@ -163,7 +165,10 @@ class AssistantHttpTests(unittest.TestCase):
             )
             self.assertEqual(status, 401)
 
-            for token, username in ((alice_token, "alice"), (bob_token, "bob")):
+            for token, owner_id in (
+                (alice_token, alice_account_id),
+                (bob_token, bob_account_id),
+            ):
                 status, body = _request(
                     port,
                     "GET",
@@ -171,7 +176,7 @@ class AssistantHttpTests(unittest.TestCase):
                     headers={"Cookie": f"ai_trade_session={token}"},
                 )
                 self.assertEqual(status, 200)
-                self.assertEqual(json.loads(body)["history"], [{"owner": username}])
+                self.assertEqual(json.loads(body)["history"], [{"owner": owner_id}])
 
             status, _ = _request_json(
                 port,
@@ -209,11 +214,11 @@ class AssistantHttpTests(unittest.TestCase):
                 },
             )
             self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)["owner"], "alice")
+            self.assertEqual(json.loads(body)["owner"], alice_account_id)
 
-        self.assertEqual(service.read_users, ["alice", "bob"])
+        self.assertEqual(service.read_users, [alice_account_id, bob_account_id])
         self.assertEqual(len(service.analyze_calls), 1)
-        self.assertEqual(service.analyze_calls[0]["user_id"], "alice")
+        self.assertEqual(service.analyze_calls[0]["user_id"], alice_account_id)
 
     def test_same_origin_validation_and_error_mapping(self):
         service = _Service()
@@ -274,9 +279,9 @@ class AssistantHttpTests(unittest.TestCase):
                 _parse_assistant_analyze_payload(payload)
 
 
-def _session(username, csrf):
+def _session(username, csrf, account_id):
     now = time.time()
-    return Session(username, now, now + 3600, csrf, "a" * 64)
+    return Session(username, now, now + 3600, csrf, "a" * 64, account_id)
 
 
 class _RunningServer:

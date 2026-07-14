@@ -82,9 +82,7 @@ class WebLoginTests(unittest.TestCase):
             _create_user(config)
             with _running_server(config) as port:
                 payload = {"username": USERNAME, "password": "wrongpass"}
-                status, _, _ = _request_json(
-                    port, "POST", "/api/auth/login", payload
-                )
+                status, _, _ = _request_json(port, "POST", "/api/auth/login", payload)
                 self.assertEqual(status, 403)
 
                 for origin in (
@@ -144,7 +142,9 @@ class WebLoginTests(unittest.TestCase):
                 self.assertIn("path=/", attributes)
                 self.assertIn("max-age=28800", attributes)
                 self.assertNotIn("secure", attributes)
-                self.assertFalse(any(value.startswith("domain=") for value in attributes))
+                self.assertFalse(
+                    any(value.startswith("domain=") for value in attributes)
+                )
 
                 status, _, body = _request(
                     port,
@@ -156,6 +156,7 @@ class WebLoginTests(unittest.TestCase):
                 session_status = json.loads(body)
                 self.assertTrue(session_status["authenticated"])
                 self.assertEqual(session_status["username"], USERNAME)
+                self.assertNotIn("account_id", session_status)
 
                 status, _, body = _request(
                     port,
@@ -169,6 +170,7 @@ class WebLoginTests(unittest.TestCase):
                 self.assertTrue(csrf)
                 self.assertNotEqual(csrf, cookie.split("=", 1)[1])
                 self.assertEqual(bootstrap["user"]["username"], USERNAME)
+                self.assertNotIn("account_id", bootstrap["user"])
 
                 job_payload = {"action": "not-a-real-job"}
                 cases = (
@@ -383,9 +385,7 @@ def _create_report(config) -> Path:
 
 @contextmanager
 def _running_server(config, *, auth_enabled=True):
-    server, _ = create_dashboard_server(
-        config, port=0, auth_enabled=auth_enabled
-    )
+    server, _ = create_dashboard_server(config, port=0, auth_enabled=auth_enabled)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

@@ -73,6 +73,39 @@ Assistant conclusions are a closed enum. `REVIEW_CANDIDATE` requests human resea
 
 Per-user assistant records are stored under `state/assistant/`. The repository-wide `state/*` ignore rule excludes them from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history is therefore local operational state rather than a portable report or cloud backup.
 
+## Strategy Lab Boundary
+
+```text
+active baseline + allowlisted schema
+              |
+       +------+------+
+       |             |
+ manual parameter   deterministic local AI
+       |             |
+       +------+
+              v
+       immutable candidate
+              |
+       same market snapshot
+       baseline vs candidate
+              |
+ full period + holdout + cost + drawdown + stability gates
+              |
+       explicit human approval
+              |
+       isolated paper config ----> rollback history
+              |
+              X  no broker authorization or live order route
+```
+
+`strategy_lab/` owns the editable parameter schema, immutable candidate records, deterministic validation, human approvals, isolated paper-config export, activation history, and rollback pointer. Each beta user receives a stable, non-reused internal account identity that is mapped to a hashed local directory under `state/strategy_lab/`; request payloads cannot choose another owner. Login usernames are used only as human-readable audit actors and the browser never receives the raw internal account identity. Version-1 user files migrate in place so existing per-user data remains reachable, while deleting and recreating the same username produces a new identity and cannot inherit the deleted account's records.
+
+A candidate keeps its parent and candidate fingerprints, complete configuration-context fingerprint, baseline and changed settings, source, hypothesis, snapshot identity, gate results, and approval provenance. Validation, approval, export, and activation recompute and compare those bindings. An active-baseline compare-and-swap rejects a stale sibling after another candidate is activated, and activation additionally requires the exact approved export whose broker mode is forced to `disabled`. A rollback request carries the active candidate ID and fingerprint that the user confirmed; the transition compares both inside the owner lock, so a duplicate or stale request cannot pop a second rollback entry.
+
+All writes for one owner run under both an in-process re-entrant lock and an operating-system file lock. The active pointer and its activation or rollback event are coordinated through a recoverable transaction marker, so another process sees either the prior committed state or the completed transition after recovery. Immutable writes use create-once semantics inside the same lock. Candidate creation is capped at 100 records, activation and rollback share a 1,000-event budget, browser summaries retain only the newest 50 candidates and 200 events while reporting total counts, and each workstation process admits only one synchronous validation backtest at a time. Real compare-and-swap and capacity conflicts return HTTP 409.
+
+AI suggestions are deterministic bounded parameter diffs. They cannot generate Python, arbitrary rules, orders, target positions, approval records, exports, or deployment decisions. Approval is necessary but does not alter `config/default.json` or the existing paper ledger. Export rewrites paper-state paths into a candidate-specific profile and forces the broker mode to `disabled`; starting that profile remains a separate operator action. Historical evidence never mutates the live-readiness gates.
+
 Future broker integrations stay outside the core runtime and enter through the `ai_trade.brokers` entry-point group:
 
 ```text
@@ -106,6 +139,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/live_guard.py`: paper, configuration, adapter, reconciliation, kill-switch, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
 - `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
+- `strategy_lab/`: allowlisted strategy/risk parameters, immutable per-user candidates, same-snapshot validation, human approval, isolated paper export, activation history, and rollback.
 - `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
 - `web/`: loopback-only authenticated HTTP server, background job manager, dashboard service, and packaged static application.
 

@@ -2,12 +2,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-data/cache/*.csv
-data/cache/manifest.json
-data/cache/.snapshot-*/
-data/cache/.cache-*.lock
-data/cache/.cache-transaction.json
-data/cache/.cache-transactions/
+data/cache/*
+!data/cache/.gitkeep
 reports/*
 !reports/.gitkeep
 state/*

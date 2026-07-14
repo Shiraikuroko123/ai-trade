@@ -4,6 +4,20 @@ All notable changes are documented here. The project follows semantic versioning
 
 ## Unreleased
 
+## 0.11.0 - 2026-07-14
+
+- Added a per-user strategy lab where manual edits and deterministic local AI suggestions create immutable, schema-validated candidate versions.
+- Added same-snapshot baseline comparisons with deterministic full-period, holdout, transaction-cost, drawdown, and parameter-stability gates.
+- Required a separate human approval before a candidate can be exported or activated for an isolated paper profile; AI output cannot approve, activate, export, or unlock broker permissions.
+- Added an audit history for candidate creation, validation, approval, paper-profile activation, and rollback, stored under Git-ignored `state/strategy_lab/`.
+- Added strict same-origin, CSRF-protected strategy-lab APIs whose owner identity is derived from the authenticated session rather than request data.
+- Added a responsive strategy-lab workstation with allowlisted parameter forms, baseline/candidate diffs, validation evidence, explicit confirmations, and rollback controls.
+- Bound every candidate, validation, approval, export, and activation to a stable non-reused account identity, the complete configuration context, and the expected parent baseline; user-facing audit records continue to show the login username rather than the internal account ID.
+- Added per-owner cross-process locking and a recoverable activation journal so immutable records, the active baseline, and rollback history cannot be silently overwritten by concurrent workstation processes or an interrupted activation.
+- Added a per-account candidate ceiling, a fixed activation/rollback event budget, bounded candidate and audit summaries, and one synchronous validation slot per workstation process so repeated requests cannot create unbounded memory, disk, or backtest load.
+- Bound rollback confirmations to the active candidate ID and fingerprint shown to the user, so duplicate, stale, or concurrent requests fail as HTTP 409 instead of rolling back more than one version or being reported as a service outage.
+- Hardened release packaging to exclude every runtime-data directory and reject market caches, credential databases, private-key files, AI-provider keys, GitHub tokens, and bearer credentials.
+
 ## 0.10.0 - 2026-07-14
 
 - Added an optional K-line assistant with a zero-key local mode and an explicitly `research_only` model-enhanced mode.

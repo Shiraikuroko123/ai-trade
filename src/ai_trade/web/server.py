@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .. import __version__
 from ..config import AppConfig
+from ..strategy_lab import StrategyLabConflictError
 from .auth import (
     AuthManager,
     AuthenticationError,
@@ -37,6 +38,12 @@ ASSISTANT_SYMBOL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:=+-]{0,63}\Z")
 ASSISTANT_MODES = frozenset({"local", "model"})
 ASSISTANT_MIN_LOOKBACK = 60
 ASSISTANT_MAX_LOOKBACK = 500
+STRATEGY_LAB_CANDIDATE_PATH = re.compile(
+    r"/api/strategy-lab/candidates/(cand_[0-9a-f]{32})(?:/(validate|approve|export|activate))?\Z"
+)
+STRATEGY_LAB_CANDIDATE_ID_PATTERN = re.compile(r"cand_[0-9a-f]{32}\Z")
+STRATEGY_LAB_FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+STRATEGY_LAB_OBJECTIVES = frozenset({"balanced", "drawdown", "turnover"})
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -231,6 +238,23 @@ def _handler_factory(
                             "Assistant status does not accept query parameters"
                         )
                     self._json(service.assistant(user_id=_assistant_user_id(context)))
+                elif parsed.path == "/api/strategy-lab":
+                    if parsed.query:
+                        raise ValueError(
+                            "Strategy lab status does not accept query parameters"
+                        )
+                    self._json(
+                        service.strategy_lab(owner_id=_assistant_user_id(context))
+                    )
+                elif match := STRATEGY_LAB_CANDIDATE_PATH.fullmatch(parsed.path):
+                    if parsed.query or match.group(2) is not None:
+                        raise ValueError("Invalid strategy lab candidate request")
+                    self._json(
+                        service.strategy_lab_candidate(
+                            candidate_id=match.group(1),
+                            owner_id=_assistant_user_id(context),
+                        )
+                    )
                 elif parsed.path == "/api/jobs":
                     self._json({"jobs": jobs.list()})
                 elif parsed.path.startswith("/api/jobs/"):
@@ -247,6 +271,10 @@ def _handler_factory(
                     self._static(parsed.path)
             except ValueError as exc:
                 self._json_error(HTTPStatus.BAD_REQUEST, str(exc))
+            except KeyError as exc:
+                self._json_error(HTTPStatus.NOT_FOUND, str(exc).strip("'"))
+            except StrategyLabConflictError as exc:
+                self._json_error(HTTPStatus.CONFLICT, str(exc))
             except RuntimeError as exc:
                 self._json_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
             except Exception:
@@ -300,10 +328,113 @@ def _handler_factory(
                             user_id=_assistant_user_id(context),
                         )
                     )
+                elif parsed.path == "/api/strategy-lab/candidates":
+                    changes, title, hypothesis, reason = (
+                        _parse_strategy_lab_manual_payload(self._read_json())
+                    )
+                    self._json(
+                        service.strategy_lab_create_manual(
+                            changes=changes,
+                            title=title,
+                            hypothesis=hypothesis,
+                            reason=reason,
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                        ),
+                        HTTPStatus.CREATED,
+                    )
+                elif parsed.path == "/api/strategy-lab/propose":
+                    title, hypothesis, objective = (
+                        _parse_strategy_lab_proposal_payload(self._read_json())
+                    )
+                    self._json(
+                        service.strategy_lab_propose(
+                            title=title,
+                            hypothesis=hypothesis,
+                            objective=objective,
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                        ),
+                        HTTPStatus.CREATED,
+                    )
+                elif parsed.path == "/api/strategy-lab/rollback":
+                    (
+                        expected_active_candidate_id,
+                        expected_active_fingerprint,
+                        note,
+                    ) = _parse_strategy_lab_rollback_payload(
+                        self._read_json()
+                    )
+                    self._json(
+                        service.strategy_lab_rollback(
+                            note=note,
+                            expected_active_candidate_id=expected_active_candidate_id,
+                            expected_active_fingerprint=expected_active_fingerprint,
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                        )
+                    )
+                elif match := STRATEGY_LAB_CANDIDATE_PATH.fullmatch(parsed.path):
+                    candidate_id, action = match.groups()
+                    if action is None:
+                        self._json_error(
+                            HTTPStatus.METHOD_NOT_ALLOWED,
+                            "Candidate records are immutable; create a new candidate instead",
+                        )
+                    elif action == "validate":
+                        _parse_empty_object(self._read_json(), "validation")
+                        self._json(
+                            service.strategy_lab_validate(
+                                candidate_id=candidate_id,
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                            )
+                        )
+                    elif action == "approve":
+                        note = _parse_strategy_lab_confirmation_payload(
+                            self._read_json(), action="approval"
+                        )
+                        self._json(
+                            service.strategy_lab_approve(
+                                candidate_id=candidate_id,
+                                note=note,
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                            )
+                        )
+                    elif action == "export":
+                        _parse_strategy_lab_confirmation_payload(
+                            self._read_json(), action="paper export"
+                        )
+                        self._json(
+                            service.strategy_lab_export(
+                                candidate_id=candidate_id,
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                            )
+                        )
+                    else:
+                        note = _parse_strategy_lab_confirmation_payload(
+                            self._read_json(), action="activation"
+                        )
+                        self._json(
+                            service.strategy_lab_activate(
+                                candidate_id=candidate_id,
+                                note=note,
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                            )
+                        )
                 else:
                     self._json_error(HTTPStatus.NOT_FOUND, "API endpoint not found")
             except ValueError as exc:
                 self._json_error(HTTPStatus.BAD_REQUEST, str(exc))
+            except KeyError as exc:
+                self._json_error(HTTPStatus.NOT_FOUND, str(exc).strip("'"))
+            except FileExistsError as exc:
+                self._json_error(HTTPStatus.CONFLICT, str(exc))
+            except StrategyLabConflictError as exc:
+                self._json_error(HTTPStatus.CONFLICT, str(exc))
             except RuntimeError as exc:
                 self._json_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
             except Exception:
@@ -652,6 +783,12 @@ def jobs_action_names() -> tuple[str, ...]:
 def _assistant_user_id(context: tuple[str, Session | None] | None) -> str:
     if context is None or context[1] is None:
         return "local-owner"
+    return context[1].principal_id
+
+
+def _strategy_lab_actor(context: tuple[str, Session | None] | None) -> str:
+    if context is None or context[1] is None:
+        return "local-owner"
     return context[1].username
 
 
@@ -688,6 +825,124 @@ def _parse_assistant_analyze_payload(
     if not isinstance(mode, str) or mode not in ASSISTANT_MODES:
         raise ValueError("mode must be local or model")
     return symbol, lookback, mode
+
+
+def _parse_strategy_lab_manual_payload(
+    payload: dict[str, object],
+) -> tuple[dict[str, object], str, str, str]:
+    _reject_unknown_fields(
+        payload,
+        {"changes", "title", "hypothesis", "reason"},
+        "strategy lab candidate",
+    )
+    changes = payload.get("changes")
+    if not isinstance(changes, dict) or not changes:
+        raise ValueError("changes must be a non-empty object")
+    if set(changes) - {"strategy", "risk"}:
+        raise ValueError("changes may contain only strategy and risk scopes")
+    normalized: dict[str, object] = {}
+    for scope, values in changes.items():
+        if not isinstance(values, dict) or not values:
+            raise ValueError(f"changes.{scope} must be a non-empty object")
+        normalized[scope] = values
+    return (
+        normalized,
+        _bounded_text(payload.get("title"), "title", 80),
+        _bounded_text(payload.get("hypothesis"), "hypothesis", 1000),
+        _bounded_text(payload.get("reason"), "reason", 1000),
+    )
+
+
+def _parse_strategy_lab_proposal_payload(
+    payload: dict[str, object],
+) -> tuple[str, str, str]:
+    _reject_unknown_fields(
+        payload,
+        {"title", "hypothesis", "objective"},
+        "strategy lab proposal",
+    )
+    objective = payload.get("objective", "balanced")
+    if not isinstance(objective, str) or objective not in STRATEGY_LAB_OBJECTIVES:
+        raise ValueError("objective must be balanced, drawdown, or turnover")
+    return (
+        _bounded_text(payload.get("title"), "title", 80),
+        _bounded_text(payload.get("hypothesis"), "hypothesis", 1000),
+        objective,
+    )
+
+
+def _parse_strategy_lab_confirmation_payload(
+    payload: dict[str, object], *, action: str
+) -> str:
+    _reject_unknown_fields(payload, {"confirmed", "note"}, action)
+    if payload.get("confirmed") is not True:
+        raise ValueError(f"{action} requires confirmed=true")
+    note = payload.get("note", "")
+    if note == "":
+        return ""
+    return _bounded_text(note, "note", 500)
+
+
+def _parse_strategy_lab_rollback_payload(
+    payload: dict[str, object],
+) -> tuple[str, str, str]:
+    _reject_unknown_fields(
+        payload,
+        {
+            "confirmed",
+            "note",
+            "expected_active_candidate_id",
+            "expected_active_fingerprint",
+        },
+        "rollback",
+    )
+    if payload.get("confirmed") is not True:
+        raise ValueError("rollback requires confirmed=true")
+    candidate_id = payload.get("expected_active_candidate_id")
+    if not isinstance(candidate_id, str) or not STRATEGY_LAB_CANDIDATE_ID_PATTERN.fullmatch(
+        candidate_id
+    ):
+        raise ValueError("expected_active_candidate_id must be a valid candidate id")
+    fingerprint = payload.get("expected_active_fingerprint")
+    if not isinstance(
+        fingerprint, str
+    ) or not STRATEGY_LAB_FINGERPRINT_PATTERN.fullmatch(fingerprint):
+        raise ValueError(
+            "expected_active_fingerprint must be a lowercase SHA-256 fingerprint"
+        )
+    note = payload.get("note", "")
+    if note == "":
+        return candidate_id, fingerprint, ""
+    return candidate_id, fingerprint, _bounded_text(note, "note", 500)
+
+
+def _parse_empty_object(payload: dict[str, object], action: str) -> None:
+    if payload:
+        raise ValueError(f"{action} does not accept request fields")
+
+
+def _reject_unknown_fields(
+    payload: dict[str, object], allowed: set[str], operation: str
+) -> None:
+    unsupported = sorted(set(payload) - allowed)
+    if unsupported:
+        raise ValueError(
+            f"Unsupported {operation} fields: " + ", ".join(unsupported)
+        )
+
+
+def _bounded_text(value: object, field: str, maximum: int) -> str:
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or not value
+        or len(value) > maximum
+        or "\x00" in value
+    ):
+        raise ValueError(
+            f"{field} must contain between 1 and {maximum} trimmed characters"
+        )
+    return value
 
 
 def _require_loopback(host: str) -> None:

@@ -30,4 +30,12 @@ include src/ai_trade/web/assets/index.html
 include src/ai_trade/web/assets/login.html
 prune local
 prune tests
+prune state
+prune reports
+prune logs
+prune data/cache
+prune .venv
+prune .aws
+prune build
+prune dist
 global-exclude .env .env.*

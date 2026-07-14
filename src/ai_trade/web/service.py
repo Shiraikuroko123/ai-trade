@@ -17,7 +17,11 @@ from ..config import AppConfig
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..diagnostics import diagnose
+from ..strategy_lab import StrategyLabConflictError, StrategyLabEngine
 from ..strategy import MomentumTrendStrategy
+
+
+_STRATEGY_VALIDATION_LOCK = threading.Lock()
 
 
 class DashboardService:
@@ -27,6 +31,7 @@ class DashboardService:
         self._market: MarketData | None = None
         self._market_signature: tuple[tuple[str, int], ...] | None = None
         self._assistant: AssistantEngine | None = None
+        self._strategy_lab: StrategyLabEngine | None = None
 
     def overview(self) -> dict[str, Any]:
         backtest = self._json_report("backtest_summary.json") or {}
@@ -366,6 +371,116 @@ class DashboardService:
             user_id=user_id,
         )
 
+    def strategy_lab(self, *, owner_id: str) -> dict[str, Any]:
+        engine = self._strategy_lab_engine()
+        result = engine.summary(owner_id)
+        result["parameter_schema"] = engine.parameter_schema()
+        return result
+
+    def strategy_lab_candidate(
+        self, *, candidate_id: str, owner_id: str
+    ) -> dict[str, Any]:
+        return self._strategy_lab_engine().get_candidate(owner_id, candidate_id)
+
+    def strategy_lab_create_manual(
+        self,
+        *,
+        changes: dict[str, Any],
+        title: str,
+        hypothesis: str,
+        reason: str,
+        owner_id: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        return self._strategy_lab_engine().create_manual_candidate(
+            owner_id,
+            changes,
+            title,
+            hypothesis,
+            reason,
+            actor=actor,
+        )
+
+    def strategy_lab_propose(
+        self,
+        *,
+        title: str,
+        hypothesis: str,
+        objective: str,
+        owner_id: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        return self._strategy_lab_engine().propose_local_ai_candidate(
+            owner_id,
+            title,
+            hypothesis,
+            objective,
+            actor=actor,
+        )
+
+    def strategy_lab_validate(
+        self, *, candidate_id: str, owner_id: str, actor: str
+    ) -> dict[str, Any]:
+        if not _STRATEGY_VALIDATION_LOCK.acquire(blocking=False):
+            raise StrategyLabConflictError(
+                "已有策略验证正在运行；当前服务一次只能验证一个候选，请稍后重试"
+            )
+        try:
+            return self._strategy_lab_engine().validate_candidate(
+                owner_id,
+                candidate_id,
+                self.market(),
+                actor=actor,
+            )
+        finally:
+            _STRATEGY_VALIDATION_LOCK.release()
+
+    def strategy_lab_approve(
+        self, *, candidate_id: str, note: str, owner_id: str, actor: str
+    ) -> dict[str, Any]:
+        return self._strategy_lab_engine().approve_candidate(
+            owner_id,
+            candidate_id,
+            approved_by=actor,
+            note=note,
+        )
+
+    def strategy_lab_export(
+        self, *, candidate_id: str, owner_id: str, actor: str
+    ) -> dict[str, Any]:
+        return self._strategy_lab_engine().export_paper_config(
+            owner_id,
+            candidate_id,
+            actor=actor,
+        )
+
+    def strategy_lab_activate(
+        self, *, candidate_id: str, note: str, owner_id: str, actor: str
+    ) -> dict[str, Any]:
+        return self._strategy_lab_engine().activate_candidate(
+            owner_id,
+            candidate_id,
+            activated_by=actor,
+            note=note,
+        )
+
+    def strategy_lab_rollback(
+        self,
+        *,
+        note: str,
+        expected_active_candidate_id: str,
+        expected_active_fingerprint: str,
+        owner_id: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        return self._strategy_lab_engine().rollback(
+            owner_id,
+            rolled_back_by=actor,
+            expected_active_candidate_id=expected_active_candidate_id,
+            expected_active_fingerprint=expected_active_fingerprint,
+            note=note,
+        )
+
     def save_storage_preferences(self, payload: dict[str, object]) -> dict[str, Any]:
         from ..cloud import save_cloud_dashboard_preferences
 
@@ -390,6 +505,12 @@ class DashboardService:
             if self._assistant is None:
                 self._assistant = AssistantEngine(self.config)
             return self._assistant
+
+    def _strategy_lab_engine(self) -> StrategyLabEngine:
+        with self._lock:
+            if self._strategy_lab is None:
+                self._strategy_lab = StrategyLabEngine(self.config)
+            return self._strategy_lab
 
     def _signal(
         self, market: MarketData, state: dict[str, Any] | None

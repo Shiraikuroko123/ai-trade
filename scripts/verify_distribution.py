@@ -17,6 +17,10 @@ WHEEL_REQUIRED = {
     "ai_trade/assistant/features.py",
     "ai_trade/assistant/provider.py",
     "ai_trade/assistant/store.py",
+    "ai_trade/strategy_lab/__init__.py",
+    "ai_trade/strategy_lab/engine.py",
+    "ai_trade/strategy_lab/schema.py",
+    "ai_trade/strategy_lab/store.py",
     "ai_trade/data/cache_snapshot.py",
     "ai_trade/data/tencent.py",
     "ai_trade/default_config.json",
@@ -68,6 +72,10 @@ SDIST_REQUIRED = {
     "src/ai_trade/assistant/features.py",
     "src/ai_trade/assistant/provider.py",
     "src/ai_trade/assistant/store.py",
+    "src/ai_trade/strategy_lab/__init__.py",
+    "src/ai_trade/strategy_lab/engine.py",
+    "src/ai_trade/strategy_lab/schema.py",
+    "src/ai_trade/strategy_lab/store.py",
     "src/ai_trade/data/cache_snapshot.py",
     "src/ai_trade/data/tencent.py",
     "src/ai_trade/web/assets/index.html",
@@ -85,24 +93,56 @@ BANNED_PARTS = {
     ".pytest_cache",
     ".ruff_cache",
     ".aws",
+    "build",
+    "dist",
     "local",
     "logs",
     "reports",
     "state",
 }
+BANNED_PATH_SEQUENCES = {("data", "cache")}
 SENSITIVE_NAME_MARKERS = ("beta-users", "beta_users", "内测名单")
-SENSITIVE_FILE_NAMES = {".env", "credentials"}
+SENSITIVE_FILE_NAMES = {
+    ".env",
+    ".npmrc",
+    ".pypirc",
+    "credentials",
+    "credentials.json",
+    "secrets.json",
+    "token.json",
+}
+SENSITIVE_SUFFIXES = {
+    ".db",
+    ".kdbx",
+    ".key",
+    ".p12",
+    ".pem",
+    ".pfx",
+    ".sqlite",
+    ".sqlite3",
+}
 TEXT_SUFFIXES = {
+    ".bat",
+    ".cfg",
+    ".conf",
     ".css",
+    ".csv",
     ".html",
     ".in",
+    ".ini",
     ".js",
     ".json",
     ".md",
+    ".properties",
     ".ps1",
     ".py",
+    ".rst",
+    ".sh",
     ".toml",
     ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
 }
 MAX_TEXT_MEMBER_BYTES = 16 * 1024 * 1024
 SENSITIVE_CONTENT_PATTERNS = (
@@ -129,12 +169,29 @@ SENSITIVE_CONTENT_PATTERNS = (
         re.compile(r"\b[A-Z]:[\\/](?:touzi|ps)[\\/]", re.IGNORECASE),
     ),
     (
-        "literal cloud credential",
+        "literal credential",
         re.compile(
-            r"\b(?:AI_TRADE_R2_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|"
-            r"AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|"
+            r"\b(?:AI_TRADE_AI_API_KEY|"
+            r"AI_TRADE_R2_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|"
+            r"ANTHROPIC_API_KEY|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|"
+            r"DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|GH_TOKEN|GITHUB_TOKEN|"
+            r"OPENAI_API_KEY|"
             r"PAPERFIELD_S3_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY))"
             r"\s*[:=]\s*[\"']?(?![$<{%])[A-Za-z0-9/+_=.-]{16,}",
+        ),
+    ),
+    (
+        "provider or GitHub token",
+        re.compile(
+            r"\b(?:github_pat_[A-Za-z0-9_]{20,}|"
+            r"gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,})"
+        ),
+    ),
+    (
+        "bearer credential",
+        re.compile(
+            r"\bAuthorization\s*:\s*Bearer\s+(?![$<{%])[A-Za-z0-9._~+/-]{16,}",
+            re.IGNORECASE,
         ),
     ),
     (
@@ -202,9 +259,7 @@ def _source_project_version(path: Path) -> str:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise SystemExit(f"Could not read source project version from {path}") from exc
-    project = re.search(
-        r"(?ms)^\[project\]\s*$\n(?P<body>.*?)(?=^\[|\Z)", text
-    )
+    project = re.search(r"(?ms)^\[project\]\s*$\n(?P<body>.*?)(?=^\[|\Z)", text)
     if project is None:
         raise SystemExit(f"{path} has no [project] table")
     match = re.search(
@@ -219,9 +274,7 @@ def _source_project_version(path: Path) -> str:
 def _wheel_version(
     archive: zipfile.ZipFile, names: list[str], archive_name: str
 ) -> str:
-    metadata_names = [
-        name for name in names if name.endswith(".dist-info/METADATA")
-    ]
+    metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
     if len(metadata_names) != 1:
         raise SystemExit(
             f"{archive_name} must contain exactly one .dist-info/METADATA file"
@@ -231,7 +284,10 @@ def _wheel_version(
     except UnicodeDecodeError as exc:
         raise SystemExit(f"{archive_name} contains non-UTF-8 METADATA") from exc
     version = Parser().parsestr(text).get("Version")
-    if not isinstance(version, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+    if (
+        not isinstance(version, str)
+        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None
+    ):
         raise SystemExit(f"{archive_name} contains an unsupported Version field")
     return version
 
@@ -241,7 +297,9 @@ def _sdist_version(
     members: list[tarfile.TarInfo],
     archive_name: str,
 ) -> str:
-    files = {PurePosixPath(member.name): member for member in members if member.isfile()}
+    files = {
+        PurePosixPath(member.name): member for member in members if member.isfile()
+    }
     roots = {path.parts[0] for path in files if path.parts}
     if len(roots) != 1:
         raise SystemExit(f"{archive_name} must contain exactly one top-level directory")
@@ -253,9 +311,7 @@ def _sdist_version(
 
     project_path = Path(f"{archive_name}:pyproject.toml")
     project_text = _tar_text(archive, project_member, archive_name)
-    project = re.search(
-        r"(?ms)^\[project\]\s*$\n(?P<body>.*?)(?=^\[|\Z)", project_text
-    )
+    project = re.search(r"(?ms)^\[project\]\s*$\n(?P<body>.*?)(?=^\[|\Z)", project_text)
     if project is None:
         raise SystemExit(f"{project_path} has no [project] table")
     project_match = re.search(
@@ -272,7 +328,9 @@ def _sdist_version(
     if init_match.group("version") != project_version:
         raise SystemExit(f"{archive_name} has inconsistent packaged versions")
     if root != f"ai_trade-{project_version}":
-        raise SystemExit(f"{archive_name} top-level directory does not match its version")
+        raise SystemExit(
+            f"{archive_name} top-level directory does not match its version"
+        )
     return project_version
 
 
@@ -313,13 +371,30 @@ def _verify_safe_unique_names(names: list[str], archive_name: str) -> None:
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts:
             raise SystemExit(f"{archive_name} contains an unsafe path: {name}")
-        if BANNED_PARTS.intersection(path.parts) or path.suffix in {".pyc", ".pyo"}:
+        if (
+            BANNED_PARTS.intersection(path.parts)
+            or _contains_banned_sequence(path.parts)
+            or path.suffix.casefold() in {".pyc", ".pyo"}
+        ):
             raise SystemExit(f"{archive_name} contains a generated file: {name}")
         folded_name = path.name.casefold()
         if any(marker in folded_name for marker in SENSITIVE_NAME_MARKERS):
             raise SystemExit(f"{archive_name} contains a beta-user file: {name}")
-        if folded_name in SENSITIVE_FILE_NAMES or folded_name.startswith(".env."):
+        if (
+            folded_name in SENSITIVE_FILE_NAMES
+            or folded_name.startswith(".env.")
+            or path.suffix.casefold() in SENSITIVE_SUFFIXES
+        ):
             raise SystemExit(f"{archive_name} contains a local credential file: {name}")
+
+
+def _contains_banned_sequence(parts: tuple[str, ...]) -> bool:
+    folded = tuple(part.casefold() for part in parts)
+    return any(
+        folded[index : index + len(sequence)] == sequence
+        for sequence in BANNED_PATH_SEQUENCES
+        for index in range(len(folded) - len(sequence) + 1)
+    )
 
 
 def _scan_zip_text(

@@ -12,15 +12,18 @@ import tempfile
 import threading
 import time
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 
-USER_FILE_SCHEMA_VERSION = 1
+LEGACY_USER_FILE_SCHEMA_VERSION = 1
+USER_FILE_SCHEMA_VERSION = 2
 USER_EXPORT_FORMAT = "ai-trade-users"
-USER_EXPORT_VERSION = 1
+LEGACY_USER_EXPORT_VERSION = 1
+USER_EXPORT_VERSION = 2
 PASSWORD_HASH_VERSION = 1
 PASSWORD_ALGORITHM = "pbkdf2_hmac_sha256"
 DEFAULT_PBKDF2_ITERATIONS = 600_000
@@ -34,6 +37,7 @@ MIN_PASSWORD_BYTES = 8
 MAX_PASSWORD_BYTES = 1024
 
 _USERNAME_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9._-]{1,62}[a-z0-9])?\Z")
+_ACCOUNT_ID_PATTERN = re.compile(r"acct_[0-9a-f]{32}\Z")
 _CREDENTIAL_REVISION_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _GENERIC_LOGIN_ERROR = "Authentication failed"
 
@@ -63,6 +67,10 @@ class InvalidUsernameError(ValueError):
     pass
 
 
+class InvalidAccountIdError(ValueError):
+    pass
+
+
 class PasswordPolicyError(ValueError):
     pass
 
@@ -82,6 +90,11 @@ class Session:
     expires_at: float
     csrf_token: str
     credential_revision: str
+    account_id: str
+
+    @property
+    def principal_id(self) -> str:
+        return self.account_id
 
 
 @dataclass(frozen=True)
@@ -97,6 +110,10 @@ class SessionGrant:
     def expires_at(self) -> float:
         return self.session.expires_at
 
+    @property
+    def principal_id(self) -> str:
+        return self.session.principal_id
+
 
 @dataclass(frozen=True)
 class _PasswordRecord:
@@ -109,11 +126,19 @@ class _PasswordRecord:
 
 @dataclass(frozen=True)
 class _StoredUser:
+    account_id: str
     username: str
     enabled: bool
     created_at: str
     updated_at: str
     password: _PasswordRecord
+
+
+@dataclass(frozen=True)
+class _AuthenticatedUser:
+    username: str
+    account_id: str
+    credential_revision: str
 
 
 @dataclass
@@ -175,6 +200,11 @@ class UserStore:
                 raise UserAlreadyExistsError("User already exists")
             now = _utc_now()
             user = _StoredUser(
+                account_id=(
+                    existing.account_id
+                    if existing is not None
+                    else _new_account_id(users.values())
+                ),
                 username=normalized,
                 enabled=existing.enabled if existing is not None else True,
                 created_at=existing.created_at if existing is not None else now,
@@ -202,6 +232,7 @@ class UserStore:
             if existing.enabled == enabled:
                 return _public_user(existing)
             updated = _StoredUser(
+                account_id=existing.account_id,
                 username=existing.username,
                 enabled=enabled,
                 created_at=existing.created_at,
@@ -221,18 +252,24 @@ class UserStore:
             self._write_users(users)
             return True
 
+    def account_id_for(self, username: str) -> str | None:
+        normalized = normalize_username(username)
+        with self._lock:
+            user = self._load_users().get(normalized)
+            return user.account_id if user is not None else None
+
     def export_users(self, destination: str | Path) -> int:
         output = Path(destination)
         if _same_path(output, self.path):
-            raise UserStoreError("Export destination must differ from the active user file")
+            raise UserStoreError(
+                "Export destination must differ from the active user file"
+            )
         with self._lock:
             users = self._load_users()
             payload = {
                 "format": USER_EXPORT_FORMAT,
                 "version": USER_EXPORT_VERSION,
-                "users": [
-                    _stored_user_payload(users[name]) for name in sorted(users)
-                ],
+                "users": [_stored_user_payload(users[name]) for name in sorted(users)],
             }
             _atomic_write_json(output, payload)
             return len(users)
@@ -252,12 +289,23 @@ class UserStore:
         with self._lock:
             existing = self._load_users()
             if mode == "reject" and existing:
-                raise UserStoreError("Active user file is not empty; choose replace or merge")
+                raise UserStoreError(
+                    "Active user file is not empty; choose replace or merge"
+                )
             if mode == "merge":
                 duplicates = sorted(set(existing) & set(imported))
                 if duplicates:
                     raise UserAlreadyExistsError(
                         "Import contains existing usernames: " + ", ".join(duplicates)
+                    )
+                existing_account_ids = {user.account_id for user in existing.values()}
+                duplicate_account_ids = sorted(
+                    existing_account_ids
+                    & {user.account_id for user in imported.values()}
+                )
+                if duplicate_account_ids:
+                    raise UserAlreadyExistsError(
+                        "Import contains existing account identities"
                     )
                 result = {**existing, **imported}
             else:
@@ -269,8 +317,10 @@ class UserStore:
         """Low-level constant-time verification; interactive callers should use AuthManager."""
         return self.authenticate_credentials(username, password) is not None
 
-    def authenticate_credentials(self, username: str, password: str) -> str | None:
-        """Verify credentials and return the revision that a session must remain bound to."""
+    def authenticate_credentials(
+        self, username: str, password: str
+    ) -> _AuthenticatedUser | None:
+        """Verify credentials and return the identity a session must remain bound to."""
         try:
             normalized = normalize_username(username)
         except InvalidUsernameError:
@@ -283,26 +333,34 @@ class UserStore:
             matches = _verify_password(verifier, password_bytes)
             if user is None or not user.enabled or not matches:
                 return None
-            return _credential_revision(user)
+            return _AuthenticatedUser(
+                user.username,
+                user.account_id,
+                _credential_revision(user),
+            )
 
-    def is_session_current(self, username: str, credential_revision: str) -> bool:
-        if (
-            not isinstance(credential_revision, str)
-            or not _CREDENTIAL_REVISION_PATTERN.fullmatch(credential_revision)
-        ):
+    def is_session_current(
+        self,
+        username: str,
+        account_id: str,
+        credential_revision: str,
+    ) -> bool:
+        if not isinstance(
+            credential_revision, str
+        ) or not _CREDENTIAL_REVISION_PATTERN.fullmatch(credential_revision):
             return False
         try:
             normalized = normalize_username(username)
-        except InvalidUsernameError:
+            validated_account_id = _validated_account_id(account_id, normalized)
+        except (InvalidUsernameError, InvalidAccountIdError):
             return False
         with self._lock:
             user = self._load_users().get(normalized)
             return bool(
                 user is not None
                 and user.enabled
-                and hmac.compare_digest(
-                    _credential_revision(user), credential_revision
-                )
+                and hmac.compare_digest(user.account_id, validated_account_id)
+                and hmac.compare_digest(_credential_revision(user), credential_revision)
             )
 
     def is_enabled(self, username: str) -> bool:
@@ -319,25 +377,42 @@ class UserStore:
             return {}
         try:
             if self.path.stat().st_size > MAX_USER_FILE_BYTES:
-                raise CorruptUserStoreError("User file exceeds the maximum supported size")
+                raise CorruptUserStoreError(
+                    "User file exceeds the maximum supported size"
+                )
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise CorruptUserStoreError("User file is unreadable or invalid JSON") from exc
+            raise CorruptUserStoreError(
+                "User file is unreadable or invalid JSON"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise CorruptUserStoreError("Unsupported user file schema")
+        schema_version = payload.get("schema_version")
         if (
-            not isinstance(payload, dict)
-            or isinstance(payload.get("schema_version"), bool)
-            or payload.get("schema_version") != USER_FILE_SCHEMA_VERSION
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version
+            not in {LEGACY_USER_FILE_SCHEMA_VERSION, USER_FILE_SCHEMA_VERSION}
         ):
             raise CorruptUserStoreError("Unsupported user file schema")
         raw_users = payload.get("users")
         if not isinstance(raw_users, list):
             raise CorruptUserStoreError("User file users field must be a list")
         users: dict[str, _StoredUser] = {}
+        account_ids: set[str] = set()
         for raw_user in raw_users:
-            user = _parse_stored_user(raw_user)
+            user = _parse_stored_user(
+                raw_user,
+                legacy=schema_version == LEGACY_USER_FILE_SCHEMA_VERSION,
+            )
             if user.username in users:
                 raise CorruptUserStoreError("User file contains duplicate usernames")
+            if user.account_id in account_ids:
+                raise CorruptUserStoreError("User file contains duplicate account IDs")
             users[user.username] = user
+            account_ids.add(user.account_id)
+        if schema_version == LEGACY_USER_FILE_SCHEMA_VERSION:
+            self._write_users(users)
         return users
 
     def _write_users(self, users: dict[str, _StoredUser]) -> None:
@@ -364,20 +439,26 @@ class SessionStore:
         self._sessions: dict[bytes, Session] = {}
         self._lock = threading.RLock()
 
-    def create(self, username: str, credential_revision: str) -> SessionGrant:
+    def create(
+        self,
+        username: str,
+        account_id: str,
+        credential_revision: str,
+    ) -> SessionGrant:
         normalized = normalize_username(username)
-        if (
-            not isinstance(credential_revision, str)
-            or not _CREDENTIAL_REVISION_PATTERN.fullmatch(credential_revision)
-        ):
+        validated_account_id = _validated_account_id(account_id, normalized)
+        if not isinstance(
+            credential_revision, str
+        ) or not _CREDENTIAL_REVISION_PATTERN.fullmatch(credential_revision):
             raise ValueError("credential_revision must be a lowercase SHA-256 digest")
         now = self._now()
         session = Session(
-            normalized,
-            now,
-            now + self.ttl_seconds,
-            secrets.token_urlsafe(SESSION_TOKEN_BYTES),
-            credential_revision,
+            username=normalized,
+            created_at=now,
+            expires_at=now + self.ttl_seconds,
+            csrf_token=secrets.token_urlsafe(SESSION_TOKEN_BYTES),
+            credential_revision=credential_revision,
+            account_id=validated_account_id,
         )
         with self._lock:
             self._purge_expired(now)
@@ -433,6 +514,18 @@ class SessionStore:
                 self._sessions.pop(token_hash, None)
             return len(matching)
 
+    def revoke_account(self, account_id: str) -> int:
+        validated_account_id = _validated_account_id(account_id)
+        with self._lock:
+            matching = [
+                token_hash
+                for token_hash, session in self._sessions.items()
+                if session.account_id == validated_account_id
+            ]
+            for token_hash in matching:
+                self._sessions.pop(token_hash, None)
+            return len(matching)
+
     def purge_expired(self) -> int:
         with self._lock:
             return self._purge_expired(self._now())
@@ -466,7 +559,11 @@ class LoginRateLimiter:
         max_keys: int = 10_000,
         clock: Callable[[], float] = time.time,
     ):
-        if isinstance(max_failures, bool) or not isinstance(max_failures, int) or max_failures < 1:
+        if (
+            isinstance(max_failures, bool)
+            or not isinstance(max_failures, int)
+            or max_failures < 1
+        ):
             raise ValueError("max_failures must be a positive integer")
         if isinstance(max_keys, bool) or not isinstance(max_keys, int) or max_keys < 1:
             raise ValueError("max_keys must be a positive integer")
@@ -556,7 +653,9 @@ class AuthManager:
         self.limiter = limiter or LoginRateLimiter()
         self.source_limiter = LoginRateLimiter(max_failures=source_max_failures)
 
-    def login(self, username: str, password: str, *, source: str = "local") -> SessionGrant:
+    def login(
+        self, username: str, password: str, *, source: str = "local"
+    ) -> SessionGrant:
         principal_key, source_key = _login_rate_keys(username, source)
         retry_after = max(
             self.limiter.retry_after(principal_key),
@@ -564,8 +663,8 @@ class AuthManager:
         )
         if retry_after > 0:
             raise AuthenticationError(retry_after)
-        credential_revision = self.users.authenticate_credentials(username, password)
-        if credential_revision is None:
+        authenticated_user = self.users.authenticate_credentials(username, password)
+        if authenticated_user is None:
             retry_after = max(
                 self.limiter.record_failure(principal_key),
                 self.source_limiter.record_failure(source_key),
@@ -573,7 +672,9 @@ class AuthManager:
             raise AuthenticationError(retry_after)
         self.limiter.record_success(principal_key)
         return self.sessions.create(
-            normalize_username(username), credential_revision
+            authenticated_user.username,
+            authenticated_user.account_id,
+            authenticated_user.credential_revision,
         )
 
     def authenticate_session(self, token: str) -> Session | None:
@@ -581,7 +682,9 @@ class AuthManager:
         if session is None:
             return None
         if not self.users.is_session_current(
-            session.username, session.credential_revision
+            session.username,
+            session.account_id,
+            session.credential_revision,
         ):
             self.sessions.revoke(token)
             return None
@@ -591,15 +694,18 @@ class AuthManager:
         return self.sessions.revoke(token)
 
     def disable_user(self, username: str) -> UserInfo:
+        account_id = self.users.account_id_for(username)
         user = self.users.set_enabled(username, False)
-        self.sessions.revoke_user(user.username)
+        if account_id is not None:
+            self.sessions.revoke_account(account_id)
         return user
 
     def remove_user(self, username: str) -> bool:
         normalized = normalize_username(username)
+        account_id = self.users.account_id_for(normalized)
         removed = self.users.remove_user(normalized)
-        if removed:
-            self.sessions.revoke_user(normalized)
+        if removed and account_id is not None:
+            self.sessions.revoke_account(account_id)
         return removed
 
 
@@ -654,13 +760,16 @@ def _verify_password(record: _PasswordRecord, password: bytes) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def _parse_stored_user(value: object) -> _StoredUser:
+def _parse_stored_user(value: object, *, legacy: bool = False) -> _StoredUser:
     if not isinstance(value, dict):
         raise CorruptUserStoreError("User record must be an object")
     try:
         username = normalize_username(value["username"])
         if username != value["username"]:
             raise CorruptUserStoreError("Stored username is not normalized")
+        account_id = (
+            username if legacy else _validated_account_id(value["account_id"], username)
+        )
         enabled = value["enabled"]
         if not isinstance(enabled, bool):
             raise CorruptUserStoreError("Stored enabled flag must be boolean")
@@ -680,7 +789,13 @@ def _parse_stored_user(value: object) -> _StoredUser:
         iterations = raw_password["iterations"]
         salt = raw_password["salt"]
         digest = raw_password["digest"]
-    except (KeyError, TypeError, ValueError, InvalidUsernameError) as exc:
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        InvalidUsernameError,
+        InvalidAccountIdError,
+    ) as exc:
         raise CorruptUserStoreError("User record is missing required fields") from exc
     if (
         isinstance(version, bool)
@@ -700,21 +815,26 @@ def _parse_stored_user(value: object) -> _StoredUser:
     _decode_base64(salt, SALT_BYTES, "salt")
     _decode_base64(digest, PASSWORD_DIGEST_BYTES, "digest")
     return _StoredUser(
-        username,
-        enabled,
-        created_at,
-        updated_at,
-        _PasswordRecord(version, algorithm, iterations, salt, digest),
+        account_id=account_id,
+        username=username,
+        enabled=enabled,
+        created_at=created_at,
+        updated_at=updated_at,
+        password=_PasswordRecord(version, algorithm, iterations, salt, digest),
     )
 
 
 def _load_user_export(path: Path) -> dict[str, _StoredUser]:
     try:
         if path.stat().st_size > MAX_USER_FILE_BYTES:
-            raise CorruptUserStoreError("User export exceeds the maximum supported size")
+            raise CorruptUserStoreError(
+                "User export exceeds the maximum supported size"
+            )
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise CorruptUserStoreError("User export is unreadable or invalid JSON") from exc
+        raise CorruptUserStoreError(
+            "User export is unreadable or invalid JSON"
+        ) from exc
     if not isinstance(payload, dict) or set(payload) != {"format", "version", "users"}:
         raise CorruptUserStoreError("User export schema is invalid")
     if payload["format"] != USER_EXPORT_FORMAT:
@@ -723,7 +843,7 @@ def _load_user_export(path: Path) -> dict[str, _StoredUser]:
     if (
         isinstance(version, bool)
         or not isinstance(version, int)
-        or version != USER_EXPORT_VERSION
+        or version not in {LEGACY_USER_EXPORT_VERSION, USER_EXPORT_VERSION}
     ):
         raise CorruptUserStoreError("User export version is unsupported")
     raw_users = payload["users"]
@@ -737,6 +857,8 @@ def _load_user_export(path: Path) -> dict[str, _StoredUser]:
         "updated_at",
         "password",
     }
+    if version == USER_EXPORT_VERSION:
+        expected_user_fields.add("account_id")
     expected_password_fields = {
         "version",
         "algorithm",
@@ -744,16 +866,28 @@ def _load_user_export(path: Path) -> dict[str, _StoredUser]:
         "salt",
         "digest",
     }
+    account_ids: set[str] = set()
     for raw_user in raw_users:
         if not isinstance(raw_user, dict) or set(raw_user) != expected_user_fields:
             raise CorruptUserStoreError("User export contains an invalid user record")
         raw_password = raw_user.get("password")
-        if not isinstance(raw_password, dict) or set(raw_password) != expected_password_fields:
-            raise CorruptUserStoreError("User export contains an invalid password record")
-        user = _parse_stored_user(raw_user)
+        if (
+            not isinstance(raw_password, dict)
+            or set(raw_password) != expected_password_fields
+        ):
+            raise CorruptUserStoreError(
+                "User export contains an invalid password record"
+            )
+        user = _parse_stored_user(
+            raw_user,
+            legacy=version == LEGACY_USER_EXPORT_VERSION,
+        )
         if user.username in users:
             raise CorruptUserStoreError("User export contains duplicate usernames")
+        if user.account_id in account_ids:
+            raise CorruptUserStoreError("User export contains duplicate account IDs")
         users[user.username] = user
+        account_ids.add(user.account_id)
     return users
 
 
@@ -769,6 +903,7 @@ def _decode_base64(value: str, length: int, name: str) -> bytes:
 
 def _stored_user_payload(user: _StoredUser) -> dict[str, object]:
     return {
+        "account_id": user.account_id,
         "username": user.username,
         "enabled": user.enabled,
         "created_at": user.created_at,
@@ -786,6 +921,7 @@ def _stored_user_payload(user: _StoredUser) -> dict[str, object]:
 def _credential_revision(user: _StoredUser) -> str:
     material = "\0".join(
         (
+            user.account_id,
             user.username,
             user.updated_at,
             str(user.password.version),
@@ -796,6 +932,30 @@ def _credential_revision(user: _StoredUser) -> str:
         )
     ).encode("utf-8")
     return hashlib.sha256(material).hexdigest()
+
+
+def _new_account_id(users: Iterable[_StoredUser]) -> str:
+    existing = {user.account_id for user in users}
+    while True:
+        account_id = f"acct_{secrets.token_hex(16)}"
+        if account_id not in existing:
+            return account_id
+
+
+def _validated_account_id(account_id: object, username: str | None = None) -> str:
+    if isinstance(account_id, str) and _ACCOUNT_ID_PATTERN.fullmatch(account_id):
+        return account_id
+    if not isinstance(account_id, str):
+        raise InvalidAccountIdError("Account ID must be a string")
+    try:
+        legacy_account_id = normalize_username(account_id)
+    except InvalidUsernameError as exc:
+        raise InvalidAccountIdError("Account ID is invalid") from exc
+    if legacy_account_id != account_id or (
+        username is not None and legacy_account_id != username
+    ):
+        raise InvalidAccountIdError("Account ID is invalid")
+    return legacy_account_id
 
 
 def _public_user(user: _StoredUser) -> UserInfo:

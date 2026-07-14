@@ -4,6 +4,7 @@ const ROUTES = {
   overview: { title: "总览", context: "每日收盘复盘" },
   research: { title: "研究", context: "历史证据与稳健性" },
   assistant: { title: "AI 分析", context: "收盘 K 线诊断与风险复核" },
+  "strategy-lab": { title: "策略实验室", context: "候选版本、验证与模拟晋级" },
   portfolio: { title: "组合", context: "模拟账户与目标权重" },
   trading: { title: "交易", context: "执行记录与权限晋级" },
   risk: { title: "风险", context: "约束、尾部与实盘门禁" },
@@ -82,6 +83,9 @@ const state = {
   universeDate: "",
   assistantResult: null,
   assistantBusy: false,
+  strategyLabMode: "manual",
+  strategyCandidateId: "",
+  strategyActionBusy: false,
   resizeTimer: 0,
 };
 
@@ -304,7 +308,9 @@ async function api(path, options = {}) {
     if (response.status === 401) {
       location.replace("/login");
     }
-    throw new Error(payload.error || `请求失败 (${response.status})`);
+    const error = new Error(payload.error || `请求失败 (${response.status})`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -390,6 +396,7 @@ async function loadRoute() {
         overview: "/api/overview",
         research: "/api/research",
         assistant: "/api/assistant",
+        "strategy-lab": "/api/strategy-lab",
         portfolio: "/api/portfolio",
         trading: "/api/trading",
         universe: `/api/universe${state.universeDate ? `?date=${encodeURIComponent(state.universeDate)}` : ""}`,
@@ -416,6 +423,7 @@ function renderRoute(payload) {
     overview: renderOverview,
     research: renderResearch,
     assistant: renderAssistant,
+    "strategy-lab": renderStrategyLab,
     portfolio: renderPortfolio,
     trading: renderTrading,
     risk: renderRisk,
@@ -438,6 +446,9 @@ function updateRouteDate(payload) {
     value = payload.backtest?.metadata?.end;
   } else if (state.route === "assistant") {
     value = (state.assistantResult || payload.history?.[0])?.data_date;
+  } else if (state.route === "strategy-lab") {
+    const selected = strategyLabSelectedCandidate(payload);
+    value = selected?.validation?.market_snapshot?.date;
   } else if (state.route === "portfolio") {
     value = payload.date;
   } else if (state.route === "trading") {
@@ -1206,6 +1217,493 @@ async function runAssistantAnalysis(form) {
       if (current) renderRoute(current);
     }
   }
+}
+
+const STRATEGY_PARAMETER_LABELS = {
+  rebalance_days: "调仓间隔",
+  lookback_days: "动量回看",
+  skip_days: "跳过最近",
+  trend_sma_days: "趋势均线",
+  volatility_days: "波动窗口",
+  top_n: "最多选择",
+  minimum_momentum: "最低动量",
+  target_annual_volatility: "目标年化波动",
+  minimum_cash_weight: "最低现金权重",
+  max_position_weight: "单一证券上限",
+  covariance_days: "协方差窗口",
+  covariance_shrinkage: "协方差收缩",
+  minimum_average_amount: "最低日均成交额",
+  minimum_rebalance_weight: "最小调仓偏差",
+  weighting_method: "权重方法",
+  risk_model: "风险模型",
+  max_asset_class_weight: "资产类别上限",
+  max_sector_weight: "风险分组上限",
+  capacity_reference_cash: "容量参考资金",
+  max_average_amount_participation: "成交额参与上限",
+  capacity_days: "容量执行窗口",
+  max_portfolio_drawdown: "组合回撤止损",
+  max_daily_loss: "单日亏损止损",
+  cooldown_days: "风险冷却期",
+};
+
+const STRATEGY_CHOICE_LABELS = {
+  inverse_volatility: "逆波动率",
+  risk_parity: "风险平价",
+  conservative_sum: "保守波动上界",
+  covariance: "协方差模型",
+};
+
+function renderStrategyLab(data) {
+  const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+  const active = data.active || null;
+  const activeCandidate = candidates.find((item) => item.candidate_id === active?.candidate_id);
+  if (!state.strategyCandidateId || !candidates.some((item) => item.candidate_id === state.strategyCandidateId)) {
+    state.strategyCandidateId = activeCandidate?.candidate_id || candidates[0]?.candidate_id || "";
+  }
+  const selected = strategyLabSelectedCandidate(data);
+  const hasActiveCandidate = Boolean(active?.candidate_id);
+  const safety = data.safety || {};
+  const rollbackAvailable = Boolean(active?.can_rollback);
+  return `
+    <div class="page-stack strategy-lab-page">
+      ${pageIntro(
+        "策略实验室",
+        "人工调参与本地 AI 建议都只生成候选；通过确定性验证并由你批准后，才能导出独立模拟配置",
+        hasActiveCandidate && rollbackAvailable
+          ? `<button class="button secondary" type="button" data-strategy-rollback${state.strategyActionBusy ? " disabled" : ""}>回滚模拟版本</button>`
+          : "",
+      )}
+
+      <section class="strategy-authority-band" aria-label="策略权限边界">
+        <div><span>当前基线</span><strong class="mono">${escapeHtml(shortFingerprint(data.baseline?.fingerprint))}</strong></div>
+        <div><span>实验室活动版本</span><strong>${hasActiveCandidate ? escapeHtml(activeCandidate ? strategyCandidateTitle(activeCandidate) : shortCandidateId(active.candidate_id)) : "尚未激活"}</strong></div>
+        <div><span>执行权限</span><strong>${safety.live_trading_enabled === false ? "仅限研究与独立模拟" : "权限状态待确认"}</strong></div>
+        ${statusChip("真实下单保持锁定", "warning")}
+      </section>
+
+      ${strategyLabComposer(data)}
+
+      <section class="strategy-workspace">
+        <aside class="strategy-candidate-rail" aria-label="策略候选历史">
+          ${panelHeader("候选版本", strategyCandidateCountLabel(data, candidates))}
+          ${strategyCandidateList(candidates, active?.candidate_id)}
+        </aside>
+        <div class="strategy-candidate-detail">
+          ${selected ? strategyCandidateDetail(selected, data) : strategyLabEmptyCandidate()}
+        </div>
+      </section>
+
+      ${strategyLabHistory(data.history || [])}
+      <aside class="callout info"><strong>权限边界</strong><p>策略实验室不会修改默认配置、当前模拟账本、券商授权或紧急停止开关。导出的版本拥有独立账本路径，历史验证也不能授予真实交易权限。</p></aside>
+    </div>`;
+}
+
+function strategyCandidateCountLabel(data, candidates) {
+  const summary = data?.candidate_summary || {};
+  const count = Number.isInteger(summary.count) ? summary.count : candidates.length;
+  const total = Number.isInteger(summary.total) ? summary.total : candidates.length;
+  return summary.truncated
+    ? `最近 ${count} / 共 ${total} 个不可变记录`
+    : `共 ${total} 个不可变记录`;
+}
+
+function strategyLabComposer(data) {
+  const manual = state.strategyLabMode === "manual";
+  return `
+    <section class="strategy-composer">
+      <header class="strategy-composer-head">
+        <div>
+          <h2>创建策略候选</h2>
+          <p>保存后参数不可原地修改；继续调整时创建下一个候选。</p>
+        </div>
+        <div class="segmented" role="tablist" aria-label="候选来源">
+          <button type="button" role="tab" data-strategy-mode="manual" aria-selected="${manual}">手动调参</button>
+          <button type="button" role="tab" data-strategy-mode="ai" aria-selected="${!manual}">本地 AI 建议</button>
+        </div>
+      </header>
+      ${manual ? strategyManualForm(data) : strategyProposalForm()}
+    </section>`;
+}
+
+function strategyManualForm(data) {
+  const schema = data.parameter_schema?.parameters || [];
+  const strategy = schema.filter((item) => item.scope === "strategy");
+  const risk = schema.filter((item) => item.scope === "risk");
+  return `
+    <form id="strategy-manual-form" class="strategy-form">
+      <div class="strategy-hypothesis-grid">
+        <label class="field"><span>候选名称</span><input name="title" maxlength="80" required value="手动策略候选"></label>
+        <label class="field strategy-hypothesis"><span>研究假设</span><textarea name="hypothesis" maxlength="1000" required>调整后的参数可能改善风险收益特征，需要使用同一市场快照验证。</textarea></label>
+        <label class="field strategy-hypothesis"><span>调整理由</span><textarea name="reason" maxlength="1000" required>由用户在策略实验室手动调整。</textarea></label>
+      </div>
+      <fieldset class="strategy-parameter-group">
+        <legend>信号与组合参数</legend>
+        <div class="strategy-parameter-grid">${strategy.map((item) => strategyParameterField(item, data.baseline)).join("")}</div>
+      </fieldset>
+      <fieldset class="strategy-parameter-group risk-parameters">
+        <legend>账户级风险参数</legend>
+        <div class="strategy-parameter-grid">${risk.map((item) => strategyParameterField(item, data.baseline)).join("")}</div>
+      </fieldset>
+      <footer class="form-footer">
+        <span>只有与当前基线不同的字段会写入候选差异。</span>
+        <button class="button primary" type="submit"${state.strategyActionBusy ? " disabled" : ""}>保存手动候选</button>
+      </footer>
+    </form>`;
+}
+
+function strategyProposalForm() {
+  return `
+    <form id="strategy-proposal-form" class="strategy-form strategy-proposal-form">
+      <div class="strategy-hypothesis-grid">
+        <label class="field"><span>候选名称</span><input name="title" maxlength="80" required value="本地 AI 策略候选"></label>
+        <label class="field strategy-hypothesis"><span>研究假设</span><textarea name="hypothesis" maxlength="1000" required>在不扩大交易权限的前提下，寻找更稳定的参数邻域。</textarea></label>
+        <fieldset class="mode-fieldset strategy-objective">
+          <legend>优化侧重</legend>
+          <div class="mode-segmented three-options">
+            <label><input type="radio" name="objective" value="balanced" checked><span>平衡</span></label>
+            <label><input type="radio" name="objective" value="drawdown"><span>回撤</span></label>
+            <label><input type="radio" name="objective" value="turnover"><span>换手</span></label>
+          </div>
+        </fieldset>
+      </div>
+      <aside class="callout info"><strong>本地确定性建议</strong><p>该模式不需要 API Key，只能在参数白名单和安全范围内提出差异；它不能生成代码、订单、目标仓位、批准记录或发布决定。</p></aside>
+      <footer class="form-footer">
+        <span>建议仅创建草稿，仍需同快照验证与人工批准。</span>
+        <button class="button primary" type="submit"${state.strategyActionBusy ? " disabled" : ""}>生成候选</button>
+      </footer>
+    </form>`;
+}
+
+function strategyParameterField(spec, baseline) {
+  const raw = baseline?.[spec.scope]?.[spec.name];
+  const ratio = spec.unit === "ratio";
+  const scale = ratio ? 0.01 : 1;
+  const shown = finite(raw) === null ? raw : strategyInputNumber(Number(raw) / scale);
+  const label = STRATEGY_PARAMETER_LABELS[spec.name] || spec.label || spec.name;
+  const unit = strategyUnitLabel(spec.unit);
+  const common = `data-strategy-parameter data-scope="${escapeHtml(spec.scope)}" data-parameter="${escapeHtml(spec.name)}" data-value-type="${escapeHtml(spec.type)}" data-original="${escapeHtml(raw)}" data-scale="${scale}"`;
+  let control;
+  if (spec.type === "choice") {
+    control = `<select name="${escapeHtml(spec.scope)}.${escapeHtml(spec.name)}" ${common}>${(spec.options || []).map((option) => `<option value="${escapeHtml(option)}"${option === raw ? " selected" : ""}>${escapeHtml(STRATEGY_CHOICE_LABELS[option] || option)}</option>`).join("")}</select>`;
+  } else {
+    const minimum = finite(spec.min) === null ? "" : ` min="${strategyInputNumber(Number(spec.min) / scale)}"`;
+    const maximum = finite(spec.max) === null ? "" : ` max="${strategyInputNumber(Number(spec.max) / scale)}"`;
+    const step = spec.type === "integer" ? 1 : "any";
+    control = `<div class="unit-input"><input type="number" name="${escapeHtml(spec.scope)}.${escapeHtml(spec.name)}" value="${escapeHtml(shown)}" step="${escapeHtml(step)}"${minimum}${maximum} ${common} required>${unit ? `<span>${escapeHtml(unit)}</span>` : ""}</div>`;
+  }
+  return `<label class="field strategy-parameter"><span>${escapeHtml(label)}</span>${control}</label>`;
+}
+
+function strategyUnitLabel(unit) {
+  return { ratio: "%", sessions: "日", instruments: "支", CNY: "元" }[unit] || "";
+}
+
+function strategyInputNumber(value) {
+  return Number(value.toFixed(8)).toString();
+}
+
+function strategyCandidateList(candidates, activeId) {
+  if (!candidates.length) {
+    return `<div class="compact-empty"><strong>尚无候选</strong><p>在上方手动调整参数，或让本地规则提出第一个候选。</p></div>`;
+  }
+  return `<div class="strategy-candidate-list">${candidates.map((candidate) => {
+    const selected = candidate.candidate_id === state.strategyCandidateId;
+    return `<button class="strategy-candidate-item" type="button" data-strategy-candidate="${escapeHtml(candidate.candidate_id)}" aria-pressed="${selected}">
+      <span class="strategy-candidate-title"><strong>${escapeHtml(strategyCandidateTitle(candidate))}</strong>${candidate.candidate_id === activeId ? statusChip("模拟活动", "info") : ""}</span>
+      <span>${escapeHtml(strategySourceLabel(candidate.source))} · ${formatDate(candidate.created_at, true)}</span>
+      <span class="strategy-candidate-foot"><code>${escapeHtml(shortCandidateId(candidate.candidate_id))}</code>${strategyStatusChip(candidate.status)}</span>
+    </button>`;
+  }).join("")}</div>`;
+}
+
+function strategyCandidateDetail(candidate, data) {
+  const validation = candidate.validation || null;
+  const approved = candidate.status === "APPROVED";
+  const eligible = candidate.status === "ELIGIBLE";
+  const draft = candidate.status === "DRAFT";
+  const active = data.active?.candidate_id === candidate.candidate_id;
+  return `
+    <article class="panel strategy-candidate-record">
+      ${panelHeader(
+        strategyCandidateTitle(candidate),
+        `${strategySourceLabel(candidate.source)} · ${candidate.candidate_id}`,
+        `<div class="action-row">${active ? statusChip("当前模拟版本", "info") : ""}${strategyStatusChip(candidate.status)}</div>`,
+      )}
+      <div class="strategy-record-provenance">
+        <span>建立时间 <strong>${formatDate(candidate.created_at, true)}</strong></span>
+        <span>父版本 <code>${escapeHtml(shortFingerprint(candidate.parent_fingerprint))}</code></span>
+        <span>候选指纹 <code>${escapeHtml(shortFingerprint(candidate.candidate_fingerprint))}</code></span>
+      </div>
+      <p class="strategy-hypothesis-copy"><strong>研究假设</strong>${escapeHtml(candidate.hypothesis || "未记录")}</p>
+      ${candidate.reason ? `<p class="strategy-reason-copy"><strong>来源说明</strong>${escapeHtml(candidate.reason)}</p>` : ""}
+      ${strategyCandidateDiff(candidate, data)}
+      ${validation ? strategyValidationComparison(validation) : `<aside class="callout warning"><strong>尚未验证</strong><p>候选仍是草稿。验证会在当前不可变行情快照上同时运行基线与候选，并检查留出区间、交易成本、回撤和参数稳定性。</p></aside>`}
+      ${strategyCandidateActions(candidate, { draft, eligible, approved, active })}
+      ${candidate.export ? `<div class="path-row strategy-export-path"><span>模拟配置</span><code>${escapeHtml(candidate.export.path || "已导出")}</code></div>` : ""}
+    </article>`;
+}
+
+function strategyCandidateDiff(candidate, data) {
+  const changes = candidate.effective_changes || candidate.changes || {};
+  const rows = [];
+  for (const [scope, values] of Object.entries(changes)) {
+    if (!values || typeof values !== "object") continue;
+    for (const [name, candidateValue] of Object.entries(values)) {
+      const spec = (data.parameter_schema?.parameters || []).find((item) => item.scope === scope && item.name === name) || { scope, name };
+      const baselineValue = candidate.baseline?.[scope]?.[name] ?? data.baseline?.[scope]?.[name];
+      rows.push(`<tr><td>${escapeHtml(STRATEGY_PARAMETER_LABELS[name] || spec.label || name)}</td><td class="numeric">${escapeHtml(strategyParameterValue(baselineValue, spec))}</td><td class="numeric">${escapeHtml(strategyParameterValue(candidateValue, spec))}</td></tr>`);
+    }
+  }
+  return `<section class="strategy-diff-block">
+    ${panelHeader("参数差异", `${rows.length} 项白名单变更`)}
+    <div class="table-wrap"><table class="data-table compact strategy-diff-table"><thead><tr><th>参数</th><th>基线</th><th>候选</th></tr></thead><tbody>${rows.length ? rows.join("") : emptyRow(3, "未识别到有效参数差异")}</tbody></table></div>
+  </section>`;
+}
+
+function strategyParameterValue(value, spec) {
+  if (spec.type === "choice") return STRATEGY_CHOICE_LABELS[value] || value || "—";
+  if (spec.unit === "ratio") return formatPercent(value);
+  if (spec.unit === "CNY") return formatMoney(value);
+  if (spec.unit === "sessions") return `${formatInteger(value)} 日`;
+  if (spec.unit === "instruments") return `${formatInteger(value)} 支`;
+  return Number.isInteger(value) ? formatInteger(value) : formatNumber(value, 3);
+}
+
+function strategyValidationComparison(validation) {
+  const baseline = validation.baseline_metrics || {};
+  const candidate = validation.candidate_metrics || {};
+  const gates = validation.gates || {};
+  const snapshot = validation.market_snapshot || {};
+  return `
+    <section class="strategy-validation-block">
+      ${panelHeader("同快照验证", `${snapshot.date || "—"} · ${shortFingerprint(snapshot.id)}`)}
+      <div class="table-wrap"><table class="data-table compact strategy-metric-table">
+        <thead><tr><th>指标</th><th>当前基线</th><th>候选版本</th><th>变化</th></tr></thead>
+        <tbody>
+          ${strategyMetricRow("年化收益", baseline.cagr, candidate.cagr, formatPercent)}
+          ${strategyMetricRow("Sharpe", baseline.sharpe, candidate.sharpe, formatNumber)}
+          ${strategyMetricRow("最大回撤", baseline.max_drawdown, candidate.max_drawdown, formatPercent)}
+          ${strategyMetricRow("年化波动", baseline.annual_volatility, candidate.annual_volatility, formatPercent, true)}
+          ${strategyMetricRow("换手倍数", baseline.turnover, candidate.turnover, formatMultiple, true)}
+        </tbody>
+      </table></div>
+      <div class="equal-layout strategy-validation-evidence">
+        <section>
+          ${panelHeader("确定性闸门", `${gates.passed ?? 0} / ${gates.total ?? 0} 通过`)}
+          ${strategyGateList(gates.checks || [])}
+        </section>
+        <section>
+          ${panelHeader("验证切片", "留出集、成本与邻域稳定性")}
+          ${strategyValidationSlices(validation)}
+        </section>
+      </div>
+    </section>`;
+}
+
+function strategyMetricRow(label, baseline, candidate, formatter, inverse = false) {
+  const base = finite(baseline);
+  const current = finite(candidate);
+  const delta = base === null || current === null ? null : current - base;
+  const kind = delta === null || Math.abs(delta) < 1e-12 ? "" : tone(delta, inverse);
+  const change = delta === null ? "—" : `${delta > 0 ? "+" : ""}${formatter(delta)}`;
+  return `<tr><td>${escapeHtml(label)}</td><td class="numeric">${escapeHtml(formatter(baseline))}</td><td class="numeric">${escapeHtml(formatter(candidate))}</td><td class="numeric ${kind}">${escapeHtml(change)}</td></tr>`;
+}
+
+function formatMultiple(value) {
+  const parsed = finite(value);
+  return parsed === null ? "—" : `${formatNumber(parsed)}x`;
+}
+
+function strategyGateList(checks) {
+  if (!checks.length) return `<div class="compact-empty"><p>没有可显示的验证闸门。</p></div>`;
+  return `<div class="strategy-gate-list">${checks.map((check) => `<div class="strategy-gate-row"><div><strong>${escapeHtml(check.label || check.id)}</strong><span>${escapeHtml(check.detail || "")}</span></div>${booleanChip(Boolean(check.passed))}</div>`).join("")}</div>`;
+}
+
+function strategyValidationSlices(validation) {
+  const holdout = validation.holdout || {};
+  const cost = validation.cost_stress || {};
+  const stability = validation.stability || {};
+  const holdoutPeriod = validation.period?.holdout_start && validation.period?.end
+    ? `${validation.period.holdout_start} 至 ${validation.period.end}`
+    : "已执行";
+  const variants = Array.isArray(stability.variants)
+    ? stability.variants.length
+    : stability.total_variants ?? stability.variants;
+  return `<div class="check-list">
+    ${detailRow("留出区间", holdoutPeriod, "info")}
+    ${detailRow("留出集 Sharpe", formatNumber(holdout.candidate_metrics?.sharpe ?? holdout.candidate_sharpe), toneKind(holdout.candidate_metrics?.sharpe ?? holdout.candidate_sharpe))}
+    ${detailRow("成本压力", cost.multiplier ? `${formatNumber(cost.multiplier, 0)} 倍成本` : "已执行", cost.passed === false ? "danger" : "warning")}
+    ${detailRow("压力后年化收益", formatPercent(cost.candidate_metrics?.cagr ?? cost.candidate_cagr), toneKind(cost.candidate_metrics?.cagr ?? cost.candidate_cagr))}
+    ${detailRow("参数邻域", `${formatInteger(variants)} 个变体`, "info")}
+    ${detailRow("邻域最低 Sharpe", formatNumber(stability.minimum_sharpe), toneKind(stability.minimum_sharpe))}
+  </div>`;
+}
+
+function strategyCandidateActions(candidate, states) {
+  if (states.draft) {
+    return `<div class="strategy-action-band"><div><strong>下一步：验证候选</strong><span>验证期间不会修改任何活动策略或账户。</span></div><button class="button primary" type="button" data-strategy-validate="${escapeHtml(candidate.candidate_id)}"${state.strategyActionBusy ? " disabled" : ""}>运行同快照验证</button></div>`;
+  }
+  if (candidate.status === "REJECTED") {
+    return `<aside class="callout danger"><strong>候选未通过闸门</strong><p>该不可变记录保留为反证。调整参数时请创建新候选，不能覆盖本次结果。</p></aside>`;
+  }
+  if (states.eligible) {
+    return `<form id="strategy-approval-form" class="strategy-action-band strategy-confirmation-form">
+      <input type="hidden" name="candidate_id" value="${escapeHtml(candidate.candidate_id)}">
+      <label class="confirmation-check"><input type="checkbox" name="confirmed" required><span>我已复核参数差异、验证指标和全部闸门</span></label>
+      <label class="field"><span>审批备注</span><input name="note" maxlength="500" required value="已完成策略实验室人工复核"></label>
+      <button class="button primary" type="submit" disabled>批准候选</button>
+    </form>`;
+  }
+  if (states.approved) {
+    return `<div class="strategy-approved-actions">
+      <div class="strategy-action-band"><div><strong>候选已由人工批准</strong><span>可导出为凭据隔离、账本隔离的模拟配置。</span></div><button class="button secondary" type="button" data-strategy-export="${escapeHtml(candidate.candidate_id)}"${state.strategyActionBusy ? " disabled" : ""}>导出模拟配置</button></div>
+      <form id="strategy-activation-form" class="strategy-action-band strategy-confirmation-form">
+        <input type="hidden" name="candidate_id" value="${escapeHtml(candidate.candidate_id)}">
+        <label class="confirmation-check"><input type="checkbox" name="confirmed" required${states.active ? " disabled" : ""}><span>仅设为实验室活动模拟版本，不修改默认配置或开启实盘</span></label>
+        <label class="field"><span>激活备注</span><input name="note" maxlength="500" required value="进入独立模拟观察"${states.active ? " disabled" : ""}></label>
+        <button class="button primary" type="submit" disabled>${states.active ? "已是活动版本" : "设为模拟版本"}</button>
+      </form>
+    </div>`;
+  }
+  return "";
+}
+
+function strategyLabEmptyCandidate() {
+  return `<section class="empty-state strategy-empty-state"><h2>创建第一个候选</h2><p>手动调参和本地 AI 建议具有相同权限：只能保存候选，不能直接改写活动策略。</p></section>`;
+}
+
+function strategyLabHistory(history) {
+  if (!history.length) return "";
+  const ordered = [...history].reverse().slice(0, 20);
+  return `<section class="panel">
+    ${panelHeader("版本审计", "批准、激活与回滚事件按时间保留")}
+    <div class="table-wrap"><table class="data-table compact"><thead><tr><th>时间</th><th>事件</th><th>候选</th><th>操作者</th></tr></thead><tbody>${ordered.map((event) => `<tr><td>${formatDate(event.created_at, true)}</td><td>${escapeHtml(strategyEventLabel(event.action || event.type))}</td><td><code>${escapeHtml(shortCandidateId(event.candidate_id ?? event.to_candidate_id))}</code></td><td>${escapeHtml(event.actor || event.approved_by || event.activated_by || "本地所有者")}</td></tr>`).join("")}</tbody></table></div>
+  </section>`;
+}
+
+function strategyLabSelectedCandidate(data) {
+  return (data?.candidates || []).find((item) => item.candidate_id === state.strategyCandidateId) || null;
+}
+
+function strategyCandidateTitle(candidate) {
+  return candidate?.title || "未命名候选";
+}
+
+function strategySourceLabel(source) {
+  return { manual: "人工创建", local_ai: "本地 AI 建议", ai_local: "本地 AI 建议", rollback: "回滚" }[source] || source || "未知来源";
+}
+
+function strategyStatusChip(status) {
+  const labels = { DRAFT: "草稿", ELIGIBLE: "验证通过", REJECTED: "验证未通过", APPROVED: "已批准" };
+  const kinds = { DRAFT: "neutral", ELIGIBLE: "success", REJECTED: "danger", APPROVED: "info" };
+  return statusChip(labels[status] || status || "未知", kinds[status] || "neutral");
+}
+
+function strategyEventLabel(value) {
+  return { create: "创建候选", validate: "完成验证", approve: "人工批准", export: "导出模拟配置", activate: "激活模拟版本", rollback: "回滚模拟版本" }[value] || value || "版本事件";
+}
+
+function shortFingerprint(value) {
+  const text = String(value || "");
+  return text ? `${text.slice(0, 12)}${text.length > 12 ? "…" : ""}` : "—";
+}
+
+function shortCandidateId(value) {
+  const text = String(value || "");
+  return text ? `${text.slice(0, 13)}${text.length > 13 ? "…" : ""}` : "—";
+}
+
+async function createManualStrategyCandidate(form) {
+  const values = new FormData(form);
+  const changes = {};
+  for (const input of form.querySelectorAll("[data-strategy-parameter]")) {
+    const scale = Number(input.dataset.scale || 1);
+    const original = input.dataset.valueType === "choice" ? input.dataset.original : Number(input.dataset.original);
+    let current = input.dataset.valueType === "choice" ? input.value : Number(input.value) * scale;
+    if (input.dataset.valueType === "integer") current = Math.round(current);
+    const changed = typeof current === "number" ? Math.abs(current - original) > 1e-12 : current !== original;
+    if (!changed) continue;
+    const scope = input.dataset.scope;
+    changes[scope] ||= {};
+    changes[scope][input.dataset.parameter] = current;
+  }
+  if (!Object.keys(changes).length) {
+    notify("请至少调整一个白名单参数", true);
+    return;
+  }
+  await runStrategyLabMutation(
+    "/api/strategy-lab/candidates",
+    {
+      changes,
+      title: String(values.get("title") || ""),
+      hypothesis: String(values.get("hypothesis") || ""),
+      reason: String(values.get("reason") || ""),
+    },
+    "手动候选已保存",
+  );
+}
+
+async function createProposedStrategyCandidate(form) {
+  const values = new FormData(form);
+  await runStrategyLabMutation(
+    "/api/strategy-lab/propose",
+    {
+      title: String(values.get("title") || ""),
+      hypothesis: String(values.get("hypothesis") || ""),
+      objective: String(values.get("objective") || "balanced"),
+    },
+    "本地建议已保存为候选",
+  );
+}
+
+async function runStrategyLabMutation(path, payload, successMessage, button = null) {
+  if (state.strategyActionBusy) return;
+  state.strategyActionBusy = true;
+  let strategyLabReloaded = false;
+  if (button) {
+    button.disabled = true;
+    button.dataset.originalLabel = button.textContent;
+    button.textContent = path.endsWith("/validate") ? "正在验证" : "正在处理";
+  }
+  try {
+    const result = await api(path, {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify(payload),
+    });
+    if (result.candidate_id) state.strategyCandidateId = result.candidate_id;
+    await reloadStrategyLab();
+    strategyLabReloaded = true;
+    notify(successMessage);
+  } catch (error) {
+    let message = friendlyError(error.message);
+    if (error.status === 409) {
+      try {
+        await reloadStrategyLab();
+        strategyLabReloaded = true;
+        message = `${message}；已刷新当前策略状态`;
+      } catch {
+        message = `${message}；请刷新策略实验室后重试`;
+      }
+    }
+    notify(message, true);
+  } finally {
+    state.strategyActionBusy = false;
+    if (strategyLabReloaded && state.route === "strategy-lab") {
+      const current = state.data.get("strategy-lab");
+      if (current) renderRoute(current);
+    }
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = button.dataset.originalLabel || "重试";
+    }
+  }
+}
+
+async function reloadStrategyLab() {
+  const payload = await api("/api/strategy-lab");
+  state.data.set("strategy-lab", payload);
+  if (state.route === "strategy-lab") renderRoute(payload);
 }
 
 function renderPortfolio(data) {
@@ -2048,6 +2546,65 @@ document.addEventListener("click", (event) => {
     }
     return;
   }
+  const strategyMode = event.target.closest("[data-strategy-mode]");
+  if (strategyMode) {
+    state.strategyLabMode = strategyMode.dataset.strategyMode;
+    const payload = state.data.get("strategy-lab");
+    if (payload) renderRoute(payload);
+    return;
+  }
+  const strategyCandidate = event.target.closest("[data-strategy-candidate]");
+  if (strategyCandidate) {
+    state.strategyCandidateId = strategyCandidate.dataset.strategyCandidate;
+    const payload = state.data.get("strategy-lab");
+    if (payload) {
+      renderRoute(payload);
+      main.focus({ preventScroll: true });
+    }
+    return;
+  }
+  const strategyValidate = event.target.closest("[data-strategy-validate]");
+  if (strategyValidate) {
+    runStrategyLabMutation(
+      `/api/strategy-lab/candidates/${encodeURIComponent(strategyValidate.dataset.strategyValidate)}/validate`,
+      {},
+      "候选验证已完成",
+      strategyValidate,
+    );
+    return;
+  }
+  const strategyExport = event.target.closest("[data-strategy-export]");
+  if (strategyExport) {
+    runStrategyLabMutation(
+      `/api/strategy-lab/candidates/${encodeURIComponent(strategyExport.dataset.strategyExport)}/export`,
+      { confirmed: true },
+      "独立模拟配置已导出",
+      strategyExport,
+    );
+    return;
+  }
+  const strategyRollback = event.target.closest("[data-strategy-rollback]");
+  if (strategyRollback) {
+    const active = state.data.get("strategy-lab")?.active;
+    if (!active?.candidate_id || !active?.fingerprint) {
+      notify("当前活动策略状态不完整，请刷新策略实验室后重试", true);
+      return;
+    }
+    if (window.confirm("确认回滚到上一个已激活的模拟策略版本？默认配置和真实交易权限不会改变。")) {
+      runStrategyLabMutation(
+        "/api/strategy-lab/rollback",
+        {
+          confirmed: true,
+          note: "用户从策略实验室执行回滚",
+          expected_active_candidate_id: active.candidate_id,
+          expected_active_fingerprint: active.fingerprint,
+        },
+        "模拟策略版本已回滚",
+        strategyRollback,
+      );
+    }
+    return;
+  }
   const retry = event.target.closest("[data-retry]");
   if (retry) {
     loadRoute();
@@ -2076,10 +2633,44 @@ document.addEventListener("click", (event) => {
   }
 });
 
+document.addEventListener("change", (event) => {
+  const confirmation = event.target.closest(".strategy-confirmation-form input[name='confirmed']");
+  if (!confirmation) return;
+  const form = confirmation.closest("form");
+  const submit = form?.querySelector("button[type='submit']");
+  if (submit) submit.disabled = !confirmation.checked || state.strategyActionBusy;
+});
+
 document.addEventListener("submit", (event) => {
   if (event.target.id === "assistant-analysis-form") {
     event.preventDefault();
     runAssistantAnalysis(event.target);
+  } else if (event.target.id === "strategy-manual-form") {
+    event.preventDefault();
+    createManualStrategyCandidate(event.target);
+  } else if (event.target.id === "strategy-proposal-form") {
+    event.preventDefault();
+    createProposedStrategyCandidate(event.target);
+  } else if (event.target.id === "strategy-approval-form") {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    const candidateId = String(values.get("candidate_id") || "");
+    runStrategyLabMutation(
+      `/api/strategy-lab/candidates/${encodeURIComponent(candidateId)}/approve`,
+      { confirmed: values.get("confirmed") === "on", note: String(values.get("note") || "") },
+      "候选已由当前用户批准",
+      event.target.querySelector("button[type='submit']"),
+    );
+  } else if (event.target.id === "strategy-activation-form") {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    const candidateId = String(values.get("candidate_id") || "");
+    runStrategyLabMutation(
+      `/api/strategy-lab/candidates/${encodeURIComponent(candidateId)}/activate`,
+      { confirmed: values.get("confirmed") === "on", note: String(values.get("note") || "") },
+      "候选已设为实验室活动模拟版本",
+      event.target.querySelector("button[type='submit']"),
+    );
   } else if (event.target.id === "universe-date-form") {
     event.preventDefault();
     const form = new FormData(event.target);

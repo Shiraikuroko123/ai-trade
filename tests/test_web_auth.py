@@ -7,6 +7,8 @@ from ai_trade.web.auth import (
     MIN_PBKDF2_ITERATIONS,
     PASSWORD_ALGORITHM,
     PASSWORD_HASH_VERSION,
+    USER_EXPORT_VERSION,
+    USER_FILE_SCHEMA_VERSION,
     AuthManager,
     AuthenticationError,
     CorruptUserStoreError,
@@ -77,6 +79,83 @@ class WebAuthTests(unittest.TestCase):
             self.assertTrue(store.remove_user("shortpass"))
             self.assertFalse(store.has_users())
 
+    def test_account_id_is_persistent_and_not_reused_after_recreate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "users.json"
+            users = UserStore(path, iterations=MIN_PBKDF2_ITERATIONS)
+            public_user = users.add_user("alice", PASSWORD)
+            original_payload = json.loads(path.read_text(encoding="utf-8"))
+            original_account_id = original_payload["users"][0]["account_id"]
+
+            self.assertEqual(
+                original_payload["schema_version"], USER_FILE_SCHEMA_VERSION
+            )
+            self.assertRegex(original_account_id, r"\Aacct_[0-9a-f]{32}\Z")
+            self.assertNotEqual(original_account_id, public_user.username)
+            self.assertFalse(hasattr(public_user, "account_id"))
+
+            users.add_user("alice", NEW_PASSWORD, replace=True)
+            replaced_payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                replaced_payload["users"][0]["account_id"], original_account_id
+            )
+
+            manager = AuthManager(users)
+            old_grant = manager.login("alice", NEW_PASSWORD, source="loopback")
+            self.assertEqual(old_grant.session.account_id, original_account_id)
+            self.assertEqual(old_grant.principal_id, original_account_id)
+            self.assertTrue(manager.remove_user("alice"))
+            self.assertIsNone(manager.authenticate_session(old_grant.token))
+
+            users.add_user("alice", PASSWORD)
+            recreated_account_id = users.account_id_for("alice")
+            self.assertIsNotNone(recreated_account_id)
+            self.assertNotEqual(recreated_account_id, original_account_id)
+
+    def test_v1_user_file_migrates_with_legacy_storage_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "users.json"
+            initial = UserStore(path, iterations=MIN_PBKDF2_ITERATIONS)
+            initial.add_user("alice", PASSWORD)
+            legacy_payload = json.loads(path.read_text(encoding="utf-8"))
+            legacy_payload["schema_version"] = 1
+            legacy_payload["users"][0].pop("account_id")
+            path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+            migrated = UserStore(path, iterations=MIN_PBKDF2_ITERATIONS)
+            self.assertEqual(
+                [user.username for user in migrated.list_users()], ["alice"]
+            )
+            self.assertTrue(migrated.verify("alice", PASSWORD))
+            self.assertEqual(migrated.account_id_for("alice"), "alice")
+
+            active_payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(active_payload["schema_version"], USER_FILE_SCHEMA_VERSION)
+            self.assertEqual(active_payload["users"][0]["account_id"], "alice")
+            self.assertFalse(any(Path(temporary).glob("*.tmp")))
+
+    def test_user_file_rejects_malformed_and_duplicate_account_ids(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "users.json"
+            users = UserStore(path, iterations=MIN_PBKDF2_ITERATIONS)
+            users.add_user("alice", PASSWORD)
+            users.add_user("bob", NEW_PASSWORD)
+            valid = json.loads(path.read_text(encoding="utf-8"))
+
+            malformed = json.loads(json.dumps(valid))
+            malformed["users"][0]["account_id"] = "not an account id"
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaises(CorruptUserStoreError):
+                users.list_users()
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), malformed)
+
+            duplicated = json.loads(json.dumps(valid))
+            duplicated["users"][1]["account_id"] = duplicated["users"][0]["account_id"]
+            path.write_text(json.dumps(duplicated), encoding="utf-8")
+            with self.assertRaises(CorruptUserStoreError):
+                users.list_users()
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), duplicated)
+
     def test_corrupt_user_file_is_rejected_without_overwrite(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "users.json"
@@ -100,15 +179,17 @@ class WebAuthTests(unittest.TestCase):
     def test_session_expiry_revocation_and_session_bound_csrf(self):
         clock = FakeClock()
         sessions = SessionStore(ttl_seconds=60, clock=clock)
-        grant = sessions.create("Alice", "a" * 64)
+        alice_account_id = "acct_" + "1" * 32
+        grant = sessions.create("Alice", alice_account_id, "a" * 64)
 
         self.assertNotEqual(grant.token, grant.session.csrf_token)
         self.assertEqual(grant.session.credential_revision, "a" * 64)
+        self.assertEqual(grant.session.principal_id, alice_account_id)
         self.assertEqual(sessions.authenticate(grant.token), grant.session)
         self.assertTrue(sessions.verify_csrf(grant.token, grant.session.csrf_token))
         self.assertFalse(sessions.verify_csrf(grant.token, "wrong-csrf-token"))
 
-        second = sessions.create("alice", "b" * 64)
+        second = sessions.create("alice", alice_account_id, "b" * 64)
         self.assertTrue(sessions.revoke(second.token))
         self.assertIsNone(sessions.authenticate(second.token))
         clock.advance(60)
@@ -171,6 +252,20 @@ class WebAuthTests(unittest.TestCase):
             self.assertNotIn(grant.session.credential_revision, disk)
             self.assertEqual([item.name for item in root.iterdir()], ["users.json"])
             self.assertIsNotNone(manager.authenticate_session(grant.token))
+            self.assertTrue(
+                users.is_session_current(
+                    grant.session.username,
+                    grant.session.account_id,
+                    grant.session.credential_revision,
+                )
+            )
+            self.assertFalse(
+                users.is_session_current(
+                    grant.session.username,
+                    "acct_" + "f" * 32,
+                    grant.session.credential_revision,
+                )
+            )
 
             external_users = UserStore(path, iterations=MIN_PBKDF2_ITERATIONS)
             external_users.add_user("alice", NEW_PASSWORD, replace=True)
@@ -187,9 +282,7 @@ class WebAuthTests(unittest.TestCase):
     def test_portable_export_import_reject_replace_and_merge_modes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = UserStore(
-                root / "source.json", iterations=MIN_PBKDF2_ITERATIONS
-            )
+            source = UserStore(root / "source.json", iterations=MIN_PBKDF2_ITERATIONS)
             source.add_user("alice", PASSWORD)
             source.add_user("bob", NEW_PASSWORD)
             source.set_enabled("alice", False)
@@ -198,15 +291,21 @@ class WebAuthTests(unittest.TestCase):
 
             exported = json.loads(portable.read_text(encoding="utf-8"))
             self.assertEqual(set(exported), {"format", "version", "users"})
+            self.assertEqual(exported["version"], USER_EXPORT_VERSION)
+            source_account_ids = {
+                user["username"]: user["account_id"] for user in exported["users"]
+            }
             self.assertNotIn(PASSWORD, portable.read_text(encoding="utf-8"))
             self.assertNotIn(NEW_PASSWORD, portable.read_text(encoding="utf-8"))
             self.assertNotIn("session", portable.read_text(encoding="utf-8").lower())
 
-            target = UserStore(
-                root / "target.json", iterations=MIN_PBKDF2_ITERATIONS
-            )
+            target = UserStore(root / "target.json", iterations=MIN_PBKDF2_ITERATIONS)
             imported = target.import_users(portable)
             self.assertEqual([value.username for value in imported], ["alice", "bob"])
+            self.assertEqual(
+                target.account_id_for("alice"), source_account_ids["alice"]
+            )
+            self.assertEqual(target.account_id_for("bob"), source_account_ids["bob"])
             self.assertFalse(target.verify("alice", PASSWORD))
             self.assertTrue(target.verify("bob", NEW_PASSWORD))
             with self.assertRaises(UserStoreError):
@@ -225,20 +324,30 @@ class WebAuthTests(unittest.TestCase):
             replaced = target.import_users(other_export, mode="replace")
             self.assertEqual([value.username for value in replaced], ["carol"])
 
+            legacy_export = json.loads(json.dumps(exported))
+            legacy_export["version"] = 1
+            for raw_user in legacy_export["users"]:
+                raw_user.pop("account_id")
+            legacy_path = root / "legacy-export.json"
+            legacy_path.write_text(json.dumps(legacy_export), encoding="utf-8")
+            legacy_target = UserStore(
+                root / "legacy-target.json", iterations=MIN_PBKDF2_ITERATIONS
+            )
+            legacy_target.import_users(legacy_path)
+            self.assertEqual(legacy_target.account_id_for("alice"), "alice")
+            self.assertEqual(legacy_target.account_id_for("bob"), "bob")
+
     def test_import_rejects_tampering_bad_schema_and_duplicate_users_atomically(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = UserStore(
-                root / "source.json", iterations=MIN_PBKDF2_ITERATIONS
-            )
+            source = UserStore(root / "source.json", iterations=MIN_PBKDF2_ITERATIONS)
             source.add_user("alice", PASSWORD)
+            source.add_user("bob", NEW_PASSWORD)
             portable = root / "portable-users.json"
             source.export_users(portable)
             valid = json.loads(portable.read_text(encoding="utf-8"))
 
-            target = UserStore(
-                root / "target.json", iterations=MIN_PBKDF2_ITERATIONS
-            )
+            target = UserStore(root / "target.json", iterations=MIN_PBKDF2_ITERATIONS)
             target.add_user("keeper", NEW_PASSWORD)
             original_target = (root / "target.json").read_bytes()
 
@@ -258,6 +367,20 @@ class WebAuthTests(unittest.TestCase):
             weak_iterations = json.loads(json.dumps(valid))
             weak_iterations["users"][0]["password"]["iterations"] = 1
             portable.write_text(json.dumps(weak_iterations), encoding="utf-8")
+            with self.assertRaises(CorruptUserStoreError):
+                target.import_users(portable, mode="replace")
+
+            malformed_account_id = json.loads(json.dumps(valid))
+            malformed_account_id["users"][0]["account_id"] = "invalid account"
+            portable.write_text(json.dumps(malformed_account_id), encoding="utf-8")
+            with self.assertRaises(CorruptUserStoreError):
+                target.import_users(portable, mode="replace")
+
+            duplicate_account_id = json.loads(json.dumps(valid))
+            duplicate_account_id["users"][1]["account_id"] = duplicate_account_id[
+                "users"
+            ][0]["account_id"]
+            portable.write_text(json.dumps(duplicate_account_id), encoding="utf-8")
             with self.assertRaises(CorruptUserStoreError):
                 target.import_users(portable, mode="replace")
 
