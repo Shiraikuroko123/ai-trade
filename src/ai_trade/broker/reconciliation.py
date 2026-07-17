@@ -5,7 +5,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from ..json_utils import loads_unique_json
@@ -34,6 +34,7 @@ RECONCILIATION_FIELDS = [
 RECONCILIATION_V2_PREFIX = "v2_"
 RECONCILIATION_V3_PREFIX = "v3_"
 RECONCILIATION_CASH_TOLERANCE = 0.01
+CHINA_STANDARD_TIME = timezone(timedelta(hours=8))
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,8 @@ def append_reconciliation(
         issues=issues,
     )
     candidate = _validate_reconciliation_row(row)
+    if candidate.on_date > _china_today():
+        raise ValueError("Reconciliation date cannot be in the future")
     path.parent.mkdir(parents=True, exist_ok=True)
     conflicting = False
     with ledger_lock(path):
@@ -179,6 +182,8 @@ def audit_reconciliations(
     account_id: str,
     minimum_sessions: int,
     config_fingerprint: str = "",
+    *,
+    completed_through: date | None = None,
 ) -> dict[str, object]:
     if (
         isinstance(minimum_sessions, bool)
@@ -186,8 +191,23 @@ def audit_reconciliations(
         or minimum_sessions < 1
     ):
         raise ValueError("minimum_sessions must be a positive integer")
+    today = _china_today()
+    if completed_through is None:
+        completed_through = today - timedelta(days=1)
+    if (
+        not isinstance(completed_through, date)
+        or isinstance(completed_through, datetime)
+        or completed_through > today
+    ):
+        return _empty_audit(
+            minimum_sessions,
+            errors=["completed market date is invalid or in the future"],
+        )
     if not path.exists() or not adapter or not account_id or not config_fingerprint:
-        return _empty_audit(minimum_sessions)
+        return _empty_audit(
+            minimum_sessions,
+            completed_through=completed_through,
+        )
     try:
         with ledger_lock(path):
             validated = _read_reconciliations(path)
@@ -195,6 +215,18 @@ def audit_reconciliations(
         return _empty_audit(
             minimum_sessions,
             errors=[f"reconciliation ledger is invalid: {exc}"],
+            completed_through=completed_through,
+        )
+
+    future_dates = sorted({value.on_date for value in validated if value.on_date > today})
+    if future_dates:
+        return _empty_audit(
+            minimum_sessions,
+            errors=[
+                "reconciliation ledger contains future-dated evidence: "
+                + ", ".join(value.isoformat() for value in future_dates)
+            ],
+            completed_through=completed_through,
         )
 
     logical_key_prefix = (adapter, account_id)
@@ -207,15 +239,23 @@ def audit_reconciliations(
     ignored_legacy_sessions = sum(
         not value.qualifying_evidence for value in matching_rows
     )
-    rows = [value for value in matching_rows if value.qualifying_evidence]
+    qualifying_rows = [value for value in matching_rows if value.qualifying_evidence]
+    ignored_incomplete_sessions = sum(
+        value.on_date > completed_through for value in qualifying_rows
+    )
     errors: list[str] = []
-    clean_sessions = 0
     previous: date | None = None
-    for row in rows:
+    for row in qualifying_rows:
         current = row.on_date
         if previous is not None and current <= previous:
             errors.append("reconciliation dates are not strictly increasing")
         previous = current
+    clean_sessions = 0
+    last_completed: date | None = None
+    for row in qualifying_rows:
+        if row.on_date > completed_through:
+            continue
+        last_completed = row.on_date
         clean_sessions = clean_sessions + 1 if row.issue_count == 0 else 0
     eligible = not errors and clean_sessions >= minimum_sessions
     return {
@@ -223,10 +263,11 @@ def audit_reconciliations(
         "clean_sessions": clean_sessions,
         "minimum_sessions": minimum_sessions,
         "remaining_sessions": max(0, minimum_sessions - clean_sessions),
-        "last_date": previous.isoformat() if previous else None,
+        "last_date": last_completed.isoformat() if last_completed else None,
         "errors": errors,
         "ignored_legacy_sessions": ignored_legacy_sessions,
-        "ignored_incomplete_sessions": ignored_legacy_sessions,
+        "ignored_incomplete_sessions": ignored_incomplete_sessions,
+        "completed_through": completed_through.isoformat(),
     }
 
 
@@ -673,6 +714,7 @@ def _empty_audit(
     minimum_sessions: int,
     *,
     errors: list[str] | None = None,
+    completed_through: date | None = None,
 ) -> dict[str, object]:
     return {
         "eligible": False,
@@ -683,4 +725,11 @@ def _empty_audit(
         "errors": errors or [],
         "ignored_legacy_sessions": 0,
         "ignored_incomplete_sessions": 0,
+        "completed_through": (
+            completed_through.isoformat() if completed_through is not None else None
+        ),
     }
+
+
+def _china_today() -> date:
+    return datetime.now(CHINA_STANDARD_TIME).date()

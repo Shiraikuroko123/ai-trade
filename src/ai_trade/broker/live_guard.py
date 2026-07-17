@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +41,8 @@ def require_live_confirmation() -> None:
 def evaluate_live_readiness(
     config: AppConfig,
     paper_audit: dict[str, Any] | None = None,
+    *,
+    completed_market_date: date | None = None,
 ) -> dict[str, Any]:
     broker = config.raw.get("broker", {})
     adapter = broker.get("adapter")
@@ -61,6 +63,7 @@ def evaluate_live_readiness(
         str(account_id or ""),
         int(broker.get("sandbox_minimum_reconciliations", 20)),
         fingerprint,
+        completed_through=completed_market_date,
     )
     authorization = _load_authorization(config.live_authorization_file)
     authorization_valid, authorization_reason = _authorization_status(
@@ -137,7 +140,11 @@ def assert_live_submission_allowed(
         != authoritative_audit.get("config_fingerprint")
     ):
         raise RuntimeError("Supplied paper audit does not match the active paper account")
-    readiness = evaluate_live_readiness(config, authoritative_audit)
+    readiness = evaluate_live_readiness(
+        config,
+        authoritative_audit,
+        completed_market_date=market.latest_date(),
+    )
     if not readiness["live_ready"]:
         missing = [name for name, passed in readiness["checks"].items() if not passed]
         raise RuntimeError(f"Live submission gates are incomplete: {', '.join(missing)}")

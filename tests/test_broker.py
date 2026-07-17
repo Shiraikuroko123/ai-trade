@@ -354,9 +354,23 @@ class BrokerTests(unittest.TestCase):
                     json.dumps(authorization), encoding="utf-8"
                 )
                 ready = evaluate_live_readiness(config, audit)
+                incomplete_sandbox = evaluate_live_readiness(
+                    config,
+                    audit,
+                    completed_market_date=date(2024, 1, 4),
+                )
                 config.raw["broker"]["max_daily_notional"] = 20_000
                 changed_limits = evaluate_live_readiness(config, audit)
             self.assertTrue(ready["live_ready"])
+            self.assertFalse(incomplete_sandbox["checks"]["sandbox_reconciled"])
+            self.assertEqual(
+                incomplete_sandbox["reconciliation"]["ignored_incomplete_sessions"],
+                1,
+            )
+            self.assertEqual(
+                incomplete_sandbox["reconciliation"]["completed_through"],
+                "2024-01-04",
+            )
             self.assertFalse(changed_limits["checks"]["authorization_valid"])
 
             config.raw["broker"]["max_daily_notional"] = 10_000

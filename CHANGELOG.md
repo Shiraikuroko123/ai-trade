@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Sandbox reconciliation rejects future dates and counts position-bound rows
+  only through the verified completed market date. Later valid rows remain
+  visible as pending evidence instead of prematurely advancing live readiness.
 - Position and issue JSON embedded in formal reconciliation CSV rows now rejects
   duplicate object keys, preventing ambiguous nested evidence from qualifying
   even when a last-key-wins parser would reproduce the stored content hash.

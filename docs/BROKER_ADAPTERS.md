@@ -287,6 +287,11 @@ every row in the shared ledger before selecting the configured account. A
 malformed row, changed fingerprint, duplicate logical session, or
 non-increasing date fails closed. Expected and broker cash must both be
 non-negative and use a fixed 0.01 comparison tolerance.
+Future-dated rows are rejected. A valid row counts toward promotion only when
+its date is no later than the latest completed date in the verified market
+snapshot used by the readiness check; later rows remain visible but incomplete.
+This prevents an intraday or stale-cache observation from being presented as a
+completed sandbox session.
 Different content for an existing logical session is atomically retained as a
 conflict before the writer raises, so the earlier clean row cannot silently keep
 its authority.

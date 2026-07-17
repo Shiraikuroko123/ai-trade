@@ -50,6 +50,73 @@ def _write_rows(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 class BrokerReconciliationTests(unittest.TestCase):
+    def test_only_completed_market_dates_can_qualify(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            append_reconciliation(path, **_arguments())
+
+            pending = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                1,
+                "active-config",
+                completed_through=START - timedelta(days=1),
+            )
+            completed = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                1,
+                "active-config",
+                completed_through=START,
+            )
+
+            self.assertFalse(pending["eligible"])
+            self.assertEqual(pending["clean_sessions"], 0)
+            self.assertEqual(pending["ignored_incomplete_sessions"], 1)
+            self.assertIsNone(pending["last_date"])
+            self.assertTrue(completed["eligible"])
+            self.assertEqual(completed["last_date"], START.isoformat())
+
+    def test_future_reconciliation_dates_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            with patch(
+                "ai_trade.broker.reconciliation._china_today",
+                return_value=START,
+            ):
+                with self.assertRaisesRegex(ValueError, "future"):
+                    append_reconciliation(
+                        path,
+                        **_arguments(on_date=START + timedelta(days=1)),
+                    )
+            self.assertFalse(path.exists())
+
+            with patch(
+                "ai_trade.broker.reconciliation._china_today",
+                return_value=START + timedelta(days=1),
+            ):
+                append_reconciliation(
+                    path,
+                    **_arguments(on_date=START + timedelta(days=1)),
+                )
+            with patch(
+                "ai_trade.broker.reconciliation._china_today",
+                return_value=START,
+            ):
+                audit = audit_reconciliations(
+                    path,
+                    "sandbox-adapter",
+                    "sandbox-account",
+                    1,
+                    "active-config",
+                    completed_through=START,
+                )
+            self.assertFalse(audit["eligible"])
+            self.assertEqual(audit["clean_sessions"], 0)
+            self.assertTrue(any("future-dated" in value for value in audit["errors"]))
+
     def test_clean_reconciliation_requires_nonnegative_matching_cash(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "reconciliation.csv"
