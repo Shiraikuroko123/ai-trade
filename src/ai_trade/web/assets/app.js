@@ -2176,12 +2176,14 @@ function renderStrategyLab(data) {
         <div><span>执行权限</span><strong>${safety.live_trading_enabled === false ? "仅限研究与独立模拟" : "权限状态待确认"}</strong><span class="strategy-authority-status">${statusChip("真实下单锁定", "danger")}</span></div>
       </section>
 
+      ${strategyLifecyclePanel(data)}
+
       ${strategyLabComposer(data)}
 
       <section class="strategy-workspace">
         <aside class="strategy-candidate-rail" aria-label="策略候选历史">
           ${panelHeader("候选版本", strategyCandidateCountLabel(data, candidates))}
-          ${strategyCandidateList(candidates, active?.candidate_id)}
+          ${strategyCandidateList(candidates, active)}
         </aside>
         <div class="strategy-candidate-detail">
           ${selected ? strategyCandidateDetail(selected, data) : strategyLabEmptyCandidate()}
@@ -2191,6 +2193,82 @@ function renderStrategyLab(data) {
       ${strategyLabHistory(data.history || [])}
       <aside class="callout info"><strong>权限边界</strong><p>策略实验室不会修改默认配置、当前模拟账本、券商授权或紧急停止开关。导出的版本拥有独立账本路径，历史验证也不能授予真实交易权限。</p></aside>
     </div>`;
+}
+
+function strategyLifecyclePanel(data) {
+  const active = data.active || {};
+  const monitoring = data.monitoring || {};
+  const latest = monitoring.latest || null;
+  if (!active.candidate_id) {
+    return `<section class="strategy-lifecycle-band" aria-labelledby="strategy-lifecycle-title">
+      <div class="strategy-lifecycle-head"><div><h2 id="strategy-lifecycle-title">上线后观察</h2><p>激活一个已批准的模拟版本后，才能建立近期表现与衰减证据。</p></div>${statusChip("尚未激活", "neutral")}</div>
+    </section>`;
+  }
+  const evidence = latest?.evidence || null;
+  const latestMonitorId = latest?.monitor_id || "";
+  const failed = Array.isArray(evidence?.failed_checks) ? evidence.failed_checks.length : 0;
+  const period = latest?.period || {};
+  const lifecycleState = active.lifecycle_state || "ACTIVE";
+  const operationForms = [
+    active.can_suspend
+      ? strategyLifecycleForm("suspend", active, latestMonitorId, "暂停模拟版本", "确认暂停当前实验室活动版本；不会提交订单或修改券商配置。", "监控证据需要人工复核，暂时停止继续观察", "danger")
+      : "",
+    active.can_resume
+      ? strategyLifecycleForm("resume", active, latestMonitorId, "恢复模拟观察", "确认恢复当前版本的实验室观察状态；不会自动晋级任何权限。", "已完成人工复核，恢复模拟观察", "secondary")
+      : "",
+    active.can_retire
+      ? strategyLifecycleForm("retire", active, latestMonitorId, "退役并恢复上一基线", "确认将当前候选永久标记为已退役，并恢复上一实验室基线。", "人工决定退役当前模拟版本", "danger")
+      : "",
+  ].filter(Boolean).join("");
+  return `<section class="strategy-lifecycle-band" aria-labelledby="strategy-lifecycle-title">
+    <div class="strategy-lifecycle-head">
+      <div><h2 id="strategy-lifecycle-title">上线后观察</h2><p>监控只生成不可变证据；暂停、恢复和退役始终由当前用户确认。</p></div>
+      <div class="action-row">${strategyLifecycleStateChip(lifecycleState)}<button class="button secondary" type="button" data-strategy-monitor${state.strategyActionBusy ? " disabled" : ""}>运行衰减检查</button></div>
+    </div>
+    <dl class="strategy-lifecycle-metrics">
+      <div><dt>活动版本</dt><dd><code>${escapeHtml(shortCandidateId(active.candidate_id))}</code></dd></div>
+      <div><dt>最近证据</dt><dd>${latest ? formatDate(latest.created_at, true) : "尚未运行"}</dd></div>
+      <div><dt>观察窗口</dt><dd>${latest ? `${escapeHtml(period.start || "—")} 至 ${escapeHtml(period.end || "—")} · ${formatInteger(period.sessions)} 日` : `至少 ${formatInteger(monitoring.policy?.minimum_sessions)} 日`}</dd></div>
+      <div><dt>衰减结论</dt><dd>${evidence ? strategyMonitorVerdictChip(evidence.verdict) : statusChip("缺少证据", "warning")}${evidence ? `<span>${failed ? `${failed} 项需复核` : "未触发复核阈值"}</span>` : ""}</dd></div>
+    </dl>
+    ${latest ? strategyMonitorEvidence(latest) : `<p class="strategy-lifecycle-empty" role="status">尚无监控记录。运行检查会在当前行情快照上比较活动版本、父基线和激活时留出集，不会改变策略状态。</p>`}
+    <details class="strategy-lifecycle-actions">
+      <summary>人工生命周期操作</summary>
+      <div class="strategy-lifecycle-action-list">${operationForms}</div>
+    </details>
+  </section>`;
+}
+
+function strategyMonitorEvidence(monitor) {
+  const checks = monitor?.evidence?.checks || [];
+  return `<div class="table-wrap strategy-monitor-table"><table class="data-table compact">
+    <thead><tr><th>衰减检查</th><th>证据</th><th>结论</th></tr></thead>
+    <tbody>${checks.length ? checks.map((check) => `<tr><td>${escapeHtml(check.label || check.id)}</td><td>${escapeHtml(check.detail || "—")}</td><td>${booleanChip(Boolean(check.passed))}</td></tr>`).join("") : emptyRow(3, "当前记录没有可显示的检查项")}</tbody>
+  </table></div>`;
+}
+
+function strategyLifecycleForm(action, active, monitorId, title, confirmation, note, kind) {
+  return `<form class="strategy-lifecycle-form strategy-confirmation-form" data-strategy-lifecycle-form data-lifecycle-action="${escapeHtml(action)}">
+    <input type="hidden" name="candidate_id" value="${escapeHtml(active.candidate_id)}">
+    <input type="hidden" name="fingerprint" value="${escapeHtml(active.fingerprint)}">
+    <input type="hidden" name="monitor_id" value="${escapeHtml(monitorId)}">
+    <div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(confirmation)}</span></div>
+    <label class="confirmation-check"><input type="checkbox" name="confirmed" required><span>我已核对活动版本、指纹和最近监控证据</span></label>
+    <label class="field"><span>人工决定依据</span><input name="note" maxlength="500" required value="${escapeHtml(note)}"></label>
+    <button class="button ${escapeHtml(kind)}" type="submit" disabled>${escapeHtml(title)}</button>
+  </form>`;
+}
+
+function strategyLifecycleStateChip(value) {
+  const labels = { ACTIVE: "观察中", SUSPENDED: "已暂停", CONFIGURED: "配置基线" };
+  const kinds = { ACTIVE: "info", SUSPENDED: "warning", CONFIGURED: "neutral" };
+  return statusChip(labels[value] || value || "未知状态", kinds[value] || "neutral");
+}
+
+function strategyMonitorVerdictChip(value) {
+  const labels = { MONITORING_OK: "观察正常", REVIEW_REQUIRED: "需人工复核", INSUFFICIENT_DATA: "样本不足" };
+  const kinds = { MONITORING_OK: "success", REVIEW_REQUIRED: "danger", INSUFFICIENT_DATA: "warning" };
+  return statusChip(labels[value] || value || "未知结论", kinds[value] || "neutral");
 }
 
 function strategyCandidateCountLabel(data, candidates) {
@@ -2298,14 +2376,14 @@ function strategyInputNumber(value) {
   return Number(value.toFixed(8)).toString();
 }
 
-function strategyCandidateList(candidates, activeId) {
+function strategyCandidateList(candidates, active) {
   if (!candidates.length) {
     return `<div class="compact-empty"><strong>尚无候选</strong><p>在上方手动调整参数，或让本地规则提出第一个候选。</p></div>`;
   }
   return `<div class="strategy-candidate-list">${candidates.map((candidate) => {
     const selected = candidate.candidate_id === state.strategyCandidateId;
     return `<button class="strategy-candidate-item" type="button" data-strategy-candidate="${escapeHtml(candidate.candidate_id)}" aria-pressed="${selected}">
-      <span class="strategy-candidate-title"><strong>${escapeHtml(strategyCandidateTitle(candidate))}</strong>${candidate.candidate_id === activeId ? statusChip("模拟活动", "info") : ""}</span>
+      <span class="strategy-candidate-title"><strong>${escapeHtml(strategyCandidateTitle(candidate))}</strong>${candidate.candidate_id === active?.candidate_id ? strategyLifecycleStateChip(active.lifecycle_state) : candidate.lifecycle?.state === "RETIRED" ? statusChip("已退役", "neutral") : ""}</span>
       <span>${escapeHtml(strategySourceLabel(candidate.source))} · ${formatDate(candidate.created_at, true)}</span>
       <span class="strategy-candidate-foot"><code>${escapeHtml(shortCandidateId(candidate.candidate_id))}</code>${strategyStatusChip(candidate.status)}</span>
     </button>`;
@@ -2323,7 +2401,7 @@ function strategyCandidateDetail(candidate, data) {
       ${panelHeader(
         strategyCandidateTitle(candidate),
         `${strategySourceLabel(candidate.source)} · ${candidate.candidate_id}`,
-        `<div class="action-row">${active ? statusChip("当前模拟版本", "info") : ""}${strategyStatusChip(candidate.status)}</div>`,
+        `<div class="action-row">${active ? strategyLifecycleStateChip(data.active?.lifecycle_state) : candidate.lifecycle?.state === "RETIRED" ? statusChip("已退役", "neutral") : ""}${strategyStatusChip(candidate.status)}</div>`,
       )}
       <div class="strategy-record-provenance">
         <span>建立时间 <strong>${formatDate(candidate.created_at, true)}</strong></span>
@@ -2496,7 +2574,7 @@ function strategyStatusChip(status) {
 }
 
 function strategyEventLabel(value) {
-  return { create: "创建候选", validate: "完成验证", approve: "人工批准", export: "导出模拟配置", activate: "激活模拟版本", rollback: "回滚模拟版本" }[value] || value || "版本事件";
+  return { create: "创建候选", validate: "完成验证", approve: "人工批准", export: "导出模拟配置", activate: "激活模拟版本", monitor: "运行衰减检查", suspend: "暂停模拟版本", resume: "恢复模拟观察", retire: "退役模拟版本", rollback: "回滚模拟版本" }[value] || value || "版本事件";
 }
 
 function shortFingerprint(value) {
@@ -3603,6 +3681,16 @@ document.addEventListener("click", (event) => {
     );
     return;
   }
+  const strategyMonitor = event.target.closest("[data-strategy-monitor]");
+  if (strategyMonitor) {
+    runStrategyLabMutation(
+      "/api/strategy-lab/monitor",
+      {},
+      "策略衰减证据已记录",
+      strategyMonitor,
+    );
+    return;
+  }
   const strategyRollback = event.target.closest("[data-strategy-rollback]");
   if (strategyRollback) {
     const active = state.data.get("strategy-lab")?.active;
@@ -3729,6 +3817,27 @@ document.addEventListener("submit", (event) => {
   } else if (event.target.id === "strategy-proposal-form") {
     event.preventDefault();
     createProposedStrategyCandidate(event.target);
+  } else if (event.target.matches("[data-strategy-lifecycle-form]")) {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    const action = event.target.dataset.lifecycleAction;
+    const labels = {
+      suspend: "模拟版本已暂停",
+      resume: "模拟观察已恢复",
+      retire: "模拟版本已退役并恢复上一基线",
+    };
+    runStrategyLabMutation(
+      `/api/strategy-lab/lifecycle/${encodeURIComponent(action)}`,
+      {
+        confirmed: values.get("confirmed") === "on",
+        note: String(values.get("note") || ""),
+        expected_active_candidate_id: String(values.get("candidate_id") || ""),
+        expected_active_fingerprint: String(values.get("fingerprint") || ""),
+        monitor_id: String(values.get("monitor_id") || "") || null,
+      },
+      labels[action] || "策略生命周期已更新",
+      event.target.querySelector("button[type='submit']"),
+    );
   } else if (event.target.id === "strategy-approval-form") {
     event.preventDefault();
     const values = new FormData(event.target);

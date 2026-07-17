@@ -22,6 +22,13 @@ from .schema import (
     parameter_spec,
     settings_snapshot,
 )
+from .lifecycle import (
+    INSUFFICIENT_DATA,
+    MONITORING_OK,
+    REVIEW_REQUIRED,
+    LifecyclePolicy,
+    evaluate_strategy_decay,
+)
 from .store import (
     StrategyLabCapacityError,
     StrategyLabConflictError,
@@ -32,8 +39,10 @@ from .store import (
 _ENGINE_VERSION = 2
 MAX_CANDIDATES_PER_OWNER = 100
 MAX_TRANSITION_EVENTS_PER_OWNER = 1000
+MAX_MONITORS_PER_OWNER = 500
 SUMMARY_CANDIDATE_LIMIT = 50
 SUMMARY_HISTORY_LIMIT = 200
+_ACTIVE_LIFECYCLE_STATES = frozenset({"ACTIVE", "SUSPENDED"})
 
 
 @dataclass(frozen=True)
@@ -54,12 +63,14 @@ class StrategyLabEngine:
         config: AppConfig,
         store: StrategyLabStore | None = None,
         policy: ValidationPolicy | None = None,
+        lifecycle_policy: LifecyclePolicy | None = None,
     ):
         self.config = config
         self.store = store or StrategyLabStore(
             config.project_root / "state" / "strategy_lab"
         )
         self.policy = policy or ValidationPolicy()
+        self.lifecycle_policy = lifecycle_policy or LifecyclePolicy()
 
     def parameter_schema(self) -> dict[str, Any]:
         schema = parameter_schema()
@@ -70,6 +81,7 @@ class StrategyLabEngine:
 
     def summary(self, owner: str) -> dict[str, Any]:
         baseline = self._active_baseline(owner)
+        monitors = self._active_monitors(owner, baseline)
         stored_candidates = sorted(
             self.store.list_candidates(owner),
             key=lambda candidate: (
@@ -96,6 +108,14 @@ class StrategyLabEngine:
                 "candidate_id": baseline["candidate_id"],
             },
             "active": self._public_active(baseline),
+            "monitoring": {
+                "available": baseline["candidate_id"] is not None,
+                "latest": monitors[-1] if monitors else None,
+                "count": len(monitors),
+                "maximum": MAX_MONITORS_PER_OWNER,
+                "policy": self.lifecycle_policy.public_dict(),
+                "automatic_state_change": False,
+            },
             "candidates": candidates,
             "candidate_summary": {
                 "total": len(stored_candidates),
@@ -116,6 +136,8 @@ class StrategyLabEngine:
                 "live_trading_enabled": False,
                 "broker_configuration_unchanged": True,
                 "paper_export_requires_approval": True,
+                "automatic_strategy_suspension": False,
+                "automatic_strategy_retirement": False,
             },
         }
 
@@ -463,6 +485,8 @@ class StrategyLabEngine:
             )
         self._verified_export(owner, candidate, validation, approval, exported)
         current = self._active_baseline(owner)
+        if candidate_id in current["retired_candidates"]:
+            raise RuntimeError("Retired candidates cannot be activated again")
         if current["candidate_id"] == candidate_id:
             if (
                 current["fingerprint"] != candidate["candidate_fingerprint"]
@@ -484,6 +508,8 @@ class StrategyLabEngine:
             stored: dict[str, Any] | None,
         ) -> tuple[dict[str, Any], dict[str, Any] | None]:
             current = self._stored_or_configured_baseline(stored)
+            if candidate_id in current["retired_candidates"]:
+                raise RuntimeError("Retired candidates cannot be activated again")
             if current["candidate_id"] == candidate_id:
                 return current, None
             self._assert_parent_active(candidate, current)
@@ -494,6 +520,10 @@ class StrategyLabEngine:
                 "activated_at": _utc_now(),
                 "activated_by": actor,
                 "rollback_stack": stack,
+                "lifecycle_state": "ACTIVE",
+                "lifecycle_updated_at": _utc_now(),
+                "lifecycle_updated_by": actor,
+                "retired_candidates": list(current["retired_candidates"]),
             }
             return active, self._activation_event(
                 "activate", current, active, actor, note
@@ -513,6 +543,217 @@ class StrategyLabEngine:
                 f"{MAX_TRANSITION_EVENTS_PER_OWNER} 次策略激活/回滚；已达到上限。"
                 "为保护审计记录，系统已停止策略切换。"
             ) from exc
+        return self._public_active(active)
+
+    def monitor_active_candidate(
+        self,
+        owner: str,
+        market: MarketData,
+        *,
+        actor: str | None = None,
+    ) -> dict[str, Any]:
+        active = self._active_baseline(owner)
+        candidate_id = active.get("candidate_id")
+        if not isinstance(candidate_id, str):
+            raise RuntimeError("Activate an approved paper candidate before monitoring")
+        candidate = self._verified_candidate(owner, candidate_id, require_parent=False)
+        validation = self._verified_validation(
+            candidate, self.store.read_validation(owner, candidate_id)
+        )
+        snapshot_before = _market_snapshot(market)
+        configured_start = date.fromisoformat(str(self.config.raw["backtest"]["start"]))
+        configured_end = date.fromisoformat(str(self.config.raw["backtest"]["end"]))
+        calendar = [
+            day for day in market.calendar if configured_start <= day <= configured_end
+        ]
+        if not calendar:
+            raise ValueError("Strategy monitoring requires completed market sessions")
+        calendar = calendar[-self.lifecycle_policy.window_sessions :]
+        start, end = calendar[0], calendar[-1]
+        recent_candidate: dict[str, float] | None = None
+        recent_parent: dict[str, float] | None = None
+        if len(calendar) >= 2:
+            candidate_strategy, candidate_risk = _settings_from_snapshot(
+                candidate["candidate"]
+            )
+            parent_strategy, parent_risk = _settings_from_snapshot(candidate["baseline"])
+            recent_candidate = _metrics(
+                self._run(
+                    market,
+                    candidate_strategy,
+                    candidate_risk,
+                    self.config.costs,
+                    start,
+                    end,
+                ).metrics
+            )
+            recent_parent = _metrics(
+                self._run(
+                    market,
+                    parent_strategy,
+                    parent_risk,
+                    self.config.costs,
+                    start,
+                    end,
+                ).metrics
+            )
+        reference = validation.get("holdout", {}).get("candidate_metrics")
+        if not isinstance(reference, Mapping):
+            raise RuntimeError("Active candidate validation reference is missing")
+        evidence = evaluate_strategy_decay(
+            session_count=len(calendar),
+            recent_candidate=recent_candidate,
+            recent_parent=recent_parent,
+            validation_candidate=reference,
+            maximum_drawdown=float(candidate["candidate"]["risk"]["max_portfolio_drawdown"]),
+            policy=self.lifecycle_policy,
+        )
+        snapshot_after = _market_snapshot(market)
+        if snapshot_before["id"] != snapshot_after["id"]:
+            raise RuntimeError("Market snapshot changed during strategy monitoring")
+        created_at = _utc_now()
+        monitor = {
+            "schema_version": SCHEMA_VERSION,
+            "monitor_id": f"monitor_{uuid4().hex}",
+            "created_at": created_at,
+            "actor": _text(actor or "system", "actor", 200, required=True),
+            "candidate_id": candidate_id,
+            "candidate_fingerprint": candidate["candidate_fingerprint"],
+            "active_lifecycle_state": active["lifecycle_state"],
+            "market_snapshot": snapshot_before,
+            "period": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "sessions": len(calendar),
+            },
+            "validation_reference": {
+                "market_snapshot": validation["market_snapshot"],
+                "period": validation["period"],
+                "candidate_metrics": dict(reference),
+            },
+            "recent_candidate_metrics": recent_candidate,
+            "recent_parent_metrics": recent_parent,
+            "evidence": evidence,
+            "state_changed": False,
+            "live_trading_authorized": False,
+        }
+        monitor["evidence_fingerprint"] = _fingerprint(
+            _monitor_evidence_payload(monitor)
+        )
+        self.store.write_monitor(
+            owner,
+            monitor,
+            expected_active_candidate_id=candidate_id,
+            expected_active_fingerprint=str(active["fingerprint"]),
+            expected_lifecycle_state=str(active["lifecycle_state"]),
+            max_records=MAX_MONITORS_PER_OWNER,
+        )
+        self._write_monitor_event(owner, monitor)
+        return monitor
+
+    def suspend_active_candidate(
+        self,
+        owner: str,
+        *,
+        actor: str,
+        expected_active_candidate_id: str,
+        expected_active_fingerprint: str,
+        note: str,
+        monitor_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._change_lifecycle_state(
+            owner,
+            action="suspend",
+            from_state="ACTIVE",
+            to_state="SUSPENDED",
+            actor=actor,
+            expected_active_candidate_id=expected_active_candidate_id,
+            expected_active_fingerprint=expected_active_fingerprint,
+            note=note,
+            monitor_id=monitor_id,
+        )
+
+    def resume_active_candidate(
+        self,
+        owner: str,
+        *,
+        actor: str,
+        expected_active_candidate_id: str,
+        expected_active_fingerprint: str,
+        note: str,
+        monitor_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._change_lifecycle_state(
+            owner,
+            action="resume",
+            from_state="SUSPENDED",
+            to_state="ACTIVE",
+            actor=actor,
+            expected_active_candidate_id=expected_active_candidate_id,
+            expected_active_fingerprint=expected_active_fingerprint,
+            note=note,
+            monitor_id=monitor_id,
+        )
+
+    def retire_active_candidate(
+        self,
+        owner: str,
+        *,
+        actor: str,
+        expected_active_candidate_id: str,
+        expected_active_fingerprint: str,
+        note: str,
+        monitor_id: str | None = None,
+    ) -> dict[str, Any]:
+        event_actor = _text(actor, "actor", 200, required=True)
+        reason = _text(note, "note", 1000, required=True)
+        evidence = self._verified_monitor_reference(
+            owner,
+            monitor_id,
+            expected_active_candidate_id,
+            expected_active_fingerprint,
+        )
+
+        def transition(
+            stored: dict[str, Any] | None,
+        ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            current = self._stored_or_configured_baseline(stored)
+            self._assert_expected_active(
+                current,
+                expected_active_candidate_id,
+                expected_active_fingerprint,
+            )
+            stack = list(current.get("rollback_stack", []))
+            target = stack.pop() if stack else _stack_entry(self._configured_baseline())
+            retired = list(current["retired_candidates"])
+            if expected_active_candidate_id not in retired:
+                retired.append(expected_active_candidate_id)
+            target_candidate_id = target.get("candidate_id")
+            target_state = str(
+                target.get("lifecycle_state")
+                or ("ACTIVE" if target_candidate_id else "CONFIGURED")
+            )
+            active = {
+                "candidate_id": target_candidate_id,
+                "fingerprint": target["fingerprint"],
+                "snapshot": target["snapshot"],
+                "activated_at": _utc_now(),
+                "activated_by": event_actor,
+                "rollback_stack": stack,
+                "lifecycle_state": target_state,
+                "lifecycle_updated_at": _utc_now(),
+                "lifecycle_updated_by": event_actor,
+                "retired_candidates": retired,
+            }
+            return active, self._lifecycle_transition_event(
+                "retire", current, active, event_actor, reason, evidence
+            )
+
+        active = self.store.transition_active(
+            owner,
+            transition,
+            max_transition_events=MAX_TRANSITION_EVENTS_PER_OWNER,
+        )
         return self._public_active(active)
 
     def rollback(
@@ -552,13 +793,19 @@ class StrategyLabEngine:
             if not stack:
                 raise RuntimeError("No prior strategy-lab baseline is available")
             target = stack.pop()
+            target_candidate_id = target.get("candidate_id")
             active = {
-                "candidate_id": target.get("candidate_id"),
+                "candidate_id": target_candidate_id,
                 "fingerprint": target["fingerprint"],
                 "snapshot": target["snapshot"],
                 "activated_at": _utc_now(),
                 "activated_by": actor,
                 "rollback_stack": stack,
+                "lifecycle_state": target.get("lifecycle_state")
+                or ("ACTIVE" if target_candidate_id else "CONFIGURED"),
+                "lifecycle_updated_at": _utc_now(),
+                "lifecycle_updated_by": actor,
+                "retired_candidates": list(current["retired_candidates"]),
             }
             return active, self._activation_event(
                 "rollback", current, active, actor, note
@@ -656,6 +903,14 @@ class StrategyLabEngine:
         else:
             status = "REJECTED"
         active = self._active_baseline(owner)
+        retired = candidate_id in active["retired_candidates"]
+        monitors = [
+            self._verified_monitor(item)
+            for item in self.store.list_monitors(owner)
+            if item.get("candidate_id") == candidate_id
+            and item.get("candidate_fingerprint")
+            == candidate.get("candidate_fingerprint")
+        ]
         public_candidate = {
             key: value for key, value in candidate.items() if key != "owner"
         }
@@ -669,6 +924,17 @@ class StrategyLabEngine:
             "approval": approval,
             "export": exported,
             "active": active["candidate_id"] == candidate_id,
+            "lifecycle": {
+                "state": (
+                    active["lifecycle_state"]
+                    if active["candidate_id"] == candidate_id
+                    else "RETIRED"
+                    if retired
+                    else "INACTIVE"
+                ),
+                "latest_monitor": monitors[-1] if monitors else None,
+                "monitor_count": len(monitors),
+            },
         }
 
     def _active_baseline(self, owner: str) -> dict[str, Any]:
@@ -875,7 +1141,34 @@ class StrategyLabEngine:
                 "fingerprint"
             ):
                 raise RuntimeError("Invalid active strategy-lab baseline")
-            return active
+            candidate_id = active.get("candidate_id")
+            if candidate_id is not None and not _is_candidate_id(candidate_id):
+                raise RuntimeError("Invalid active strategy candidate id")
+            lifecycle_state = str(
+                active.get("lifecycle_state")
+                or ("ACTIVE" if candidate_id else "CONFIGURED")
+            )
+            allowed_states = (
+                _ACTIVE_LIFECYCLE_STATES if candidate_id else frozenset({"CONFIGURED"})
+            )
+            if lifecycle_state not in allowed_states:
+                raise RuntimeError("Invalid active strategy lifecycle state")
+            retired = active.get("retired_candidates", [])
+            if (
+                not isinstance(retired, list)
+                or len(retired) != len(set(retired))
+                or any(not _is_candidate_id(item) for item in retired)
+            ):
+                raise RuntimeError("Invalid retired strategy candidate registry")
+            if candidate_id in retired:
+                raise RuntimeError("Active candidate cannot also be retired")
+            return {
+                **active,
+                "lifecycle_state": lifecycle_state,
+                "lifecycle_updated_at": active.get("lifecycle_updated_at"),
+                "lifecycle_updated_by": active.get("lifecycle_updated_by"),
+                "retired_candidates": retired,
+            }
         snapshot = settings_snapshot(self.config.strategy, self.config.risk)
         return {
             "candidate_id": None,
@@ -884,6 +1177,10 @@ class StrategyLabEngine:
             "activated_at": None,
             "activated_by": None,
             "rollback_stack": [],
+            "lifecycle_state": "CONFIGURED",
+            "lifecycle_updated_at": None,
+            "lifecycle_updated_by": None,
+            "retired_candidates": [],
         }
 
     def _public_active(self, active: dict[str, Any]) -> dict[str, Any]:
@@ -896,7 +1193,30 @@ class StrategyLabEngine:
             "activated_by": active.get("activated_by"),
             "can_rollback": bool(active.get("rollback_stack")),
             "rollback_depth": len(active.get("rollback_stack", [])),
+            "lifecycle_state": active["lifecycle_state"],
+            "lifecycle_updated_at": active.get("lifecycle_updated_at"),
+            "lifecycle_updated_by": active.get("lifecycle_updated_by"),
+            "can_monitor": active["candidate_id"] is not None,
+            "can_suspend": active["candidate_id"] is not None
+            and active["lifecycle_state"] == "ACTIVE",
+            "can_resume": active["candidate_id"] is not None
+            and active["lifecycle_state"] == "SUSPENDED",
+            "can_retire": active["candidate_id"] is not None,
+            "retired_count": len(active["retired_candidates"]),
         }
+
+    def _active_monitors(
+        self, owner: str, active: Mapping[str, Any]
+    ) -> list[dict[str, Any]]:
+        candidate_id = active.get("candidate_id")
+        if not isinstance(candidate_id, str):
+            return []
+        return [
+            self._verified_monitor(item)
+            for item in self.store.list_monitors(owner)
+            if item.get("candidate_id") == candidate_id
+            and item.get("candidate_fingerprint") == active.get("fingerprint")
+        ]
 
     def _validation_period(self, market: MarketData) -> tuple[date, date, date]:
         start = date.fromisoformat(str(self.config.raw["backtest"]["start"]))
@@ -1224,6 +1544,200 @@ class StrategyLabEngine:
         }
         return raw
 
+    def _change_lifecycle_state(
+        self,
+        owner: str,
+        *,
+        action: str,
+        from_state: str,
+        to_state: str,
+        actor: str,
+        expected_active_candidate_id: str,
+        expected_active_fingerprint: str,
+        note: str,
+        monitor_id: str | None,
+    ) -> dict[str, Any]:
+        event_actor = _text(actor, "actor", 200, required=True)
+        reason = _text(note, "note", 1000, required=True)
+        evidence = self._verified_monitor_reference(
+            owner,
+            monitor_id,
+            expected_active_candidate_id,
+            expected_active_fingerprint,
+        )
+
+        def transition(
+            stored: dict[str, Any] | None,
+        ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            current = self._stored_or_configured_baseline(stored)
+            self._assert_expected_active(
+                current,
+                expected_active_candidate_id,
+                expected_active_fingerprint,
+            )
+            if current["lifecycle_state"] != from_state:
+                raise StrategyLabConflictError(
+                    "Active strategy lifecycle changed; refresh before confirming"
+                )
+            active = {
+                **current,
+                "lifecycle_state": to_state,
+                "lifecycle_updated_at": _utc_now(),
+                "lifecycle_updated_by": event_actor,
+            }
+            return active, self._lifecycle_transition_event(
+                action, current, active, event_actor, reason, evidence
+            )
+
+        active = self.store.transition_active(
+            owner,
+            transition,
+            max_transition_events=MAX_TRANSITION_EVENTS_PER_OWNER,
+        )
+        return self._public_active(active)
+
+    @staticmethod
+    def _assert_expected_active(
+        active: Mapping[str, Any], candidate_id: str, fingerprint: str
+    ) -> None:
+        if (
+            active.get("candidate_id") != candidate_id
+            or active.get("fingerprint") != fingerprint
+        ):
+            raise StrategyLabConflictError(
+                "Active strategy version changed; refresh before confirming"
+            )
+
+    def _verified_monitor_reference(
+        self,
+        owner: str,
+        monitor_id: str | None,
+        candidate_id: str,
+        fingerprint: str,
+    ) -> dict[str, str] | None:
+        if monitor_id is None:
+            return None
+        monitor = self._verified_monitor(self.store.read_monitor(owner, monitor_id))
+        if (
+            monitor.get("candidate_id") != candidate_id
+            or monitor.get("candidate_fingerprint") != fingerprint
+        ):
+            raise StrategyLabConflictError(
+                "Monitoring evidence does not match the active strategy version"
+            )
+        evidence_fingerprint = str(monitor["evidence_fingerprint"])
+        return {
+            "monitor_id": monitor_id,
+            "evidence_fingerprint": evidence_fingerprint,
+            "verdict": str(monitor.get("evidence", {}).get("verdict", "")),
+        }
+
+    @staticmethod
+    def _verified_monitor(monitor: dict[str, Any]) -> dict[str, Any]:
+        if monitor.get("schema_version") != SCHEMA_VERSION:
+            raise RuntimeError("Monitoring evidence schema version mismatch")
+        monitor_id = monitor.get("monitor_id")
+        fingerprint = monitor.get("evidence_fingerprint")
+        if (
+            not isinstance(monitor_id, str)
+            or not monitor_id.startswith("monitor_")
+            or len(monitor_id) != 40
+            or any(
+                character not in "0123456789abcdef" for character in monitor_id[8:]
+            )
+        ):
+            raise RuntimeError("Monitoring evidence id is invalid")
+        if (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in fingerprint)
+        ):
+            raise RuntimeError("Monitoring evidence fingerprint is invalid")
+        if _fingerprint(_monitor_evidence_payload(monitor)) != fingerprint:
+            raise RuntimeError("Monitoring evidence fingerprint mismatch")
+        if monitor.get("state_changed") is not False:
+            raise RuntimeError("Monitoring evidence cannot change strategy state")
+        if monitor.get("live_trading_authorized") is not False:
+            raise RuntimeError("Monitoring evidence cannot authorize live trading")
+        candidate_id = monitor.get("candidate_id")
+        candidate_fingerprint = monitor.get("candidate_fingerprint")
+        evidence = monitor.get("evidence")
+        if not _is_candidate_id(candidate_id):
+            raise RuntimeError("Monitoring candidate id is invalid")
+        if (
+            not isinstance(candidate_fingerprint, str)
+            or len(candidate_fingerprint) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in candidate_fingerprint
+            )
+        ):
+            raise RuntimeError("Monitoring candidate fingerprint is invalid")
+        if (
+            not isinstance(evidence, Mapping)
+            or evidence.get("verdict")
+            not in {MONITORING_OK, REVIEW_REQUIRED, INSUFFICIENT_DATA}
+            or evidence.get("automatic_state_change") is not False
+        ):
+            raise RuntimeError("Monitoring verdict is invalid")
+        return monitor
+
+    def _write_monitor_event(
+        self, owner: str, monitor: Mapping[str, Any]
+    ) -> None:
+        monitor_id = str(monitor["monitor_id"])
+        event = {
+            "schema_version": SCHEMA_VERSION,
+            "event_id": f"event_{monitor_id.removeprefix('monitor_')}",
+            "action": "monitor",
+            "created_at": monitor["created_at"],
+            "candidate_id": monitor["candidate_id"],
+            "candidate_fingerprint": monitor["candidate_fingerprint"],
+            "actor": monitor["actor"],
+            "source": "human_requested",
+            "monitor_id": monitor_id,
+            "evidence_fingerprint": monitor["evidence_fingerprint"],
+            "verdict": monitor["evidence"]["verdict"],
+            "state_changed": False,
+            "affects_broker_configuration": False,
+            "live_trading_authorized": False,
+        }
+        try:
+            self.store.write_event(owner, event)
+        except FileExistsError:
+            pass
+
+    def _lifecycle_transition_event(
+        self,
+        action: str,
+        previous: Mapping[str, Any],
+        active: Mapping[str, Any],
+        actor: str,
+        note: str,
+        evidence: Mapping[str, str] | None,
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "event_id": f"event_{uuid4().hex}",
+            "action": action,
+            "created_at": _utc_now(),
+            "candidate_id": previous["candidate_id"],
+            "candidate_fingerprint": previous["fingerprint"],
+            "actor": actor,
+            "source": "human",
+            "note": note,
+            "from_candidate_id": previous["candidate_id"],
+            "from_fingerprint": previous["fingerprint"],
+            "from_lifecycle_state": previous["lifecycle_state"],
+            "to_candidate_id": active["candidate_id"],
+            "to_fingerprint": active["fingerprint"],
+            "to_lifecycle_state": active["lifecycle_state"],
+            "monitoring_evidence": dict(evidence) if evidence else None,
+            "state_changed": True,
+            "affects_broker_configuration": False,
+            "live_trading_authorized": False,
+        }
+
     def _ensure_lifecycle_event(
         self,
         owner: str,
@@ -1275,6 +1789,9 @@ class StrategyLabEngine:
             "from_fingerprint": previous["fingerprint"],
             "to_candidate_id": active["candidate_id"],
             "to_fingerprint": active["fingerprint"],
+            "from_lifecycle_state": previous["lifecycle_state"],
+            "to_lifecycle_state": active["lifecycle_state"],
+            "state_changed": True,
             "affects_broker_configuration": False,
             "live_trading_authorized": False,
         }
@@ -1309,6 +1826,24 @@ def _market_snapshot(market: MarketData) -> dict[str, Any]:
     return {"id": snapshot_id, "date": snapshot_date, "metadata": metadata}
 
 
+def _monitor_evidence_payload(value: Mapping[str, Any]) -> dict[str, Any]:
+    period = value.get("period")
+    reference = value.get("validation_reference")
+    if not isinstance(period, Mapping) or not isinstance(reference, Mapping):
+        raise RuntimeError("Monitoring evidence structure is invalid")
+    candidate_metrics = reference.get("candidate_metrics")
+    if not isinstance(candidate_metrics, Mapping):
+        raise RuntimeError("Monitoring validation reference is invalid")
+    return {
+        "market_snapshot": value.get("market_snapshot"),
+        "period": [period.get("start"), period.get("end"), period.get("sessions")],
+        "validation_reference": dict(candidate_metrics),
+        "recent_candidate_metrics": value.get("recent_candidate_metrics"),
+        "recent_parent_metrics": value.get("recent_parent_metrics"),
+        "evidence": value.get("evidence"),
+    }
+
+
 def _fingerprint(value: Any) -> str:
     raw = json.dumps(
         value,
@@ -1328,7 +1863,18 @@ def _stack_entry(active: Mapping[str, Any]) -> dict[str, Any]:
         "candidate_id": active.get("candidate_id"),
         "fingerprint": active["fingerprint"],
         "snapshot": active["snapshot"],
+        "lifecycle_state": active.get("lifecycle_state")
+        or ("ACTIVE" if active.get("candidate_id") else "CONFIGURED"),
     }
+
+
+def _is_candidate_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith("cand_")
+        and len(value) == 37
+        and all(character in "0123456789abcdef" for character in value[5:])
+    )
 
 
 def _text(value: Any, name: str, maximum: int, required: bool = False) -> str:

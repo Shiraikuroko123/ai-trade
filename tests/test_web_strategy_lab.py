@@ -16,6 +16,7 @@ from ai_trade.web.server import (
     DashboardServer,
     _handler_factory,
     _parse_strategy_lab_confirmation_payload,
+    _parse_strategy_lab_lifecycle_payload,
     _parse_strategy_lab_manual_payload,
     _parse_strategy_lab_proposal_payload,
     _parse_strategy_lab_rollback_payload,
@@ -97,8 +98,58 @@ class _Service:
     def strategy_lab_rollback(self, **payload):
         return self._record("rollback", **payload)
 
+    def strategy_lab_monitor(self, **payload):
+        return self._record("monitor", **payload)
+
+    def strategy_lab_lifecycle(self, **payload):
+        return self._record(payload.get("action", "lifecycle"), **payload)
+
 
 class StrategyLabHttpTests(unittest.TestCase):
+    def test_monitoring_and_human_lifecycle_routes_are_state_bound(self):
+        service = _Service()
+        token = "local-csrf"
+        monitor_id = "monitor_" + "c" * 32
+        common = {
+            "confirmed": True,
+            "note": "Human-reviewed lifecycle decision",
+            "expected_active_candidate_id": CANDIDATE_ID,
+            "expected_active_fingerprint": ACTIVE_FINGERPRINT,
+            "monitor_id": monitor_id,
+        }
+        with _running_server(service, token=token) as port:
+            status, payload = _request_json(
+                port,
+                "POST",
+                "/api/strategy-lab/monitor",
+                {},
+                token=token,
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(payload["operation"], "monitor")
+            for action in ("suspend", "resume", "retire"):
+                status, payload = _request_json(
+                    port,
+                    "POST",
+                    f"/api/strategy-lab/lifecycle/{action}",
+                    common,
+                    token=token,
+                )
+                self.assertEqual(status, 200, (action, payload))
+                self.assertEqual(payload["operation"], action)
+
+        monitor_call = next(
+            call for operation, call in service.calls if operation == "monitor"
+        )
+        self.assertEqual(monitor_call["owner_id"], "local-owner")
+        self.assertEqual(monitor_call["actor"], "local-owner")
+        for action in ("suspend", "resume", "retire"):
+            call = next(call for operation, call in service.calls if operation == action)
+            self.assertEqual(call["owner_id"], "local-owner")
+            self.assertEqual(call["actor"], "local-owner")
+            self.assertEqual(call["monitor_id"], monitor_id)
+            self.assertEqual(call["expected_active_fingerprint"], ACTIVE_FINGERPRINT)
+
     def test_local_owner_can_use_complete_candidate_workflow(self):
         service = _Service()
         token = "local-csrf"
@@ -380,6 +431,11 @@ class StrategyLabServiceTests(unittest.TestCase):
             "path": "private-owner-path",
         }
         engine.activate_candidate.return_value = {"candidate_id": CANDIDATE_ID}
+        engine.monitor_active_candidate.return_value = {"monitor_id": "monitor-test"}
+        engine.suspend_active_candidate.return_value = {
+            "candidate_id": CANDIDATE_ID,
+            "lifecycle_state": "SUSPENDED",
+        }
         engine.rollback.return_value = {"candidate_id": None}
         market = object()
 
@@ -429,6 +485,16 @@ class StrategyLabServiceTests(unittest.TestCase):
                 owner_id=owner_id,
                 actor=actor,
             )
+            monitored = service.strategy_lab_monitor(owner_id=owner_id, actor=actor)
+            suspended = service.strategy_lab_lifecycle(
+                action="suspend",
+                note="Review",
+                expected_active_candidate_id=CANDIDATE_ID,
+                expected_active_fingerprint=ACTIVE_FINGERPRINT,
+                monitor_id=None,
+                owner_id=owner_id,
+                actor=actor,
+            )
             rolled_back = service.strategy_lab_rollback(
                 note="Restore",
                 expected_active_candidate_id=CANDIDATE_ID,
@@ -445,6 +511,8 @@ class StrategyLabServiceTests(unittest.TestCase):
             {"candidate_id": CANDIDATE_ID, "path": "private-owner-path"},
         )
         self.assertEqual(rolled_back["candidate_id"], None)
+        self.assertEqual(monitored["monitor_id"], "monitor-test")
+        self.assertEqual(suspended["lifecycle_state"], "SUSPENDED")
         cls.assert_called_once_with(config)
         engine.summary.assert_called_once_with(owner_id)
         engine.get_candidate.assert_called_once_with(owner_id, CANDIDATE_ID)
@@ -485,6 +553,19 @@ class StrategyLabServiceTests(unittest.TestCase):
             CANDIDATE_ID,
             activated_by=actor,
             note="Paper baseline",
+        )
+        engine.monitor_active_candidate.assert_called_once_with(
+            owner_id,
+            market,
+            actor=actor,
+        )
+        engine.suspend_active_candidate.assert_called_once_with(
+            owner_id,
+            actor=actor,
+            expected_active_candidate_id=CANDIDATE_ID,
+            expected_active_fingerprint=ACTIVE_FINGERPRINT,
+            note="Review",
+            monitor_id=None,
         )
         engine.rollback.assert_called_once_with(
             owner_id,
@@ -632,6 +713,36 @@ class StrategyLabPayloadTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 _parse_strategy_lab_rollback_payload(value)
 
+    def test_lifecycle_payload_requires_confirmation_reason_and_exact_evidence(self):
+        monitor_id = "monitor_" + "c" * 32
+        payload = {
+            "confirmed": True,
+            "note": "Reviewed the latest decay evidence",
+            "expected_active_candidate_id": CANDIDATE_ID,
+            "expected_active_fingerprint": ACTIVE_FINGERPRINT,
+            "monitor_id": monitor_id,
+        }
+        self.assertEqual(
+            _parse_strategy_lab_lifecycle_payload(payload),
+            (
+                CANDIDATE_ID,
+                ACTIVE_FINGERPRINT,
+                "Reviewed the latest decay evidence",
+                monitor_id,
+            ),
+        )
+        invalid = [
+            {**payload, "confirmed": False},
+            {**payload, "note": ""},
+            {**payload, "expected_active_candidate_id": "cand_invalid"},
+            {**payload, "expected_active_fingerprint": "0" * 63},
+            {**payload, "monitor_id": "monitor_invalid"},
+            {**payload, "owner_id": "attacker"},
+        ]
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                _parse_strategy_lab_lifecycle_payload(value)
+
     def test_candidate_window_has_a_visible_truncation_label(self):
         asset = (
             Path(__file__).resolve().parents[1]
@@ -658,6 +769,11 @@ class StrategyLabPayloadTests(unittest.TestCase):
             'if (strategyLabReloaded && state.route === "strategy-lab")',
             asset,
         )
+        self.assertIn('data-strategy-monitor', asset)
+        self.assertIn('data-strategy-lifecycle-form', asset)
+        self.assertIn('/api/strategy-lab/monitor', asset)
+        self.assertIn('/api/strategy-lab/lifecycle/${encodeURIComponent(action)}', asset)
+        self.assertIn('strategyMonitorVerdictChip', asset)
 
 
 class _RunningServer:

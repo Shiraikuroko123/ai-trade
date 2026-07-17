@@ -13,8 +13,11 @@ from typing import Any, Callable, Iterator
 
 
 _CANDIDATE_ID = re.compile(r"cand_[0-9a-f]{32}\Z")
+_MONITOR_ID = re.compile(r"monitor_[0-9a-f]{32}\Z")
 _EVENT_ID = re.compile(r"event_[0-9a-f]{32}\Z")
-_ACTIVE_TRANSITION_ACTIONS = frozenset({"activate", "rollback"})
+_ACTIVE_TRANSITION_ACTIONS = frozenset(
+    {"activate", "rollback", "suspend", "resume", "retire"}
+)
 _ACTIVE_TRANSACTION_SCHEMA_VERSION = 1
 _LOCKS_GUARD = Lock()
 _LOCKS: dict[str, _OwnerLockState] = {}
@@ -167,6 +170,37 @@ class StrategyLabStore:
             "broker_mode": raw.get("broker", {}).get("mode"),
             "exported_at": metadata.get("exported_at"),
         }
+
+    def write_monitor(
+        self,
+        owner: str,
+        value: dict[str, Any],
+        *,
+        expected_active_candidate_id: str,
+        expected_active_fingerprint: str,
+        expected_lifecycle_state: str,
+        max_records: int | None = None,
+    ) -> Path:
+        monitor_id = _valid_monitor_id(value.get("monitor_id"))
+        return self._write_once(
+            owner,
+            "monitors",
+            monitor_id,
+            value,
+            expected_active_candidate_id=_valid_candidate_id(
+                expected_active_candidate_id
+            ),
+            expected_active_fingerprint=expected_active_fingerprint,
+            expected_lifecycle_state=expected_lifecycle_state,
+            max_records=max_records,
+            capacity_label="monitoring record",
+        )
+
+    def read_monitor(self, owner: str, monitor_id: str) -> dict[str, Any]:
+        return self._read_required(owner, "monitors", _valid_monitor_id(monitor_id))
+
+    def list_monitors(self, owner: str) -> list[dict[str, Any]]:
+        return self._list_records(owner, "monitors", "created_at")
 
     def read_active(self, owner: str) -> dict[str, Any] | None:
         path = self.owner_directory(owner) / "active.json"
@@ -338,20 +372,25 @@ class StrategyLabStore:
         record_id: str,
         value: dict[str, Any],
         *,
+        expected_active_candidate_id: str | None = None,
         expected_active_fingerprint: str | None = None,
         empty_active_fingerprint: str | None = None,
+        expected_lifecycle_state: str | None = None,
         max_records: int | None = None,
+        capacity_label: str = "candidate",
     ) -> Path:
         path = self.owner_directory(owner) / directory / f"{record_id}.json"
         with self._owner_lock(owner):
             self._recover_active_transaction_unlocked(owner)
             active_path = self.owner_directory(owner) / "active.json"
             active = _read_json(active_path) if active_path.exists() else None
+            self._assert_active_candidate(active, expected_active_candidate_id)
             self._assert_active_fingerprint(
                 active,
                 expected_active_fingerprint,
                 empty_active_fingerprint,
             )
+            self._assert_lifecycle_state(active, expected_lifecycle_state)
             if path.exists():
                 raise FileExistsError(
                     f"Immutable strategy-lab record already exists: {record_id}"
@@ -360,11 +399,23 @@ class StrategyLabStore:
                 count = sum(1 for item in path.parent.glob("*.json") if item.is_file())
                 if count >= max_records:
                     raise StrategyLabCapacityError(
-                        "Strategy lab candidate limit reached "
-                        f"({max_records}); remove or archive old candidates first"
+                        f"Strategy lab {capacity_label} limit reached "
+                        f"({max_records}); remove or archive old records first"
                     )
             _atomic_write_json(path, value, replace_existing=False)
         return path
+
+    @staticmethod
+    def _assert_active_candidate(
+        active: dict[str, Any] | None, expected: str | None
+    ) -> None:
+        if expected is None:
+            return
+        actual = active.get("candidate_id") if active is not None else None
+        if actual != expected:
+            raise StrategyLabConflictError(
+                "Active strategy candidate changed; refresh before recording evidence"
+            )
 
     @staticmethod
     def _assert_active_fingerprint(
@@ -378,6 +429,23 @@ class StrategyLabStore:
         if actual != expected:
             raise StrategyLabConflictError(
                 "Active strategy-lab baseline changed; create and validate a new candidate"
+            )
+
+    @staticmethod
+    def _assert_lifecycle_state(
+        active: dict[str, Any] | None, expected: str | None
+    ) -> None:
+        if expected is None:
+            return
+        actual = "CONFIGURED"
+        if active is not None:
+            actual = str(
+                active.get("lifecycle_state")
+                or ("ACTIVE" if active.get("candidate_id") else "CONFIGURED")
+            )
+        if actual != expected:
+            raise StrategyLabConflictError(
+                "Active strategy lifecycle changed; refresh before recording evidence"
             )
 
     def _read_required(
@@ -467,6 +535,12 @@ def _normalize_owner(owner: str) -> str:
 def _valid_candidate_id(value: Any) -> str:
     if not isinstance(value, str) or not _CANDIDATE_ID.fullmatch(value):
         raise ValueError("Invalid strategy-lab candidate id")
+    return value
+
+
+def _valid_monitor_id(value: Any) -> str:
+    if not isinstance(value, str) or not _MONITOR_ID.fullmatch(value):
+        raise ValueError("Invalid strategy-lab monitor id")
     return value
 
 

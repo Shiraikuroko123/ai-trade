@@ -47,7 +47,9 @@ STRATEGY_LAB_CANDIDATE_PATH = re.compile(
 )
 STRATEGY_LAB_CANDIDATE_ID_PATTERN = re.compile(r"cand_[0-9a-f]{32}\Z")
 STRATEGY_LAB_FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+STRATEGY_LAB_MONITOR_ID_PATTERN = re.compile(r"monitor_[0-9a-f]{32}\Z")
 STRATEGY_LAB_OBJECTIVES = frozenset({"balanced", "drawdown", "turnover"})
+STRATEGY_LAB_LIFECYCLE_ACTIONS = frozenset({"suspend", "resume", "retire"})
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -369,6 +371,36 @@ def _handler_factory(
                             actor=_strategy_lab_actor(context),
                         ),
                         HTTPStatus.CREATED,
+                    )
+                elif parsed.path == "/api/strategy-lab/monitor":
+                    _parse_empty_object(self._read_json(), "strategy monitoring")
+                    self._json(
+                        service.strategy_lab_monitor(
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                        ),
+                        HTTPStatus.CREATED,
+                    )
+                elif parsed.path.startswith("/api/strategy-lab/lifecycle/"):
+                    action = parsed.path.rsplit("/", 1)[-1]
+                    if action not in STRATEGY_LAB_LIFECYCLE_ACTIONS:
+                        raise ValueError("Unknown strategy lifecycle action")
+                    (
+                        expected_active_candidate_id,
+                        expected_active_fingerprint,
+                        note,
+                        monitor_id,
+                    ) = _parse_strategy_lab_lifecycle_payload(self._read_json())
+                    self._json(
+                        service.strategy_lab_lifecycle(
+                            action=action,
+                            note=note,
+                            expected_active_candidate_id=expected_active_candidate_id,
+                            expected_active_fingerprint=expected_active_fingerprint,
+                            monitor_id=monitor_id,
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                        )
                     )
                 elif parsed.path == "/api/strategy-lab/rollback":
                     (
@@ -972,6 +1004,44 @@ def _parse_strategy_lab_rollback_payload(
     if note == "":
         return candidate_id, fingerprint, ""
     return candidate_id, fingerprint, _bounded_text(note, "note", 500)
+
+
+def _parse_strategy_lab_lifecycle_payload(
+    payload: dict[str, object],
+) -> tuple[str, str, str, str | None]:
+    _reject_unknown_fields(
+        payload,
+        {
+            "confirmed",
+            "note",
+            "expected_active_candidate_id",
+            "expected_active_fingerprint",
+            "monitor_id",
+        },
+        "strategy lifecycle",
+    )
+    if payload.get("confirmed") is not True:
+        raise ValueError("strategy lifecycle change requires confirmed=true")
+    candidate_id = payload.get("expected_active_candidate_id")
+    if not isinstance(
+        candidate_id, str
+    ) or not STRATEGY_LAB_CANDIDATE_ID_PATTERN.fullmatch(candidate_id):
+        raise ValueError("expected_active_candidate_id must be a valid candidate id")
+    fingerprint = payload.get("expected_active_fingerprint")
+    if not isinstance(
+        fingerprint, str
+    ) or not STRATEGY_LAB_FINGERPRINT_PATTERN.fullmatch(fingerprint):
+        raise ValueError(
+            "expected_active_fingerprint must be a lowercase SHA-256 fingerprint"
+        )
+    note = _bounded_text(payload.get("note"), "note", 500)
+    monitor_id = payload.get("monitor_id")
+    if monitor_id is not None and (
+        not isinstance(monitor_id, str)
+        or not STRATEGY_LAB_MONITOR_ID_PATTERN.fullmatch(monitor_id)
+    ):
+        raise ValueError("monitor_id must be a valid strategy monitoring id")
+    return candidate_id, fingerprint, note, monitor_id
 
 
 def _parse_empty_object(payload: dict[str, object], action: str) -> None:

@@ -22,6 +22,12 @@ Execution diagnostics include rejected orders and separately report commission, 
 
 The existing historical windows were used to select the current liquidity threshold. They are development evidence, not a pristine final holdout. Future paper data is the next independent test.
 
+## Post-activation Monitoring
+
+An activated strategy-lab candidate is not assumed to remain valid indefinitely. On explicit user request, the workstation reruns the active candidate and its recorded parent baseline over a bounded recent completed-session window, then compares the active result with both the same-window parent and the candidate's activation-time holdout evidence. The record includes the exact market snapshot, period, metrics, thresholds, failed checks, and a SHA-256 evidence fingerprint.
+
+`MONITORING_OK` means no configured decay threshold fired; it does not prove future performance. `REVIEW_REQUIRED` means at least one Sharpe or drawdown threshold needs human review; it is not an instruction to trade or an automatic suspension. `INSUFFICIENT_DATA` is kept distinct from failure. Only a state-bound, explicitly confirmed human action can suspend, resume, retire, or roll back a simulated lab baseline. These research lifecycle states do not modify an external paper process, paper ledger, broker mandate, kill switch, or live-trading gate.
+
 ## Charts And Indicators
 
 The `v0.12.0` market workstation computes MA, EMA, BOLL, MACD, KDJ, RSI, and Wilder ATR from the same validated completed OHLCV snapshot used for review. Daily bars may be aggregated deterministically into calendar weeks or months; no intraday, minute, order-book, or synthetic session data is implied.

@@ -1451,6 +1451,136 @@ progress {
   display: inline-flex;
 }
 
+.strategy-lifecycle-band {
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+}
+
+.strategy-lifecycle-head {
+  align-items: center;
+  background: var(--surface);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 0.8rem 1rem;
+}
+
+.strategy-lifecycle-head h2 {
+  font-size: 0.98rem;
+  margin-bottom: 0.15rem;
+}
+
+.strategy-lifecycle-head p {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  margin-bottom: 0;
+}
+
+.strategy-lifecycle-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.strategy-lifecycle-metrics > div {
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+  padding: 0.7rem 1rem;
+}
+
+.strategy-lifecycle-metrics > div:not(:last-child) {
+  border-inline-end: 1px solid var(--rule);
+}
+
+.strategy-lifecycle-metrics dt {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.strategy-lifecycle-metrics dd {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0;
+  min-width: 0;
+}
+
+.strategy-lifecycle-metrics code {
+  overflow-wrap: anywhere;
+}
+
+.strategy-monitor-table {
+  border-top: 1px solid var(--rule);
+}
+
+.strategy-monitor-table table {
+  min-width: 720px;
+}
+
+.strategy-monitor-table th:first-child {
+  width: 30%;
+}
+
+.strategy-monitor-table th:last-child {
+  width: 104px;
+}
+
+.strategy-lifecycle-empty {
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  margin: 0;
+  max-width: none;
+  padding: 0.8rem 1rem;
+}
+
+.strategy-lifecycle-actions {
+  border-top: 1px solid var(--rule);
+}
+
+.strategy-lifecycle-actions summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 650;
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+}
+
+.strategy-lifecycle-action-list {
+  border-top: 1px solid var(--rule);
+}
+
+.strategy-lifecycle-form {
+  align-items: end;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(210px, 1fr) minmax(220px, 1fr) auto;
+  padding: 0.8rem 1rem;
+}
+
+.strategy-lifecycle-form + .strategy-lifecycle-form {
+  border-top: 1px solid var(--rule);
+}
+
+.strategy-lifecycle-form > div strong,
+.strategy-lifecycle-form > div span {
+  display: block;
+}
+
+.strategy-lifecycle-form > div strong {
+  font-size: 0.8rem;
+}
+
+.strategy-lifecycle-form > div span {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  margin-top: 0.15rem;
+}
+
 .strategy-composer {
   border-bottom: 1px solid var(--rule);
   border-top: 1px solid var(--rule);
@@ -2345,6 +2475,18 @@ progress {
     grid-column: 2;
   }
 
+  .strategy-lifecycle-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-lifecycle-metrics > div:nth-child(2n) {
+    border-inline-end: 0;
+  }
+
+  .strategy-lifecycle-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .market-kline-chart {
     height: 590px;
   }
@@ -2495,6 +2637,11 @@ progress {
     border-bottom: 1px solid var(--rule);
   }
 
+  .strategy-lifecycle-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
   .strategy-workspace {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2582,7 +2729,7 @@ progress {
   }
 
   .market-pulse-track {
-    grid-template-columns: repeat(5, minmax(148px, 1fr));
+    grid-template-columns: repeat(5, minmax(156px, 1fr));
   }
 
   .page-intro {
@@ -2746,6 +2893,21 @@ progress {
     border-bottom: 1px solid var(--rule);
     border-inline-end: 0 !important;
     min-height: 64px;
+  }
+
+  .strategy-lifecycle-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .strategy-lifecycle-metrics > div {
+    border-inline-end: 0 !important;
+  }
+
+  .strategy-lifecycle-head,
+  .strategy-lifecycle-head .action-row {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
   }
 
   .strategy-parameter-grid,

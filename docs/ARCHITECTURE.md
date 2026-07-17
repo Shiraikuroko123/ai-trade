@@ -114,16 +114,24 @@ active baseline + allowlisted schema
               |
        explicit human approval
               |
-       isolated paper config ----> rollback history
-              |
-              X  no broker authorization or live order route
+       isolated paper config ----> active paper baseline
+                                      |
+                         rolling decay evidence
+                                      |
+                         human review only
+                          /       |       \
+                     suspend   resume   retire/rollback
+                                      |
+                                      X  no broker authorization or live order route
 ```
 
-`strategy_lab/` owns the editable parameter schema, immutable candidate records, deterministic validation, human approvals, isolated paper-config export, activation history, and rollback pointer. Each beta user receives a stable, non-reused internal account identity that is mapped to a hashed local directory under `state/strategy_lab/`; request payloads cannot choose another owner. Login usernames are used only as human-readable audit actors and the browser never receives the raw internal account identity. Version-1 user files migrate in place so existing per-user data remains reachable, while deleting and recreating the same username produces a new identity and cannot inherit the deleted account's records.
+`strategy_lab/` owns the editable parameter schema, immutable candidate records, deterministic validation, human approvals, isolated paper-config export, activation history, post-activation monitoring, and rollback pointer. Each beta user receives a stable, non-reused internal account identity that is mapped to a hashed local directory under `state/strategy_lab/`; request payloads cannot choose another owner. Login usernames are used only as human-readable audit actors and the browser never receives the raw internal account identity. Version-1 user files migrate in place so existing per-user data remains reachable, while deleting and recreating the same username produces a new identity and cannot inherit the deleted account's records.
 
 A candidate keeps its parent and candidate fingerprints, complete configuration-context fingerprint, baseline and changed settings, source, hypothesis, snapshot identity, gate results, and approval provenance. Validation, approval, export, and activation recompute and compare those bindings. An active-baseline compare-and-swap rejects a stale sibling after another candidate is activated, and activation additionally requires the exact approved export whose broker mode is forced to `disabled`. A rollback request carries the active candidate ID and fingerprint that the user confirmed; the transition compares both inside the owner lock, so a duplicate or stale request cannot pop a second rollback entry.
 
-All writes for one owner run under both an in-process re-entrant lock and an operating-system file lock. The active pointer and its activation or rollback event are coordinated through a recoverable transaction marker, so another process sees either the prior committed state or the completed transition after recovery. Immutable writes use create-once semantics inside the same lock. Candidate creation is capped at 100 records, activation and rollback share a 1,000-event budget, browser summaries retain only the newest 50 candidates and 200 events while reporting total counts, and each workstation process admits only one synchronous validation backtest at a time. Real compare-and-swap and capacity conflicts return HTTP 409.
+All writes for one owner run under both an in-process re-entrant lock and an operating-system file lock. The active pointer and its activation, suspension, resumption, retirement, or rollback event are coordinated through a recoverable transaction marker, so another process sees either the prior committed state or the completed transition after recovery. Immutable writes use create-once semantics inside the same lock. Candidate creation is capped at 100 records, monitoring at 500 records, lifecycle transitions share a 1,000-event budget, browser summaries retain only the newest 50 candidates and 200 events while reporting total counts, and each workstation process admits only one synchronous strategy backtest at a time. Real compare-and-swap and capacity conflicts return HTTP 409.
+
+Monitoring reruns the active candidate and its recorded parent over a bounded recent window on one immutable market snapshot. It compares recent Sharpe and drawdown with both the same-window parent and the candidate's activation-time holdout evidence. The result is an immutable `MONITORING_OK`, `REVIEW_REQUIRED`, or `INSUFFICIENT_DATA` record. No verdict changes the active lifecycle state. Suspension, resumption, and retirement require a human confirmation bound to the exact active candidate ID and fingerprint; optional monitoring evidence is fingerprint-bound as well. Retirement is terminal for that candidate and atomically restores the prior lab baseline. None of these operations starts or stops an external paper process, changes a broker configuration, or grants live authority.
 
 AI suggestions are deterministic bounded parameter diffs. They cannot generate Python, arbitrary rules, orders, target positions, approval records, exports, or deployment decisions. Approval is necessary but does not alter `config/default.json` or the existing paper ledger. Export rewrites paper-state paths into a candidate-specific profile and forces the broker mode to `disabled`; starting that profile remains a separate operator action. Historical evidence never mutates the live-readiness gates.
 
@@ -161,7 +169,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/live_guard.py`: paper, configuration, adapter capability, reconciliation, kill-switch, mandate, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
 - `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
-- `strategy_lab/`: allowlisted strategy/risk parameters, immutable per-user candidates, same-snapshot validation, human approval, isolated paper export, activation history, and rollback.
+- `strategy_lab/`: allowlisted strategy/risk parameters, immutable per-user candidates and monitoring evidence, same-snapshot validation, human approval, isolated paper export, activation lifecycle, retirement registry, and rollback.
 - `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
 - `web/`: loopback-only authenticated HTTP server, non-mutating market-chart projection, background job manager, dashboard service, and packaged static application with pinned local KLineChart assets.
 

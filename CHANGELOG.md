@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added post-activation strategy lifecycle governance with immutable rolling
+  decay evidence, activation-reference and parent-baseline comparisons,
+  human-only suspension/resumption/retirement, exact state-bound requests, and
+  no automatic strategy or broker-authority changes.
 - Added strict versioned live mandates with explicit symbol/side allowlists,
   order and daily ceilings, atomic daily order-count enforcement, and short-lived
   one-time approvals bound to the exact order batch. Consumed approvals remain

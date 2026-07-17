@@ -44,7 +44,13 @@ class DistributionVerificationTests(unittest.TestCase):
         self.assertIn("scripts/configure_ai.ps1", SDIST_REQUIRED)
 
     def test_strategy_lab_package_is_required_in_both_artifacts(self):
-        for module in ("__init__.py", "engine.py", "schema.py", "store.py"):
+        for module in (
+            "__init__.py",
+            "engine.py",
+            "lifecycle.py",
+            "schema.py",
+            "store.py",
+        ):
             with self.subTest(module=module):
                 self.assertIn(f"ai_trade/strategy_lab/{module}", WHEEL_REQUIRED)
                 self.assertIn(f"src/ai_trade/strategy_lab/{module}", SDIST_REQUIRED)

@@ -610,6 +610,47 @@ class DashboardService:
             note=note,
         )
 
+    def strategy_lab_monitor(self, *, owner_id: str, actor: str) -> dict[str, Any]:
+        if not _STRATEGY_VALIDATION_LOCK.acquire(blocking=False):
+            raise StrategyLabConflictError(
+                "已有策略回测任务正在运行；当前服务一次只允许一项策略验证或监控"
+            )
+        try:
+            return self._strategy_lab_engine().monitor_active_candidate(
+                owner_id,
+                self.market(),
+                actor=actor,
+            )
+        finally:
+            _STRATEGY_VALIDATION_LOCK.release()
+
+    def strategy_lab_lifecycle(
+        self,
+        *,
+        action: str,
+        note: str,
+        expected_active_candidate_id: str,
+        expected_active_fingerprint: str,
+        monitor_id: str | None,
+        owner_id: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        engine = self._strategy_lab_engine()
+        common = {
+            "actor": actor,
+            "expected_active_candidate_id": expected_active_candidate_id,
+            "expected_active_fingerprint": expected_active_fingerprint,
+            "note": note,
+            "monitor_id": monitor_id,
+        }
+        if action == "suspend":
+            return engine.suspend_active_candidate(owner_id, **common)
+        if action == "resume":
+            return engine.resume_active_candidate(owner_id, **common)
+        if action == "retire":
+            return engine.retire_active_candidate(owner_id, **common)
+        raise ValueError("Unknown strategy lifecycle action")
+
     def strategy_lab_rollback(
         self,
         *,
