@@ -736,6 +736,80 @@ class BrokerTests(unittest.TestCase):
                     router.submit([_order()], FakeMarket(), on_date, {})
             self.assertEqual(broker.submission_calls, 0)
 
+    def test_router_rechecks_account_resources_and_session_before_submission(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            on_date = datetime.now(timezone(timedelta(hours=8))).date()
+            cases = []
+
+            changed_account = SubmittingBroker()
+            changed_account.account = MagicMock(
+                side_effect=(
+                    changed_account._account,
+                    BrokerAccount("other-account", "CNY", 100_000, 100_000, 100_000),
+                )
+            )
+            cases.append(
+                ("account", changed_account, _order(), "account does not match")
+            )
+
+            reduced_cash = SubmittingBroker()
+            reduced_cash.account = MagicMock(
+                side_effect=(
+                    reduced_cash._account,
+                    BrokerAccount("account", "CNY", 0, 0, 100_000),
+                )
+            )
+            cases.append(("cash", reduced_cash, _order(), "available cash"))
+
+            reduced_position = SubmittingBroker(available_quantity=100)
+            reduced_position.positions = MagicMock(
+                side_effect=(
+                    reduced_position._positions,
+                    [BrokerPosition("510300", 100, 0, 10.0, 1_000.0)],
+                )
+            )
+            cases.append(
+                (
+                    "position",
+                    reduced_position,
+                    _order(side=OrderSide.SELL),
+                    "available broker position",
+                )
+            )
+
+            closed_session = SubmittingBroker()
+            closed_session.health = MagicMock(
+                side_effect=(
+                    BrokerHealth(True, True, "ready", datetime.now(timezone.utc)),
+                    BrokerHealth(False, False, "closed", datetime.now(timezone.utc)),
+                )
+            )
+            cases.append(("session", closed_session, _order(), "not ready"))
+
+            for label, broker, order, message in cases:
+                with self.subTest(label=label):
+                    router = _live_router(root / label, broker)
+                    with (
+                        patch(
+                            "ai_trade.broker.live.assert_live_submission_allowed",
+                            return_value=_readiness(),
+                        ),
+                        patch(
+                            "ai_trade.broker.live.consume_batch_approval",
+                            return_value={"approval_id": "approval_" + "f" * 32},
+                        ),
+                        self.assertRaisesRegex((RuntimeError, ValueError), message),
+                    ):
+                        router.submit([order], FakeMarket(), on_date, {})
+                    self.assertEqual(broker.submission_calls, 0)
+                    with router.config.broker_orders_file.open(
+                        "r", encoding="utf-8", newline=""
+                    ) as handle:
+                        rows = list(csv.DictReader(handle))
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0]["status"], OrderStatus.PENDING_SUBMIT.value)
+
     def test_router_rejects_truthy_non_boolean_broker_health(self):
         with tempfile.TemporaryDirectory() as temporary:
             broker = SubmittingBroker()

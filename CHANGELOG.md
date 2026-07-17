@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Live routing now refreshes the configured account identity, available cash,
+  sellable positions, and trading-session health after approval/ledger I/O. The
+  authorization and kill switch are then checked last before broker submission.
 - Live authorization, one-time batch approval, and broker ledger-scope JSON
   files now use a bounded strict UTF-8 parser. Oversized files, invalid encoding,
   and duplicate object keys fail closed instead of creating ambiguous controls.

@@ -14,10 +14,12 @@ from ..config import (
 from ..data.market import MarketData
 from .base import (
     Broker,
+    BrokerAccount,
     BrokerEnvironment,
     BrokerOperation,
     BrokerOrderRequest,
     BrokerOrderSnapshot,
+    BrokerPosition,
     OrderSide,
 )
 from .ledger import (
@@ -92,18 +94,11 @@ class LiveOrderRouter:
             )
         )
         active_symbols = set(market.active_symbols(on_date))
-        available_positions: dict[str, int] = {}
         positions = validated_broker_positions(self.broker.positions())
-        for value in positions:
-            available_positions[value.symbol] = (
-                available_positions.get(value.symbol, 0) + value.available_quantity
-            )
         if account is None:
             account = validated_broker_account(self.broker.account())
         seen: set[str] = set()
-        sell_quantities: dict[str, int] = {}
         total_notional = 0.0
-        buy_cash_required = 0.0
         rows = []
         for order in orders:
             if not order.client_order_id or order.client_order_id in seen:
@@ -143,15 +138,6 @@ class LiveOrderRouter:
                     f"Limit price for {order.symbol} must use tick size "
                     f"{instrument.tick_size:g}"
                 )
-            if order.side == OrderSide.SELL:
-                available = available_positions.get(order.symbol, 0)
-                cumulative = sell_quantities.get(order.symbol, 0) + order.quantity
-                if cumulative > available:
-                    raise ValueError(
-                        f"Cumulative sell quantity for {order.symbol} exceeds "
-                        "available broker position"
-                    )
-                sell_quantities[order.symbol] = cumulative
             status = market.trading_status(order.symbol, on_date)
             if not status.tradable:
                 raise ValueError(f"{order.symbol} is not tradable: {status.status}")
@@ -175,10 +161,6 @@ class LiveOrderRouter:
             if max_order <= 0 or notional > max_order:
                 raise ValueError(f"Order notional for {order.symbol} exceeds configured limit")
             total_notional += notional
-            if order.side == OrderSide.BUY:
-                buy_cash_required += _estimated_buy_cash(
-                    self.config, instrument, on_date, notional
-                )
             rows.append(
                 {
                     "client_order_id": order.client_order_id,
@@ -189,8 +171,19 @@ class LiveOrderRouter:
                     "notional": notional,
                 }
             )
-        if buy_cash_required > account.available_cash:
-            raise ValueError("Buy orders exceed broker available cash")
+        buy_cash_required, sell_quantities = _resource_requirements(
+            self.config,
+            market,
+            on_date,
+            orders,
+            account,
+        )
+        _assert_available_resources(
+            account,
+            positions,
+            buy_cash_required=buy_cash_required,
+            sell_quantities=sell_quantities,
+        )
         submitted_today = submitted_order_notional(
             self.config.broker_orders_file,
             on_date,
@@ -268,10 +261,7 @@ class LiveOrderRouter:
             submitted_orders=submitted_count,
             submitted_notional=float(validation["submitted_today"]),
         )
-        health = validated_broker_health(self.broker.health())
-        if not health.connected or not health.trading_session:
-            raise RuntimeError(f"Broker is not ready for submission: {health.message}")
-        _assert_current_trading_session(on_date, health.checked_at)
+        self._assert_submission_session(on_date)
         batch_fingerprint = order_batch_fingerprint(
             orders,
             on_date=on_date,
@@ -303,9 +293,11 @@ class LiveOrderRouter:
             scope_path=scope_path,
             scope=ledger_scope,
         )
-        # Re-evaluate the authorization and kill switch after all broker and disk I/O.
-        # A failed final gate intentionally leaves reserved IDs behind, preventing a
-        # blind retry when submission status is uncertain.
+        # Refresh mutable broker resources after approval and ledger I/O, then make
+        # the local authorization/kill-switch check the final operation before submit.
+        # Any failure leaves the reservation behind and prevents a blind retry.
+        self._assert_current_resources(orders, market, on_date)
+        self._assert_submission_session(on_date)
         assert_live_submission_allowed(self.config, paper_audit, market)
         submitted = validated_broker_orders(self.broker.submit_orders(orders))
         _validate_submission_response(orders, submitted)
@@ -331,6 +323,34 @@ class LiveOrderRouter:
         if not configured_account or actual_account != configured_account:
             raise RuntimeError("Live broker account does not match the authorized configuration")
         return account
+
+    def _assert_current_resources(
+        self,
+        orders: list[BrokerOrderRequest],
+        market: MarketData,
+        on_date: date,
+    ) -> None:
+        account = self._assert_broker_identity()
+        positions = validated_broker_positions(self.broker.positions())
+        buy_cash_required, sell_quantities = _resource_requirements(
+            self.config,
+            market,
+            on_date,
+            orders,
+            account,
+        )
+        _assert_available_resources(
+            account,
+            positions,
+            buy_cash_required=buy_cash_required,
+            sell_quantities=sell_quantities,
+        )
+
+    def _assert_submission_session(self, on_date: date) -> None:
+        health = validated_broker_health(self.broker.health())
+        if not health.connected or not health.trading_session:
+            raise RuntimeError(f"Broker is not ready for submission: {health.message}")
+        _assert_current_trading_session(on_date, health.checked_at)
 
     def _scope_path(self, scope: BrokerLedgerScope | None) -> Path | None:
         if scope is None:
@@ -413,3 +433,54 @@ def _estimated_buy_cash(
     )
     transfer_fee = notional * schedule.transfer_fee_bps / 10_000.0
     return notional + commission + transfer_fee
+
+
+def _resource_requirements(
+    config: AppConfig,
+    market: MarketData,
+    on_date: date,
+    orders: list[BrokerOrderRequest],
+    account: BrokerAccount,
+) -> tuple[float, dict[str, int]]:
+    buy_cash_required = 0.0
+    sell_quantities: dict[str, int] = {}
+    for order in orders:
+        instrument = market.instrument(order.symbol)
+        if account.currency != instrument.currency:
+            raise ValueError(
+                f"Order currency for {order.symbol} does not match the broker account"
+            )
+        notional = order.quantity * order.limit_price
+        if order.side == OrderSide.BUY:
+            buy_cash_required += _estimated_buy_cash(
+                config,
+                instrument,
+                on_date,
+                notional,
+            )
+        else:
+            sell_quantities[order.symbol] = (
+                sell_quantities.get(order.symbol, 0) + order.quantity
+            )
+    return buy_cash_required, sell_quantities
+
+
+def _assert_available_resources(
+    account: BrokerAccount,
+    positions: list[BrokerPosition],
+    *,
+    buy_cash_required: float,
+    sell_quantities: dict[str, int],
+) -> None:
+    if buy_cash_required > account.available_cash:
+        raise ValueError("Buy orders exceed broker available cash")
+    available_positions: dict[str, int] = {}
+    for value in positions:
+        available_positions[value.symbol] = (
+            available_positions.get(value.symbol, 0) + value.available_quantity
+        )
+    for symbol, quantity in sell_quantities.items():
+        if quantity > available_positions.get(symbol, 0):
+            raise ValueError(
+                f"Cumulative sell quantity for {symbol} exceeds available broker position"
+            )

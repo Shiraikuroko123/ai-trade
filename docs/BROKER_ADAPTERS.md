@@ -360,6 +360,13 @@ batch-approval paths. Exact identity/path matching remains server-side.
 - previously reserved plus new daily notional and order count;
 - exact live broker environment and a healthy trading session.
 
+Mutable broker state is checked twice. After approval consumption and durable
+intent reservation, the router refreshes account identity, cash, sellable
+positions, and session health; authorization and the kill switch are then the
+last local gate before `submit_orders`. A failed refresh leaves the content-bound
+`PENDING_SUBMIT` reservation for manual resolution and blocks reuse of its client
+order ID.
+
 Account, position, and health annotations are not trusted as runtime
 validation. The router requires exact core model objects, real booleans for
 connection/session flags, finite non-boolean balances and valuations, bounded
