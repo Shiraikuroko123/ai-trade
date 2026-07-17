@@ -82,6 +82,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+summary:focus-visible,
 [tabindex]:focus-visible {
   outline: 3px solid color-mix(in oklch, var(--focus) 42%, transparent);
   outline-offset: 2px;
@@ -308,6 +309,11 @@ p {
 .quiet-meta {
   color: var(--ink-soft);
   font-size: 0.8rem;
+}
+
+.view-read-at {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .account-label {
@@ -739,7 +745,7 @@ p {
 }
 
 .table-wrap {
-  border-radius: 2px;
+  border-radius: 6px;
   max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-inline: contain;

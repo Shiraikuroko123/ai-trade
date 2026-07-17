@@ -202,6 +202,7 @@ The market route uses locally vendored KLineChart assets and keeps price, volume
 ### Do:
 
 - **Do** show data dates, model configuration, account stage, and live permissions near decision surfaces.
+- **Do** separate the completed market date from the time the current page payload was generated.
 - **Do** keep chart controls usable at 320px and destroy chart instances when leaving the market route.
 - **Do** keep repeated workflows compact, keyboard-accessible, and readable at 200% zoom.
 - **Do** explain errors as what happened, why it matters, and the next valid action.

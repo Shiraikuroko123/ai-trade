@@ -4,6 +4,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- The workstation now separates the common completed market date from the
+  server-generated page-read time, treats a missing signal as an explicit cash
+  state instead of a date mismatch, and locks background-job controls while a
+  submission is in flight. Repeated log controls have specific accessible
+  names and disclosure widgets keep visible keyboard focus.
 - Portfolio responses now retain validated paper-ledger quantities, cash, and
   recorded equity when the market cache is unavailable. Price, market-value,
   weight, and target-difference fields stay explicitly unavailable until a

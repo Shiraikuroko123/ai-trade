@@ -158,6 +158,7 @@ const state = {
   charts: new Map(),
   jobs: [],
   jobStates: new Map(),
+  pendingActions: new Set(),
   cloudBackupWarning: null,
   tradingTab: "paper",
   shadowImportBusy: false,
@@ -182,6 +183,7 @@ const main = document.getElementById("main-content");
 const routeTitle = document.getElementById("route-title");
 const routeContext = document.getElementById("route-context");
 const marketDate = document.getElementById("market-date");
+const viewReadAt = document.getElementById("view-read-at");
 const versionLabel = document.getElementById("version-label");
 const connectionDot = document.getElementById("connection-dot");
 const connectionLabel = document.getElementById("connection-label");
@@ -261,6 +263,24 @@ function formatDate(value, includeTime = false) {
     day: "2-digit",
     ...(includeTime ? { hour: "2-digit", minute: "2-digit" } : {}),
   }).format(date);
+}
+
+function updateViewReadAt(payload = null, failure = "") {
+  if (!viewReadAt) return;
+  if (failure) {
+    viewReadAt.textContent = "页面读取失败";
+    viewReadAt.removeAttribute("title");
+    return;
+  }
+  const generatedAt = payload?.generated_at;
+  if (!generatedAt) {
+    viewReadAt.textContent = "页面读取待确认";
+    viewReadAt.removeAttribute("title");
+    return;
+  }
+  const formatted = formatDate(generatedAt, true);
+  viewReadAt.textContent = `页面读取 ${formatted}`;
+  viewReadAt.title = `服务生成时间：${formatted}`;
 }
 
 function tone(value, inverse = false) {
@@ -439,6 +459,10 @@ function setMarketPulseBusy() {
   if (!marketPulse) return;
   marketPulse.classList.add("is-updating");
   marketPulse.setAttribute("aria-busy", "true");
+  if (viewReadAt) {
+    viewReadAt.textContent = "页面读取中";
+    viewReadAt.removeAttribute("title");
+  }
 }
 
 function pageIntro(title, description, actions = "") {
@@ -473,7 +497,9 @@ function instrumentName(symbol, fallback) {
 
 function actionButton(action, style = "secondary") {
   if (!state.actions.includes(action)) return "";
-  return `<button class="button ${style}" type="button" data-job-action="${escapeHtml(action)}">${escapeHtml(JOB_LABELS[action] || action)}</button>`;
+  const pending = state.pendingActions.has(action);
+  const label = JOB_LABELS[action] || action;
+  return `<button class="button ${style}" type="button" data-job-action="${escapeHtml(action)}"${pending ? ' disabled aria-busy="true"' : ""}>${escapeHtml(pending ? `${label}进行中` : label)}</button>`;
 }
 
 function skeletonPage() {
@@ -510,6 +536,7 @@ function friendlyError(message) {
 
 function renderError(error) {
   const message = friendlyError(error?.message || error);
+  updateViewReadAt(null, message);
   updateMarketPulse(state.data.get(state.route) || null, message);
   main.innerHTML = `
     <section class="error-state" role="alert">
@@ -527,6 +554,7 @@ function renderFileProtocolNotice() {
   setRouteChrome(state.route);
   setConnection(false);
   marketDate.textContent = "未连接工作台服务";
+  updateViewReadAt(null, "file-protocol");
   jobIndicator.textContent = "服务未启动";
   jobIndicator.className = "status-chip danger";
   updateMarketPulse(null, "服务未启动");
@@ -719,6 +747,7 @@ function renderRoute(payload) {
   main.innerHTML = renderers[state.route](payload);
   enhanceRenderedUi();
   updateRouteDate(payload);
+  updateViewReadAt(payload);
   updateMarketPulse(payload);
   updateJobButtons();
   requestAnimationFrame(() => {
@@ -1421,7 +1450,7 @@ function renderOverview(data) {
       ${contextBand([
         {
           label: "行情快照",
-          value: data.market?.date || "不可用",
+          value: marketDecisionDate || "不可用",
           status: marketStatus,
           kind: marketStatusKind,
           note: `${freshnessNote} · ${marketProviderLabel(data.market?.provider)} · ${data.market?.universe?.active_count ?? 0} 支有效`,
@@ -1429,9 +1458,11 @@ function renderOverview(data) {
         {
           label: "策略信号",
           value: data.signal?.date || "不可用",
-          status: signalMatchesMarket ? "与行情同日" : "日期不一致",
-          kind: signalMatchesMarket ? "success" : "danger",
-          note: `${targets.length} 个目标 · 风险仓位 ${formatPercent(grossExposure)}`,
+          status: !data.signal?.date ? "尚无信号" : signalMatchesMarket ? "与行情同日" : "日期不一致",
+          kind: !data.signal?.date ? "neutral" : signalMatchesMarket ? "success" : "danger",
+          note: !data.signal?.date
+            ? "当前保持现金，等待完整行情快照"
+            : `${targets.length} 个目标 · 风险仓位 ${formatPercent(grossExposure)}`,
         },
         {
           label: "历史研究",
@@ -1452,7 +1483,7 @@ function renderOverview(data) {
       ${overviewQualityNotice(operationalWarnings, reportWarnings.length)}
 
       <section class="metric-strip metric-strip-priority" aria-label="当前模拟账户指标">
-        ${metric("模拟权益", formatMoney(data.paper?.equity), `账本截至 ${audit.period?.[1] || data.market?.date || "—"}`)}
+        ${metric("模拟权益", formatMoney(data.paper?.equity), `账本截至 ${audit.period?.[1] || marketDecisionDate || "—"}`)}
         ${metric("前向累计收益", formatPercent(paperMetrics.total_return), `${audit.sessions ?? 0} 个独立交易日`, tone(paperMetrics.total_return))}
         ${metric("前向最大回撤", formatPercent(paperMetrics.max_drawdown), "相对模拟账户高水位", tone(paperMetrics.max_drawdown))}
         ${metric("证据进度", `${audit.sessions ?? 0} / ${audit.minimum_promotion_sessions ?? 60}`, `距沙箱复核尚需 ${audit.remaining_sessions ?? audit.minimum_promotion_sessions ?? 60} 日`, audit.eligible_for_broker_sandbox ? "tone-positive" : "tone-warning")}
@@ -1495,7 +1526,7 @@ function renderOverview(data) {
           ${metric("历史年化收益", formatPercent(backtest.cagr), `报告截止 ${researchEnd}`, tone(backtest.cagr))}
           ${metric("历史最大回撤", formatPercent(backtest.max_drawdown), "回测观测值", tone(backtest.max_drawdown))}
           ${metric("样本外 Sharpe", formatNumber(walk.oos_sharpe), `${walk.positive_segments ?? 0} / ${walk.segments ?? 0} 段收益为正`, tone(walk.oos_sharpe))}
-          ${metric("研究报告", reportWarnings.length ? `${reportWarnings.length} 份待更新` : "全部当前", `行情快照 ${data.market?.date || "—"}`, reportWarnings.length ? "tone-warning" : "tone-positive")}
+          ${metric("研究报告", reportWarnings.length ? `${reportWarnings.length} 份待更新` : "全部当前", `行情快照 ${marketDecisionDate || "—"}`, reportWarnings.length ? "tone-warning" : "tone-positive")}
         </section>
         ${chartMarkup(
           "overview-equity",
@@ -2131,7 +2162,7 @@ function assistantHistoryMarkup(history, activeId) {
             <td class="mono">${escapeHtml(item.data_date || "—")}</td>
             <td>${escapeHtml(item.mode === "model" ? (item.validation?.model_enhanced ? "模型增强" : "模型回退") : "本地规则")}</td>
             <td>${statusChip(assistantConclusionLabel(item.assessment?.conclusion || item.conclusion), assistantConclusionKind(item.assessment?.conclusion || item.conclusion))}</td>
-            <td><button class="button secondary history-button" type="button" data-assistant-history="${escapeHtml(item.analysis_id)}">查看</button></td>
+            <td><button class="button secondary history-button" type="button" data-assistant-history="${escapeHtml(item.analysis_id)}" aria-label="查看${escapeHtml(item.symbol || "该标的")}的分析记录">查看</button></td>
           </tr>`).join("") : emptyRow(6, "尚无分析记录")}</tbody>
         </table>
       </div>
@@ -3255,16 +3286,18 @@ function renderRisk(data) {
   const liveChecks = overview.live?.checks || {};
   const livePassed = Object.values(liveChecks).filter(Boolean).length;
   const liveTotal = Object.keys(liveChecks).length;
+  const marketDecisionDate = overview.market?.freshness?.latest_common_market_date
+    || overview.market?.date;
   return `
     <div class="page-stack">
       ${pageIntro("风险控制", "将已观察风险、前向门禁和真实交易权限分层审阅")}
       ${contextBand([
         {
           label: "行情快照",
-          value: overview.market?.date || "不可用",
+          value: marketDecisionDate || "不可用",
           status: overview.market?.available === false ? "不可用" : "已加载",
           kind: overview.market?.available === false ? "danger" : "success",
-          note: `${overview.market?.universe?.active_count ?? 0} 支当日有效证券`,
+          note: `${overview.market?.universe?.active_count ?? 0} 支当日有效证券 · 完成截止 ${overview.market?.freshness?.completed_session_cutoff || "—"}`,
         },
         {
           label: "前向证据",
@@ -3583,7 +3616,7 @@ function jobsTable(jobs) {
       <td><div class="action-row">${jobStatusChip(job.status)}${cloudBackupStatusChip(job)}</div></td>
       <td>${formatDate(job.started_at || job.created_at, true)}</td>
       <td class="mono">${jobDuration(job)}</td>
-      <td><div class="action-row"><button class="button secondary" type="button" data-job-view="${escapeHtml(job.id)}">查看</button>${["queued", "running"].includes(job.status) ? `<button class="button danger" type="button" data-job-cancel="${escapeHtml(job.id)}">取消</button>` : ""}</div></td>
+      <td><div class="action-row"><button class="button secondary" type="button" data-job-view="${escapeHtml(job.id)}" aria-label="查看${escapeHtml(JOB_LABELS[job.action] || job.action)}任务日志">查看</button>${["queued", "running"].includes(job.status) ? `<button class="button danger" type="button" data-job-cancel="${escapeHtml(job.id)}" aria-label="取消${escapeHtml(JOB_LABELS[job.action] || job.action)}任务">取消</button>` : ""}</div></td>
     </tr>`).join("") : emptyRow(5, "本次启动后尚无后台任务")}</tbody>
   </table></div>`;
 }
@@ -3895,6 +3928,9 @@ async function importShadowAccount(form) {
 }
 
 async function startJob(action) {
+  if (state.pendingActions.has(action)) return;
+  state.pendingActions.add(action);
+  updateJobButtons();
   try {
     const job = await api("/api/jobs", {
       method: "POST",
@@ -3906,6 +3942,9 @@ async function startJob(action) {
     updateJobsUi();
   } catch (error) {
     notify(friendlyError(error.message), true);
+  } finally {
+    state.pendingActions.delete(action);
+    updateJobButtons();
   }
 }
 
@@ -3926,17 +3965,21 @@ async function cancelJob(jobId) {
 async function showJob(jobId) {
   const detail = document.getElementById("job-detail");
   if (!detail) return;
-  detail.innerHTML = `<div class="skeleton-line"></div>`;
+  detail.setAttribute("aria-busy", "true");
+  detail.setAttribute("role", "status");
+  detail.innerHTML = `<div class="skeleton-line" aria-label="正在读取任务日志"></div>`;
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
     detail.innerHTML = `
-      <section class="panel">
+      <section class="panel" aria-live="polite">
         ${panelHeader(`${JOB_LABELS[job.action] || job.action} · ${STATUS_LABELS[job.status] || job.status}`, job.return_code === null ? "进程尚未结束" : `退出码 ${job.return_code}`, cloudBackupStatusChip(job))}
         ${cloudBackupWarningMarkup(job)}
         <pre class="job-output">${escapeHtml(job.output || "任务尚无输出")}</pre>
       </section>`;
   } catch (error) {
     detail.innerHTML = `<div class="callout danger"><strong>无法读取任务日志</strong><p>${escapeHtml(friendlyError(error.message))}</p></div>`;
+  } finally {
+    detail.setAttribute("aria-busy", "false");
   }
 }
 
@@ -3994,9 +4037,14 @@ function mergeJob(job) {
 
 function updateJobsUi() {
   const active = state.jobs.filter((job) => ["queued", "running"].includes(job.status));
-  jobIndicator.textContent = active.length ? `${active.length} 个任务运行中` : "无运行任务";
-  jobIndicator.className = `status-chip ${active.length ? "warning" : "neutral"}`;
-  jobIndicator.setAttribute("aria-busy", String(Boolean(active.length)));
+  const activeActions = new Set(active.map((job) => job.action));
+  const pending = [...state.pendingActions].filter((action) => !activeActions.has(action)).length;
+  const activeCount = active.length + pending;
+  jobIndicator.textContent = activeCount
+    ? pending && !active.length ? `${pending} 个任务提交中` : `${activeCount} 个任务运行中`
+    : "无运行任务";
+  jobIndicator.className = `status-chip ${activeCount ? "warning" : "neutral"}`;
+  jobIndicator.setAttribute("aria-busy", String(Boolean(activeCount)));
   const region = document.getElementById("jobs-table-region");
   if (region) {
     region.innerHTML = jobsTable(state.jobs);
@@ -4011,7 +4059,7 @@ function updateJobButtons() {
     state.jobs.filter((job) => ["queued", "running"].includes(job.status)).map((job) => job.action)
   );
   for (const button of document.querySelectorAll("[data-job-action]")) {
-    const busy = runningActions.has(button.dataset.jobAction);
+    const busy = runningActions.has(button.dataset.jobAction) || state.pendingActions.has(button.dataset.jobAction);
     button.disabled = busy;
     button.setAttribute("aria-busy", String(busy));
     button.textContent = busy
