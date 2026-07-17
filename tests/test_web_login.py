@@ -127,6 +127,30 @@ class WebLoginTests(unittest.TestCase):
                 self.assertEqual(status, 429)
                 self.assertGreater(int(headers["retry-after"]), 0)
 
+    def test_login_rejects_duplicate_json_keys_without_consuming_an_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _auth_config(Path(temporary), max_failed_attempts=3)
+            _create_user(config)
+            with _running_server(config) as port:
+                body = (
+                    b'{"username":"friend","username":"other",'
+                    b'"password":"123456789"}'
+                )
+                status, _, _ = _request(
+                    port,
+                    "POST",
+                    "/api/auth/login",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Origin": _origin(port),
+                    },
+                )
+                self.assertEqual(status, 400)
+
+                cookie, _ = _login(port)
+                self.assertTrue(cookie.startswith("ai_trade_session="))
+
     def test_authenticated_session_csrf_jobs_and_logout(self):
         with tempfile.TemporaryDirectory() as temporary:
             config = _auth_config(Path(temporary))

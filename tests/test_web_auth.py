@@ -156,6 +156,23 @@ class WebAuthTests(unittest.TestCase):
                 users.list_users()
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), duplicated)
 
+            ambiguous = json.dumps(valid).replace(
+                '"enabled": true',
+                '"enabled": true, "enabled": false',
+                1,
+            )
+            path.write_text(ambiguous, encoding="utf-8")
+            with self.assertRaises(CorruptUserStoreError):
+                users.list_users()
+            self.assertEqual(path.read_text(encoding="utf-8"), ambiguous)
+
+            unknown = json.loads(json.dumps(valid))
+            unknown["users"][0]["plaintext_password"] = PASSWORD
+            path.write_text(json.dumps(unknown), encoding="utf-8")
+            with self.assertRaises(CorruptUserStoreError):
+                users.list_users()
+            self.assertIn("plaintext_password", path.read_text(encoding="utf-8"))
+
     def test_corrupt_user_file_is_rejected_without_overwrite(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "users.json"
@@ -394,6 +411,16 @@ class WebAuthTests(unittest.TestCase):
             duplicated = json.loads(json.dumps(valid))
             duplicated["users"].append(duplicated["users"][0])
             portable.write_text(json.dumps(duplicated), encoding="utf-8")
+            with self.assertRaises(CorruptUserStoreError):
+                target.import_users(portable, mode="replace")
+            self.assertEqual((root / "target.json").read_bytes(), original_target)
+
+            ambiguous = json.dumps(valid).replace(
+                f'"version": {USER_EXPORT_VERSION}',
+                f'"version": {USER_EXPORT_VERSION}, "version": 1',
+                1,
+            )
+            portable.write_text(ambiguous, encoding="utf-8")
             with self.assertRaises(CorruptUserStoreError):
                 target.import_users(portable, mode="replace")
             self.assertEqual((root / "target.json").read_bytes(), original_target)

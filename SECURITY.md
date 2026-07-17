@@ -24,6 +24,8 @@ Authorization, batch-approval, and broker ledger-scope controls are bounded UTF-
 
 The main configuration and point-in-time security master also use bounded UTF-8 parsing and reject duplicate object keys at every nesting level. This prevents different JSON consumers from disagreeing about broker mode, limits, control paths, strategy/risk settings, provider routing, or universe membership.
 
+Active beta-user stores, portable user exports, and browser JSON writes use the same bounded, duplicate-key-rejecting parsing rules. Versioned user and password records require exact field sets, so unknown credential fields, ambiguous login names, and accidentally embedded plaintext passwords fail closed before authentication state changes.
+
 Never commit or paste broker passwords, fund passwords, beta password files, exported beta-user bundles, API secrets, session cookies, private keys, or recovery phrases. Portable beta-user bundles contain offline password verifiers: distribute them privately and rotate affected passwords if a bundle leaks. The project never requires a crypto-wallet signature, token purchase, or deposit to unlock features.
 
 ## AI Assistant Boundary

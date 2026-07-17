@@ -13,7 +13,13 @@ def load_unique_json(path: Path, *, max_bytes: int) -> Any:
         content = handle.read(max_bytes + 1)
     if len(content) > max_bytes:
         raise ValueError(f"JSON file exceeds {max_bytes} bytes")
-    return json.loads(content.decode("utf-8"), object_pairs_hook=_unique_object)
+    return loads_unique_json(content.decode("utf-8"))
+
+
+def loads_unique_json(content: str) -> Any:
+    if not isinstance(content, str):
+        raise TypeError("JSON content must be a string")
+    return json.loads(content, object_pairs_hook=_unique_object)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Active beta-user stores, portable user exports, and browser JSON writes now
+  reject duplicate object keys. Versioned user/password records require exact
+  fields, so unknown or accidentally embedded plaintext fields fail closed.
 - Main configuration and point-in-time security-master JSON now reject duplicate
   keys and use explicit 5 MiB/32 MiB bounds, preventing ambiguous broker, risk,
   universe, or data-source settings without limiting a professional universe.

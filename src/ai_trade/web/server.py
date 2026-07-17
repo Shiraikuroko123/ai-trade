@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
+from ..json_utils import loads_unique_json
 from ..strategy_lab import StrategyLabConflictError
 from .auth import (
     AuthManager,
@@ -724,8 +725,8 @@ def _handler_factory(
                     f"JSON request body must be between 1 and {maximum_bytes} bytes"
                 )
             try:
-                value = json.loads(self.rfile.read(length).decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                value = loads_unique_json(self.rfile.read(length).decode("utf-8"))
+            except (UnicodeError, ValueError) as exc:
                 raise ValueError("Request body is not valid UTF-8 JSON") from exc
             if not isinstance(value, dict):
                 raise ValueError("JSON request body must be an object")

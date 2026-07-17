@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from ..json_utils import load_unique_json
+
 
 LEGACY_USER_FILE_SCHEMA_VERSION = 1
 USER_FILE_SCHEMA_VERSION = 2
@@ -376,16 +378,15 @@ class UserStore:
         if not self.path.exists():
             return {}
         try:
-            if self.path.stat().st_size > MAX_USER_FILE_BYTES:
-                raise CorruptUserStoreError(
-                    "User file exceeds the maximum supported size"
-                )
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            payload = load_unique_json(
+                self.path,
+                max_bytes=MAX_USER_FILE_BYTES,
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
             raise CorruptUserStoreError(
                 "User file is unreadable or invalid JSON"
             ) from exc
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or set(payload) != {"schema_version", "users"}:
             raise CorruptUserStoreError("Unsupported user file schema")
         schema_version = payload.get("schema_version")
         if (
@@ -401,6 +402,10 @@ class UserStore:
         users: dict[str, _StoredUser] = {}
         account_ids: set[str] = set()
         for raw_user in raw_users:
+            _validate_stored_user_shape(
+                raw_user,
+                legacy=schema_version == LEGACY_USER_FILE_SCHEMA_VERSION,
+            )
             user = _parse_stored_user(
                 raw_user,
                 legacy=schema_version == LEGACY_USER_FILE_SCHEMA_VERSION,
@@ -826,12 +831,8 @@ def _parse_stored_user(value: object, *, legacy: bool = False) -> _StoredUser:
 
 def _load_user_export(path: Path) -> dict[str, _StoredUser]:
     try:
-        if path.stat().st_size > MAX_USER_FILE_BYTES:
-            raise CorruptUserStoreError(
-                "User export exceeds the maximum supported size"
-            )
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        payload = load_unique_json(path, max_bytes=MAX_USER_FILE_BYTES)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise CorruptUserStoreError(
             "User export is unreadable or invalid JSON"
         ) from exc
@@ -850,34 +851,12 @@ def _load_user_export(path: Path) -> dict[str, _StoredUser]:
     if not isinstance(raw_users, list):
         raise CorruptUserStoreError("User export users field must be a list")
     users: dict[str, _StoredUser] = {}
-    expected_user_fields = {
-        "username",
-        "enabled",
-        "created_at",
-        "updated_at",
-        "password",
-    }
-    if version == USER_EXPORT_VERSION:
-        expected_user_fields.add("account_id")
-    expected_password_fields = {
-        "version",
-        "algorithm",
-        "iterations",
-        "salt",
-        "digest",
-    }
     account_ids: set[str] = set()
     for raw_user in raw_users:
-        if not isinstance(raw_user, dict) or set(raw_user) != expected_user_fields:
-            raise CorruptUserStoreError("User export contains an invalid user record")
-        raw_password = raw_user.get("password")
-        if (
-            not isinstance(raw_password, dict)
-            or set(raw_password) != expected_password_fields
-        ):
-            raise CorruptUserStoreError(
-                "User export contains an invalid password record"
-            )
+        _validate_stored_user_shape(
+            raw_user,
+            legacy=version == LEGACY_USER_EXPORT_VERSION,
+        )
         user = _parse_stored_user(
             raw_user,
             legacy=version == LEGACY_USER_EXPORT_VERSION,
@@ -889,6 +868,29 @@ def _load_user_export(path: Path) -> dict[str, _StoredUser]:
         users[user.username] = user
         account_ids.add(user.account_id)
     return users
+
+
+def _validate_stored_user_shape(value: object, *, legacy: bool) -> None:
+    fields = {
+        "username",
+        "enabled",
+        "created_at",
+        "updated_at",
+        "password",
+    }
+    if not legacy:
+        fields.add("account_id")
+    if not isinstance(value, dict) or set(value) != fields:
+        raise CorruptUserStoreError("User record schema is invalid")
+    password = value.get("password")
+    if not isinstance(password, dict) or set(password) != {
+        "version",
+        "algorithm",
+        "iterations",
+        "salt",
+        "digest",
+    }:
+        raise CorruptUserStoreError("Stored password record schema is invalid")
 
 
 def _decode_base64(value: str, length: int, name: str) -> bytes:
