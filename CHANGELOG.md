@@ -4,6 +4,12 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added a restart-safe broker order lifecycle reducer with legal transition and
+  immutable-identity checks, partial-fill aggregation, cancellation-race
+  handling, event-time recovery for late observations, cross-ledger fill
+  verification, canonical v2 event fingerprints with legacy-ledger
+  compatibility, operating-system locks, and a read-only Trading view.
+  Lifecycle health never counts as reconciliation or trading authority.
 - Added a per-user shadow-account CSV review with an exact canonical schema,
   immutable row fingerprints, idempotent file imports, overlap/conflict
   detection, and behavior, price, and trade-allocation comparisons against the

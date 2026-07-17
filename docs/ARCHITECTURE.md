@@ -140,6 +140,8 @@ Future broker integrations stay outside the core runtime and enter through the `
 ```text
 frozen paper epoch -> promotion gate -> broker sandbox adapter
                                           |
+                     order snapshots + fills -> lifecycle recovery
+                                          |
                          account / position / order reconciliation
                                           |
                          consecutive clean reconciliation gate
@@ -163,9 +165,10 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/paper.py`: locked, idempotent, append-only local paper execution.
 - `broker/paper_audit.py`: independent-forward ledger checks and promotion gates.
 - `broker/base.py`: broker environments, account/position/order/fill contracts, and plugin discovery.
+- `broker/lifecycle.py`: legal order transitions, immutable identity checks, partial-fill and cancellation-race reduction, timestamp-ordered recovery, and order/fill consistency reports.
 - `broker/reconciliation.py`: account and position comparison plus append-only sandbox evidence.
 - `broker/shadow.py`: strict canonical CSV normalization, per-user immutable fill/import fingerprints, duplicate/conflict detection, and non-qualifying behavior/price/allocation review.
-- `broker/ledger.py`: idempotent order intents, broker order events, and fills.
+- `broker/ledger.py`: idempotent order intents, broker observations, durable event/fill ledgers, operating-system locks, and restart recovery entry points.
 - `broker/mandate.py`: strict authorization scopes, exact batch fingerprints, and one-time human approval consumption with retained local audit records.
 - `broker/live_guard.py`: paper, configuration, adapter capability, reconciliation, kill-switch, mandate, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
@@ -175,6 +178,8 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `web/`: loopback-only authenticated HTTP server, non-mutating market-chart projection, background job manager, dashboard service, and packaged static application with pinned local KLineChart assets.
 
 No broker adapter ships inside the core wheel. Adapter factories and immutable capability declarations use separate entry-point groups; the core rejects missing metadata, undeclared operations, environment mismatches, and runtime/declaration drift before broker I/O. The source repository includes an optional, independently installed QMT read-only observation plugin. It rejects live construction and all submission/cancellation calls, cannot verify paper versus live from QMT, and its diagnostic comparison writes no qualifying reconciliation evidence. The live route exists so its safety contract can be tested before a live-capable broker implementation is introduced; with the default configuration it cannot submit an order.
+
+The broker lifecycle reducer is downstream of adapter observations and upstream of any formal order reconciliation. It sorts timezone-aware snapshots into event time, preserves valid late arrivals, enforces monotonic fills and terminal states, and cross-checks standard fills against the latest snapshot. New order events carry a canonical `v2_` content fingerprint while legacy event IDs and numerically equivalent legacy rows remain readable without in-place migration. Two-ledger observation writes are ordered and retryable: if a process exits after the order side is durable but before fills are appended, repeating the exact observation repairs the incomplete pair. Lifecycle reports are read-only operational evidence and are not consumed by strategy promotion or live authorization.
 
 Provider fallback, cloud backup, shadow CSV review, and broker routing are separate trust boundaries. A successful data refresh, R2 backup, or shadow comparison does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision. Shadow review has no broker object and cannot call submission or cancellation methods.
 

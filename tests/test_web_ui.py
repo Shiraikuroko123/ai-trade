@@ -96,6 +96,17 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn(".shadow-review-table table", self.css)
         self.assertIn("min-width: 920px", self.css)
 
+    def test_broker_lifecycle_exposes_recovery_and_integrity_without_authority(self):
+        self.assertIn("function brokerLifecycleMarkup", self.javascript)
+        self.assertIn('aria-label="券商订单账本摘要"', self.javascript)
+        self.assertIn('id="broker-order-state-title"', self.javascript)
+        self.assertIn('id="broker-fill-ledger-title"', self.javascript)
+        self.assertIn("撤单期间发生成交", self.javascript)
+        self.assertIn("已按券商时间归并且未回退当前状态", self.javascript)
+        self.assertIn("不会写入沙箱晋级证据、改变策略或解除真实下单门禁", self.javascript)
+        self.assertIn(".broker-order-table", self.css)
+        self.assertIn("min-width: 1120px", self.css)
+
     def test_mobile_navigation_and_dense_surfaces_reflow_without_page_overflow(self):
         mobile_start = self.css.index("@media (max-width: 820px)")
         narrow_start = self.css.index("@media (max-width: 560px)")

@@ -83,9 +83,13 @@ const STATUS_LABELS = {
   failed: "失败",
   cancelled: "已取消",
   FILLED: "已成交",
+  PARTIALLY_FILLED: "部分成交",
+  PENDING_SUBMIT: "待确认提交",
+  CANCEL_PENDING: "撤单处理中",
   REJECTED: "已拒绝",
   CANCELLED: "已取消",
   SUBMITTED: "已提交",
+  EXPIRED: "已过期",
   normal: "正常",
   paper_evidence: "收集模拟证据",
   sandbox_review: "待沙箱复核",
@@ -93,6 +97,27 @@ const STATUS_LABELS = {
   live_authorized: "实盘已授权",
   collecting_independent_forward_evidence: "收集独立前向证据",
   eligible_for_broker_sandbox_review: "可进入券商沙箱复核",
+};
+
+const BROKER_LIFECYCLE_STATUS_LABELS = {
+  EMPTY: "尚无记录",
+  VERIFIED: "账本已核验",
+  RECOVERED: "已恢复，需复核",
+  INTEGRITY_ERROR: "完整性错误",
+};
+
+const BROKER_LIFECYCLE_ISSUE_LABELS = {
+  order_ledger_invalid: "订单事件账本无法校验；修复或归档损坏文件后重新读取。",
+  fill_ledger_invalid: "成交账本无法校验；修复或归档损坏文件后重新读取。",
+  lifecycle_invalid: "订单状态序列不合法；需要核对券商回报顺序和不可变字段。",
+  duplicate_fill_id: "成交号重复，账本不能据此累计成交数量。",
+  conflicting_fill_id: "同一成交号出现不同内容，需要核对券商导出或适配器映射。",
+  orphan_fill: "存在找不到对应订单的成交记录。",
+  fill_identity_mismatch: "成交记录与订单的券商编号、证券或方向不一致。",
+  fill_quantity_mismatch: "成交明细合计与订单最新累计成交量不一致。",
+  average_fill_price_mismatch: "成交明细无法复算订单最新平均成交价。",
+  history_started_mid_lifecycle: "本地记录从订单中途开始，早期事件不可用。",
+  out_of_order_events_recovered: "检测到延迟回报，已按券商时间归并且未回退当前状态。",
 };
 
 const SHADOW_VERDICT_LABELS = {
@@ -2894,13 +2919,7 @@ function tradingLedger(data) {
     </table></div>`;
   }
   if (state.tradingTab === "broker") {
-    const rows = data.broker_orders || [];
-    return `<div class="table-wrap"><table class="data-table">
-      <thead><tr><th>更新时间</th><th>客户端订单</th><th>券商订单</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th>状态</th></tr></thead>
-      <tbody>${rows.length ? rows.map((row) => `<tr>
-        <td>${escapeHtml(row.updated_at)}</td><td class="mono">${escapeHtml(row.client_order_id)}</td><td class="mono">${escapeHtml(row.broker_order_id)}</td><td>${escapeHtml(row.symbol)}</td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td>${statusChip(STATUS_LABELS[row.status] || row.status || "—", row.status === "FILLED" ? "success" : row.status === "REJECTED" ? "danger" : "neutral")}</td>
-      </tr>`).join("") : emptyRow(7, "尚无券商订单；真实交易路径未配置")}</tbody>
-    </table></div>`;
+    return brokerLifecycleMarkup(data);
   }
   const rows = data.paper_trades || [];
   return `<div class="table-wrap"><table class="data-table">
@@ -2909,6 +2928,109 @@ function tradingLedger(data) {
       <td>${escapeHtml(row.date)}</td><td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 3)}</td><td class="numeric">${formatMoney(row.notional)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.stamp_duty) || 0) + (finite(row.transfer_fee) || 0) + (finite(row.slippage_cost) || 0))}</td>
     </tr>`).join("") : emptyRow(7, "尚无模拟成交；目标会在下一完整交易日处理")}</tbody>
   </table></div>`;
+}
+
+function brokerLifecycleMarkup(data) {
+  const lifecycle = data.broker_lifecycle || {};
+  const orders = lifecycle.orders || [];
+  const fills = data.broker_fills || [];
+  const errors = lifecycle.integrity_errors || [];
+  const warnings = lifecycle.recovery_warnings || [];
+  const lifecycleStatus = lifecycle.status || "EMPTY";
+  const statusKind = lifecycleStatus === "VERIFIED"
+    ? "success"
+    : lifecycleStatus === "INTEGRITY_ERROR"
+      ? "danger"
+      : lifecycleStatus === "RECOVERED"
+        ? "warning"
+        : "neutral";
+  const latestUpdate = orders[0]?.updated_at ? formatDate(orders[0].updated_at, true) : "尚无更新时间";
+
+  return `
+    <div class="broker-lifecycle-view">
+      <dl class="broker-lifecycle-band" aria-label="券商订单账本摘要">
+        <div><dt>恢复状态</dt><dd>${statusChip(BROKER_LIFECYCLE_STATUS_LABELS[lifecycleStatus] || lifecycleStatus, statusKind)}<span>依据本地订单与成交账本重建</span></dd></div>
+        <div><dt>订单</dt><dd><strong class="numeric">${formatInteger(lifecycle.open_order_count || 0)} / ${formatInteger(lifecycle.order_count || 0)}</strong><span>未终结 / 全部，最近 ${escapeHtml(latestUpdate)}</span></dd></div>
+        <div><dt>执行中状态</dt><dd><strong class="numeric">${formatInteger(lifecycle.partial_order_count || 0)} / ${formatInteger(lifecycle.cancel_pending_count || 0)}</strong><span>部分成交 / 撤单处理中</span></dd></div>
+        <div><dt>成交明细</dt><dd><strong class="numeric">${formatInteger(lifecycle.fill_count || 0)}</strong><span>按唯一成交号累计</span></dd></div>
+      </dl>
+
+      ${errors.length ? `
+        <aside class="callout danger broker-lifecycle-alert" role="alert">
+          <strong>订单生命周期未通过完整性校验</strong>
+          <p>当前推导状态不能作为现金、持仓或权限依据。先核对本地账本，再继续沙箱复核。</p>
+          <ul>${errors.map((issue) => `<li>${escapeHtml(brokerLifecycleIssueText(issue))}</li>`).join("")}</ul>
+        </aside>` : ""}
+      ${warnings.length ? `
+        <aside class="callout warning broker-lifecycle-alert">
+          <strong>已恢复可用状态，但历史需要人工复核</strong>
+          <ul>${warnings.map((issue) => `<li>${escapeHtml(brokerLifecycleIssueText(issue))}</li>`).join("")}</ul>
+        </aside>` : ""}
+      ${lifecycleStatus === "EMPTY" ? `
+        <aside class="callout info broker-lifecycle-alert">
+          <strong>尚无券商订单生命周期记录</strong>
+          <p>当前 QMT 连接仅执行只读探测且不会写入晋级账本；未来沙箱适配器轮询订单和成交后，这里才会形成可恢复状态。</p>
+        </aside>` : ""}
+
+      <section class="broker-ledger-section" aria-labelledby="broker-order-state-title">
+        <div class="broker-ledger-heading">
+          <div><h3 id="broker-order-state-title">当前订单状态</h3><p>每笔订单只显示按券商时间归并后的最新状态；事件数量和乱序信息保留在恢复说明中。</p></div>
+        </div>
+        <div class="table-wrap"><table class="data-table broker-order-table">
+          <thead><tr><th>更新时间</th><th>客户端 / 券商订单</th><th>证券</th><th>方向</th><th class="numeric">成交 / 委托</th><th class="numeric">剩余</th><th class="numeric">限价 / 均价</th><th>状态</th><th>恢复说明</th></tr></thead>
+          <tbody>${orders.length ? orders.map((row) => `<tr>
+            <td>${escapeHtml(formatDate(row.updated_at, true))}</td>
+            <td class="broker-order-identifiers"><code>${escapeHtml(row.client_order_id)}</code><code>${escapeHtml(row.broker_order_id || "待券商确认")}</code></td>
+            <td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td>
+            <td>${tradeSideMarkup(row.side)}</td>
+            <td class="numeric">${formatInteger(row.filled_quantity)} / ${formatInteger(row.quantity)}</td>
+            <td class="numeric">${formatInteger(row.remaining_quantity)}</td>
+            <td class="numeric">${formatNumber(row.limit_price, 4)} / ${row.average_fill_price === null || row.average_fill_price === undefined ? "—" : formatNumber(row.average_fill_price, 4)}</td>
+            <td>${statusChip(STATUS_LABELS[row.status] || row.status || "—", brokerOrderStatusKind(row.status))}</td>
+            <td class="broker-recovery-note">${brokerRecoveryNote(row)}</td>
+          </tr>`).join("") : emptyRow(9, errors.length ? "账本校验失败，修复前不推导当前订单状态" : "尚无券商订单；真实交易路径未配置")}</tbody>
+        </table></div>
+      </section>
+
+      <section class="broker-ledger-section" aria-labelledby="broker-fill-ledger-title">
+        <div class="broker-ledger-heading">
+          <div><h3 id="broker-fill-ledger-title">成交明细账本</h3><p>最近 ${formatInteger(fills.length)} 条原始标准化记录；数量和均价必须能与上方最新订单快照复算一致。</p></div>
+        </div>
+        <div class="table-wrap"><table class="data-table">
+          <thead><tr><th>成交时间</th><th>成交号</th><th>客户端订单</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th class="numeric">价格</th><th class="numeric">费用</th></tr></thead>
+          <tbody>${fills.length ? fills.map((row) => `<tr>
+            <td>${escapeHtml(formatDate(row.filled_at, true))}</td><td><code>${escapeHtml(row.fill_id)}</code></td><td><code>${escapeHtml(row.client_order_id)}</code></td><td>${escapeHtml(row.symbol)}</td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 4)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.tax) || 0))}</td>
+          </tr>`).join("") : emptyRow(8, "尚无券商成交明细")}</tbody>
+        </table></div>
+      </section>
+
+      <aside class="callout info broker-lifecycle-boundary">
+        <strong>审计边界</strong>
+        <p>生命周期恢复只证明本地订单事件与成交明细能否自洽，不等同于现金和持仓对账，也不会写入沙箱晋级证据、改变策略或解除真实下单门禁。</p>
+      </aside>
+    </div>`;
+}
+
+function brokerLifecycleIssueText(issue) {
+  const label = BROKER_LIFECYCLE_ISSUE_LABELS[issue?.code] || issue?.message || "未分类的账本问题";
+  return issue?.client_order_id ? `订单 ${issue.client_order_id}：${label}` : label;
+}
+
+function brokerOrderStatusKind(status) {
+  if (status === "FILLED") return "success";
+  if (status === "REJECTED") return "danger";
+  if (["PARTIALLY_FILLED", "CANCEL_PENDING", "EXPIRED"].includes(status)) return "warning";
+  if (["PENDING_SUBMIT", "SUBMITTED"].includes(status)) return "info";
+  return "neutral";
+}
+
+function brokerRecoveryNote(row) {
+  const notes = [`${formatInteger(row.event_count || 0)} 个事件`];
+  if (row.out_of_order_events) notes.push(`已归并 ${formatInteger(row.out_of_order_events)} 个延迟事件`);
+  if (row.cancel_race_observed) notes.push("撤单期间发生成交");
+  if (row.history_complete === false) notes.push("早期历史不完整");
+  if (notes.length === 1) notes.push("顺序完整");
+  return notes.map((note) => `<span>${escapeHtml(note)}</span>`).join("");
 }
 
 function shadowAccountMarkup(shadow) {

@@ -150,6 +150,70 @@ opening holdings, account identity, broker environment, or fee completeness.
 Shadow results never append qualifying reconciliation evidence and cannot
 promote a strategy, authorize a broker, or submit/cancel an order.
 
+## Order Lifecycle Recovery
+
+The core persists broker order snapshots in `state/broker_orders.csv` and
+standard fills in `state/broker_fills.csv`. `append_broker_observation` is the
+preferred polling boundary for a future sandbox or live-capable adapter. It
+locks both ledgers in deterministic path order, validates the complete
+prospective lifecycle, and only then appends new order events followed by fills.
+Exact retries are idempotent. If a process stops between those two durable
+writes, the next poll can repeat the same observation and repair the missing
+fill side without duplicating the already written order event.
+
+New order events use a `v2_`-prefixed SHA-256 fingerprint over the canonical
+event payload. The fingerprint is recomputed on every read so an accidental
+field rewrite fails closed. Existing 24-hex-character legacy event IDs remain
+readable and exact retries do not migrate or duplicate those rows. Numeric
+ledger fields compare by parsed integer or floating-point meaning, so an older
+`10` and a canonical `10.0` do not create a false conflict during recovery.
+This local fingerprint is corruption evidence, not a keyed signature or a
+replacement for filesystem permissions, backups, and broker reconciliation.
+
+Snapshots use the following state model:
+
+- `PENDING_SUBMIT` may advance to any broker-observed state because submission
+  can fail or polling can miss an intermediate acknowledgement;
+- `SUBMITTED` may become partially/fully filled, cancel-pending, cancelled,
+  rejected, or expired;
+- `PARTIALLY_FILLED` may accumulate more fills, become cancel-pending, finish,
+  cancel with a remainder, or expire;
+- `CANCEL_PENDING` may return to submitted when cancellation is rejected,
+  receive partial or complete fills while cancellation races the market, or end
+  cancelled/expired;
+- `FILLED`, `CANCELLED`, `REJECTED`, and `EXPIRED` are terminal and cannot change
+  to a different state.
+
+Filled quantity must never decrease. `PARTIALLY_FILLED` requires a quantity
+strictly between zero and the order size; `FILLED` requires the full quantity;
+rejected and unfilled submission states cannot contain fills. An average fill
+price is required exactly when cumulative filled quantity is positive. Client
+order identity, symbol, side, original quantity, limit price, and the first
+non-empty broker order ID are immutable. Reusing one broker order ID for two
+client orders fails closed.
+
+Persisted events are reduced by timezone-aware broker timestamp rather than CSV
+append position. A late event can therefore be inserted into its historical
+position without regressing the current state. A later stale regression, a
+filled-quantity decrease, or an illegal terminal transition is rejected.
+Physical duplicate/conflicting rows, malformed schemas, non-canonical values,
+or reused fill IDs also fail validation.
+
+`recover_order_lifecycle` reconstructs current states from disk after every
+process start. It cross-checks each fill's client/broker IDs, symbol, side,
+aggregate quantity, and quantity-weighted average price against the latest
+order snapshot. The report explicitly distinguishes `EMPTY`, `VERIFIED`,
+`RECOVERED`, and `INTEGRITY_ERROR`; valid out-of-order recovery and a history
+that began mid-order remain visible warnings. Operating-system file locks are
+released automatically on process exit, so a leftover `.lock` file is not
+itself a blocker after a crash.
+
+Lifecycle verification is local accounting evidence only. It never calls an
+adapter, submits or cancels an order, appends a qualifying sandbox
+reconciliation, changes a strategy, consumes an approval, or grants live
+authority. The current QMT plugin deliberately keeps its probes non-persistent
+and therefore does not populate these ledgers.
+
 ## Promotion Evidence
 
 An account reaches sandbox review only after the frozen paper epoch passes its independent-forward gate. Sandbox reconciliation compares expected cash and positions against the broker and appends one idempotent record per adapter, account, date, and configuration fingerprint.

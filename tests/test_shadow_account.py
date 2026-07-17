@@ -91,7 +91,12 @@ class ShadowAccountTests(unittest.TestCase):
         self.assertEqual(status["import_count"], 1)
         self.assertEqual(status["recent_fills"][0]["price"], 5.0)
         self.assertFalse(status["source_files_retained"])
-        self.assertEqual(set(self.root.rglob("*")), {self.root / "state", self.fills_path, self.imports_path})
+        lock_path = self.imports_path.with_suffix(".csv.lock")
+        self.assertEqual(
+            set(self.root.rglob("*")),
+            {self.root / "state", self.fills_path, self.imports_path, lock_path},
+        )
+        self.assertEqual(lock_path.read_bytes(), b"0")
         self.assertEqual(canonical_template(), ",".join(CANONICAL_COLUMNS) + "\r\n")
 
     def test_overlapping_export_skips_prior_fill_and_appends_only_new_fill(self):

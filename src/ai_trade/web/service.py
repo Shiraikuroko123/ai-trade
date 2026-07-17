@@ -13,6 +13,7 @@ from typing import Any
 
 from .. import __version__
 from ..assistant import AssistantEngine
+from ..broker.ledger import recover_order_lifecycle
 from ..broker.live_guard import evaluate_live_readiness
 from ..broker.paper import paper_status
 from ..broker.paper_audit import audit_paper
@@ -247,6 +248,10 @@ class DashboardService:
         else:
             paper_audit = self._paper_audit(market)
         paper_trades = self._csv_rows(self.config.paper_trades_file, 200)
+        broker_lifecycle = recover_order_lifecycle(
+            self.config.broker_orders_file,
+            self.config.broker_fills_file,
+        )
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
@@ -256,6 +261,7 @@ class DashboardService:
             "paper_rejections": self._csv_rows(self.config.paper_rejections_file, 200),
             "broker_orders": self._csv_rows(self.config.broker_orders_file, 200),
             "broker_fills": self._csv_rows(self.config.broker_fills_file, 200),
+            "broker_lifecycle": broker_lifecycle,
             "pending_targets": dict((state or {}).get("pending_targets") or {}),
             "shadow_account": self._shadow_account(owner_id, state),
         }

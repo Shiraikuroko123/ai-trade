@@ -59,6 +59,7 @@ class DistributionVerificationTests(unittest.TestCase):
         for module in (
             "base.py",
             "ledger.py",
+            "lifecycle.py",
             "live.py",
             "live_guard.py",
             "mandate.py",
