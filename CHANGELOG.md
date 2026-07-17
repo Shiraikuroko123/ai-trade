@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added machine-readable broker capability declarations with explicit access
+  levels, environments, and operation allowlists. Missing declarations,
+  undeclared operations, and runtime metadata drift now fail closed before
+  broker method calls.
 - Added an independently packaged QMT/xtquant read-only adapter for local account, position, cancelable-order, and same-day fill observation. It rejects live mode, submission, and cancellation, and does not bundle broker binaries or credentials.
 - Added `broker-list`, `broker-probe`, and `broker-compare` CLI diagnostics. Read-only comparisons are masked, non-mutating, and never count toward qualifying sandbox reconciliation evidence.
 - Added fail-closed QMT account binding, quantity/status validation, unknown-order preservation, fee-completeness warnings, focused tests, and local configuration guidance.

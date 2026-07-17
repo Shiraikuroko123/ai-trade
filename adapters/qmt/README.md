@@ -13,6 +13,11 @@ The adapter is intentionally read-only:
 - the package does not bundle, download, or redistribute `xtquant`, QMT DLLs, or
   broker credentials.
 
+The package publishes a machine-readable `ai_trade.broker_capabilities` entry
+point. It declares only account, position, order, and fill reads in the sandbox
+configuration surface. Live construction, order submission, and cancellation
+are absent from the declaration and fail closed at runtime.
+
 Install it from a source checkout after installing AI Trade:
 
 ```powershell

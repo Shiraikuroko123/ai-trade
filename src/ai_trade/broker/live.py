@@ -14,6 +14,7 @@ from ..data.market import MarketData
 from .base import (
     Broker,
     BrokerEnvironment,
+    BrokerOperation,
     BrokerOrderRequest,
     BrokerOrderSnapshot,
     OrderSide,
@@ -43,6 +44,15 @@ class LiveOrderRouter:
     ) -> dict[str, Any]:
         if not orders:
             raise ValueError("At least one order is required")
+        self.broker.capabilities.require(
+            frozenset(
+                {
+                    BrokerOperation.READ_ACCOUNT,
+                    BrokerOperation.READ_POSITIONS,
+                }
+            ),
+            self.broker.environment,
+        )
         broker_cfg = self.config.raw.get("broker", {})
         max_order = float(
             broker_cfg.get(
@@ -188,6 +198,16 @@ class LiveOrderRouter:
         assert_live_submission_allowed(self.config, paper_audit, market)
         if self.broker.environment != BrokerEnvironment.LIVE:
             raise RuntimeError("A live broker environment is required for submission")
+        self.broker.capabilities.require(
+            frozenset(
+                {
+                    BrokerOperation.READ_ACCOUNT,
+                    BrokerOperation.READ_POSITIONS,
+                    BrokerOperation.SUBMIT_ORDERS,
+                }
+            ),
+            BrokerEnvironment.LIVE,
+        )
         self._assert_broker_identity()
         self.validate(orders, market, on_date)
         health = self.broker.health()

@@ -13,12 +13,15 @@ if str(ADAPTER_SOURCE) not in sys.path:
     sys.path.insert(0, str(ADAPTER_SOURCE))
 
 from ai_trade.broker.base import (  # noqa: E402
+    BrokerAccessLevel,
     BrokerEnvironment,
+    BrokerOperation,
     BrokerOrderRequest,
     OrderSide,
     OrderStatus,
 )
 from ai_trade_qmt.adapter import (  # noqa: E402
+    QMT_CAPABILITIES,
     QMTReadOnlyBroker,
     QMTSettings,
     _QMTBindings,
@@ -150,6 +153,16 @@ def _bindings() -> _QMTBindings:
 
 
 class QMTAdapterTests(unittest.TestCase):
+    def test_capabilities_are_static_read_only_and_sandbox_scoped(self):
+        self.assertEqual(QMT_CAPABILITIES.access_level, BrokerAccessLevel.READ_ONLY)
+        self.assertEqual(
+            QMT_CAPABILITIES.environments, frozenset({BrokerEnvironment.SANDBOX})
+        )
+        self.assertNotIn(BrokerOperation.SUBMIT_ORDERS, QMT_CAPABILITIES.operations)
+        self.assertNotIn(BrokerOperation.CANCEL_ORDERS, QMT_CAPABILITIES.operations)
+        with self.assertRaises(PermissionError):
+            QMT_CAPABILITIES.require(frozenset(), BrokerEnvironment.LIVE)
+
     def test_adapter_package_never_bundles_vendor_binaries_or_xtquant(self):
         package_root = Path(__file__).resolve().parents[1] / "adapters" / "qmt"
         banned_suffixes = {".dll", ".dylib", ".pyd", ".so"}

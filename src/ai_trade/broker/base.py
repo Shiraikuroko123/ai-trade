@@ -16,6 +16,65 @@ class BrokerEnvironment(str, Enum):
     LIVE = "live"
 
 
+class BrokerAccessLevel(str, Enum):
+    UNDECLARED = "undeclared"
+    READ_ONLY = "read_only"
+    SANDBOX = "sandbox"
+    LIVE = "live"
+
+
+class BrokerOperation(str, Enum):
+    READ_ACCOUNT = "read_account"
+    READ_POSITIONS = "read_positions"
+    READ_ORDERS = "read_orders"
+    READ_FILLS = "read_fills"
+    SUBMIT_ORDERS = "submit_orders"
+    CANCEL_ORDERS = "cancel_orders"
+
+
+@dataclass(frozen=True)
+class BrokerCapabilities:
+    adapter_name: str
+    access_level: BrokerAccessLevel = BrokerAccessLevel.UNDECLARED
+    operations: frozenset[BrokerOperation] = frozenset()
+    environments: frozenset[BrokerEnvironment] = frozenset()
+    runtime_environment_verified: bool = False
+    qualifying_reconciliation_supported: bool = False
+    requires_local_client: bool = False
+
+    def require(
+        self,
+        operations: set[BrokerOperation] | frozenset[BrokerOperation],
+        environment: BrokerEnvironment,
+    ) -> None:
+        if environment not in self.environments:
+            raise PermissionError(
+                f"Broker adapter {self.adapter_name!r} does not declare support for "
+                f"the {environment.value} environment"
+            )
+        missing = sorted(
+            (operation.value for operation in operations - self.operations)
+        )
+        if missing:
+            raise PermissionError(
+                f"Broker adapter {self.adapter_name!r} does not allow operations: "
+                + ", ".join(missing)
+            )
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "adapter": self.adapter_name,
+            "access_level": self.access_level.value,
+            "operations": sorted(value.value for value in self.operations),
+            "environments": sorted(value.value for value in self.environments),
+            "runtime_environment_verified": self.runtime_environment_verified,
+            "qualifying_reconciliation_supported": (
+                self.qualifying_reconciliation_supported
+            ),
+            "requires_local_client": self.requires_local_client,
+        }
+
+
 class OrderSide(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
@@ -104,6 +163,7 @@ class BrokerFill:
 class Broker(ABC):
     adapter_name: str
     environment: BrokerEnvironment
+    capabilities = BrokerCapabilities(adapter_name="")
 
     @abstractmethod
     def health(self) -> BrokerHealth:
@@ -141,6 +201,7 @@ BrokerFactory = Callable[["AppConfig", BrokerEnvironment], Broker]
 
 class BrokerRegistry:
     ENTRY_POINT_GROUP = "ai_trade.brokers"
+    CAPABILITY_ENTRY_POINT_GROUP = "ai_trade.broker_capabilities"
 
     @classmethod
     def discover(cls) -> dict[str, metadata.EntryPoint]:
@@ -156,6 +217,37 @@ class BrokerRegistry:
         return tuple(sorted(cls.discover()))
 
     @classmethod
+    def discover_capabilities(cls) -> dict[str, metadata.EntryPoint]:
+        points = metadata.entry_points()
+        if hasattr(points, "select"):
+            selected = points.select(group=cls.CAPABILITY_ENTRY_POINT_GROUP)
+        else:  # pragma: no cover - compatibility for older Python 3.10 builds
+            selected = points.get(cls.CAPABILITY_ENTRY_POINT_GROUP, ())
+        return {point.name: point for point in selected}
+
+    @classmethod
+    def capabilities(cls, name: str) -> BrokerCapabilities:
+        point = cls.discover_capabilities().get(name)
+        if point is None:
+            return BrokerCapabilities(adapter_name=name)
+        loaded = point.load()
+        value = loaded() if callable(loaded) else loaded
+        if not isinstance(value, BrokerCapabilities):
+            raise TypeError(
+                f"Broker capability entry point {name!r} did not return "
+                "BrokerCapabilities"
+            )
+        if value.adapter_name != name:
+            raise RuntimeError(
+                f"Broker capability entry point {name!r} declared a different adapter"
+            )
+        return value
+
+    @classmethod
+    def descriptions(cls) -> tuple[BrokerCapabilities, ...]:
+        return tuple(cls.capabilities(name) for name in cls.available())
+
+    @classmethod
     def create(
         cls,
         name: str,
@@ -168,8 +260,20 @@ class BrokerRegistry:
             raise RuntimeError(
                 f"Broker adapter {name!r} is not installed; available adapters: {available}"
             )
+        declared_capabilities = cls.capabilities(name)
+        declared_capabilities.require(frozenset(), environment)
         factory: BrokerFactory = point.load()
         broker = factory(config, environment)
         if not isinstance(broker, Broker):
             raise TypeError(f"Broker entry point {name!r} did not return a Broker")
+        runtime_capabilities = getattr(broker, "capabilities", None)
+        if not isinstance(runtime_capabilities, BrokerCapabilities):
+            raise TypeError(
+                f"Broker adapter {name!r} does not expose BrokerCapabilities"
+            )
+        if runtime_capabilities != declared_capabilities:
+            raise RuntimeError(
+                f"Broker adapter {name!r} runtime capabilities do not match its "
+                "installed declaration"
+            )
         return broker

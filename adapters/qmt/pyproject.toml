@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-trade-qmt"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only QMT/xtquant observation adapter for AI Trade"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,6 +21,9 @@ classifiers = [
 
 [project.entry-points."ai_trade.brokers"]
 qmt-readonly = "ai_trade_qmt:create_broker"
+
+[project.entry-points."ai_trade.broker_capabilities"]
+qmt-readonly = "ai_trade_qmt:broker_capabilities"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -11,6 +11,20 @@ Adapters register a factory in the Python entry-point group `ai_trade.brokers`:
 example = "example_adapter:create_broker"
 ```
 
+Every adapter must also publish immutable capability metadata before its factory
+can be instantiated:
+
+```toml
+[project.entry-points."ai_trade.broker_capabilities"]
+example = "example_adapter:broker_capabilities"
+```
+
+The declaration assigns one access level (`read_only`, `sandbox`, or `live`),
+an explicit environment set, and an allowlist drawn from `read_account`,
+`read_positions`, `read_orders`, `read_fills`, `submit_orders`, and
+`cancel_orders`. A missing declaration, unknown operation, environment mismatch,
+or runtime/declaration mismatch is denied before the core calls the adapter.
+
 The factory receives `AppConfig` and a `BrokerEnvironment` (`sandbox` or `live`) and returns a subclass of `ai_trade.broker.base.Broker`. The adapter must implement:
 
 - health and trading-session status;
@@ -91,6 +105,11 @@ $Python = '.\.venv\Scripts\python.exe'
 & $Python -m ai_trade.cli --config .\local\qmt\config.json broker-probe
 & $Python -m ai_trade.cli --config .\local\qmt\config.json broker-compare
 ```
+
+`broker-list` includes the static capability declaration. For QMT it must show
+`access_level=read_only`, only the four read operations, `sandbox` as the sole
+environment, and `runtime_environment_verified=false`. Treat any other result
+as an installation mismatch and do not continue.
 
 `broker-probe` masks the account identifier in console output. Cash, positions,
 orders, and fills remain sensitive local information and are not written by the

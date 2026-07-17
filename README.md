@@ -57,7 +57,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 
 ### 可选 QMT 只读连接
 
-源码仓库包含独立安装的 `adapters/qmt` 观察插件。它只读取本机已登录 QMT 的账户、持仓、可撤委托和当日成交，拒绝实盘模式、下单与撤单；由于 QMT API 不能可靠证明账号属于模拟盘，读取和比较结果不会写入 20 次沙盒晋级证据。安装、创建 Git 忽略配置和运行 `broker-list`、`broker-probe`、`broker-compare` 的完整步骤见 [券商适配器](docs/BROKER_ADAPTERS.md#optional-qmt-read-only-probe)。
+源码仓库包含独立安装的 `adapters/qmt` 观察插件。它只读取本机已登录 QMT 的账户、持仓、可撤委托和当日成交，拒绝实盘模式、下单与撤单；由于 QMT API 不能可靠证明账号属于模拟盘，读取和比较结果不会写入 20 次沙盒晋级证据。每个插件还必须发布机器可读的能力清单，未声明操作、环境不匹配或运行时能力漂移都会在调用前失败关闭。安装、创建 Git 忽略配置和运行 `broker-list`、`broker-probe`、`broker-compare` 的完整步骤见 [券商适配器](docs/BROKER_ADAPTERS.md#optional-qmt-read-only-probe)。
 
 ### Windows 后台运行与登录自启
 

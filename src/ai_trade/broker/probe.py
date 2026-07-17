@@ -9,10 +9,12 @@ from ..config import AppConfig
 from .base import (
     Broker,
     BrokerAccount,
+    BrokerAccessLevel,
     BrokerEnvironment,
     BrokerFill,
     BrokerHealth,
     BrokerOrderSnapshot,
+    BrokerOperation,
     BrokerPosition,
     BrokerRegistry,
 )
@@ -31,10 +33,13 @@ class _BrokerObservation:
 
 
 def available_broker_adapters() -> dict[str, object]:
+    descriptions = BrokerRegistry.descriptions()
     return {
-        "schema_version": 1,
-        "adapters": list(BrokerRegistry.available()),
+        "schema_version": 2,
+        "adapters": [value.adapter_name for value in descriptions],
+        "capabilities": [value.public_dict() for value in descriptions],
         "discovery_group": BrokerRegistry.ENTRY_POINT_GROUP,
+        "capability_discovery_group": BrokerRegistry.CAPABILITY_ENTRY_POINT_GROUP,
     }
 
 
@@ -126,10 +131,22 @@ def _collect_observation(config: AppConfig) -> _BrokerObservation:
     if not adapter or not configured_account:
         raise RuntimeError("Broker probes require a configured adapter and account_id")
 
+    required_operations = frozenset(
+        {
+            BrokerOperation.READ_ACCOUNT,
+            BrokerOperation.READ_POSITIONS,
+            BrokerOperation.READ_ORDERS,
+            BrokerOperation.READ_FILLS,
+        }
+    )
+    BrokerRegistry.capabilities(adapter).require(
+        required_operations, BrokerEnvironment.SANDBOX
+    )
     broker = BrokerRegistry.create(adapter, config, BrokerEnvironment.SANDBOX)
     try:
         if broker.environment != BrokerEnvironment.SANDBOX:
             raise RuntimeError("Broker probe returned the wrong environment")
+        broker.capabilities.require(required_operations, BrokerEnvironment.SANDBOX)
         health = broker.health()
         if not health.connected:
             raise RuntimeError(health.message or "Broker connection is unavailable")
@@ -149,17 +166,22 @@ def _collect_observation(config: AppConfig) -> _BrokerObservation:
         raise
 
 
-def _authority(broker: Broker) -> dict[str, bool]:
-    read_only = bool(getattr(broker, "read_only", False))
+def _authority(broker: Broker) -> dict[str, object]:
+    capabilities = broker.capabilities
+    read_only = capabilities.access_level == BrokerAccessLevel.READ_ONLY
     return {
         "read_only": read_only,
-        "order_submission_available": not read_only,
-        "order_cancellation_available": not read_only,
-        "runtime_environment_verified": bool(
-            getattr(broker, "runtime_environment_verified", False)
+        "access_level": capabilities.access_level.value,
+        "operations": sorted(value.value for value in capabilities.operations),
+        "order_submission_available": (
+            BrokerOperation.SUBMIT_ORDERS in capabilities.operations
         ),
-        "qualifying_reconciliation_supported": bool(
-            getattr(broker, "qualifying_reconciliation_supported", False)
+        "order_cancellation_available": (
+            BrokerOperation.CANCEL_ORDERS in capabilities.operations
+        ),
+        "runtime_environment_verified": capabilities.runtime_environment_verified,
+        "qualifying_reconciliation_supported": (
+            capabilities.qualifying_reconciliation_supported
         ),
     }
 

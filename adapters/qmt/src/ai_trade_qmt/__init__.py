@@ -1,6 +1,16 @@
 """Read-only QMT/xtquant adapter for AI Trade."""
 
-from .adapter import QMTReadOnlyBroker, QMTSettings, create_broker
+from .adapter import (
+    QMTReadOnlyBroker,
+    QMTSettings,
+    broker_capabilities,
+    create_broker,
+)
 
-__all__ = ["QMTReadOnlyBroker", "QMTSettings", "create_broker"]
-__version__ = "0.1.0"
+__all__ = [
+    "QMTReadOnlyBroker",
+    "QMTSettings",
+    "broker_capabilities",
+    "create_broker",
+]
+__version__ = "0.2.0"

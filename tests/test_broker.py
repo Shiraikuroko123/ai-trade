@@ -5,16 +5,19 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from ai_trade.broker.base import (
+    BrokerAccessLevel,
     BrokerAccount,
+    BrokerCapabilities,
     BrokerEnvironment,
     BrokerHealth,
     BrokerOrderRequest,
     BrokerOrderSnapshot,
     BrokerPosition,
     BrokerRegistry,
+    BrokerOperation,
     OrderSide,
     OrderStatus,
 )
@@ -43,6 +46,23 @@ from ai_trade.config import _validate_broker
 class FakeBroker:
     adapter_name = "mock"
     environment = BrokerEnvironment.LIVE
+    capabilities = BrokerCapabilities(
+        adapter_name=adapter_name,
+        access_level=BrokerAccessLevel.LIVE,
+        operations=frozenset(
+            {
+                BrokerOperation.READ_ACCOUNT,
+                BrokerOperation.READ_POSITIONS,
+                BrokerOperation.READ_ORDERS,
+                BrokerOperation.READ_FILLS,
+                BrokerOperation.SUBMIT_ORDERS,
+                BrokerOperation.CANCEL_ORDERS,
+            }
+        ),
+        environments=frozenset({BrokerEnvironment.LIVE}),
+        runtime_environment_verified=True,
+        qualifying_reconciliation_supported=True,
+    )
 
     def __init__(
         self,
@@ -540,6 +560,26 @@ class BrokerTests(unittest.TestCase):
             return_value={BrokerRegistry.ENTRY_POINT_GROUP: (point,)},
         ):
             self.assertIs(BrokerRegistry.discover()["mock"], point)
+
+    def test_registry_rejects_undeclared_adapter_before_loading_factory(self):
+        point = SimpleNamespace(name="mock", load=MagicMock())
+        with (
+            patch.object(BrokerRegistry, "discover", return_value={"mock": point}),
+            patch.object(BrokerRegistry, "discover_capabilities", return_value={}),
+            self.assertRaisesRegex(PermissionError, "environment"),
+        ):
+            BrokerRegistry.create(
+                "mock", SimpleNamespace(), BrokerEnvironment.SANDBOX
+            )
+        point.load.assert_not_called()
+
+    def test_undeclared_capabilities_fail_closed_before_live_broker_reads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            broker = FakeBroker()
+            broker.capabilities = BrokerCapabilities(adapter_name="mock")
+            router = _router(Path(temporary), broker)
+            with self.assertRaisesRegex(PermissionError, "environment"):
+                router.validate([_order()], FakeMarket(), date(2024, 1, 3))
 
 
 if __name__ == "__main__":

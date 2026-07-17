@@ -5,12 +5,15 @@ from unittest.mock import patch
 
 from ai_trade.broker.base import (
     Broker,
+    BrokerAccessLevel,
     BrokerAccount,
+    BrokerCapabilities,
     BrokerEnvironment,
     BrokerFill,
     BrokerHealth,
     BrokerOrderRequest,
     BrokerOrderSnapshot,
+    BrokerOperation,
     BrokerPosition,
     OrderSide,
     OrderStatus,
@@ -25,6 +28,19 @@ from ai_trade.broker.probe import (
 class ReadOnlyBroker(Broker):
     adapter_name = "read-only-test"
     environment = BrokerEnvironment.SANDBOX
+    capabilities = BrokerCapabilities(
+        adapter_name=adapter_name,
+        access_level=BrokerAccessLevel.READ_ONLY,
+        operations=frozenset(
+            {
+                BrokerOperation.READ_ACCOUNT,
+                BrokerOperation.READ_POSITIONS,
+                BrokerOperation.READ_ORDERS,
+                BrokerOperation.READ_FILLS,
+            }
+        ),
+        environments=frozenset({BrokerEnvironment.SANDBOX}),
+    )
     read_only = True
     runtime_environment_verified = False
     qualifying_reconciliation_supported = False
@@ -103,8 +119,14 @@ def _config(account_id="broker-account", mode="sandbox"):
 class BrokerProbeTests(unittest.TestCase):
     def test_probe_is_masked_read_only_and_never_records_evidence(self):
         broker = ReadOnlyBroker()
-        with patch(
-            "ai_trade.broker.probe.BrokerRegistry.create", return_value=broker
+        with (
+            patch(
+                "ai_trade.broker.probe.BrokerRegistry.capabilities",
+                return_value=broker.capabilities,
+            ),
+            patch(
+                "ai_trade.broker.probe.BrokerRegistry.create", return_value=broker
+            ),
         ):
             result = probe_configured_broker(_config())
 
@@ -127,6 +149,10 @@ class BrokerProbeTests(unittest.TestCase):
         }
         with (
             patch(
+                "ai_trade.broker.probe.BrokerRegistry.capabilities",
+                return_value=broker.capabilities,
+            ),
+            patch(
                 "ai_trade.broker.probe.BrokerRegistry.create", return_value=broker
             ),
             patch("ai_trade.broker.probe.paper_status", return_value=state),
@@ -142,6 +168,10 @@ class BrokerProbeTests(unittest.TestCase):
     def test_mismatched_account_closes_connection_and_fails(self):
         broker = ReadOnlyBroker(account_id="other-account")
         with (
+            patch(
+                "ai_trade.broker.probe.BrokerRegistry.capabilities",
+                return_value=broker.capabilities,
+            ),
             patch(
                 "ai_trade.broker.probe.BrokerRegistry.create", return_value=broker
             ),
@@ -159,13 +189,39 @@ class BrokerProbeTests(unittest.TestCase):
         create.assert_not_called()
 
     def test_available_adapter_output_is_stable(self):
+        capabilities = BrokerCapabilities(
+            adapter_name="qmt-readonly",
+            access_level=BrokerAccessLevel.READ_ONLY,
+            operations=frozenset({BrokerOperation.READ_ACCOUNT}),
+            environments=frozenset({BrokerEnvironment.SANDBOX}),
+        )
         with patch(
-            "ai_trade.broker.probe.BrokerRegistry.available",
-            return_value=("qmt-readonly",),
+            "ai_trade.broker.probe.BrokerRegistry.descriptions",
+            return_value=(capabilities,),
         ):
             result = available_broker_adapters()
         self.assertEqual(result["adapters"], ["qmt-readonly"])
+        self.assertEqual(result["capabilities"][0]["access_level"], "read_only")
+        self.assertEqual(result["capabilities"][0]["operations"], ["read_account"])
         self.assertEqual(result["discovery_group"], "ai_trade.brokers")
+
+    def test_probe_rejects_undeclared_read_operations_before_broker_io(self):
+        capabilities = BrokerCapabilities(
+            adapter_name="read-only-test",
+            access_level=BrokerAccessLevel.READ_ONLY,
+            operations=frozenset({BrokerOperation.READ_ACCOUNT}),
+            environments=frozenset({BrokerEnvironment.SANDBOX}),
+        )
+        with (
+            patch(
+                "ai_trade.broker.probe.BrokerRegistry.capabilities",
+                return_value=capabilities,
+            ),
+            patch("ai_trade.broker.probe.BrokerRegistry.create") as create,
+            self.assertRaisesRegex(PermissionError, "read_fills"),
+        ):
+            probe_configured_broker(_config())
+        create.assert_not_called()
 
 
 if __name__ == "__main__":

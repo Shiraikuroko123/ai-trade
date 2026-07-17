@@ -15,10 +15,13 @@ from typing import Any
 
 from ai_trade.broker.base import (
     Broker,
+    BrokerAccessLevel,
     BrokerAccount,
+    BrokerCapabilities,
     BrokerEnvironment,
     BrokerFill,
     BrokerHealth,
+    BrokerOperation,
     BrokerOrderRequest,
     BrokerOrderSnapshot,
     BrokerPosition,
@@ -28,6 +31,22 @@ from ai_trade.broker.base import (
 
 
 ADAPTER_NAME = "qmt-readonly"
+QMT_CAPABILITIES = BrokerCapabilities(
+    adapter_name=ADAPTER_NAME,
+    access_level=BrokerAccessLevel.READ_ONLY,
+    operations=frozenset(
+        {
+            BrokerOperation.READ_ACCOUNT,
+            BrokerOperation.READ_POSITIONS,
+            BrokerOperation.READ_ORDERS,
+            BrokerOperation.READ_FILLS,
+        }
+    ),
+    environments=frozenset({BrokerEnvironment.SANDBOX}),
+    runtime_environment_verified=False,
+    qualifying_reconciliation_supported=False,
+    requires_local_client=True,
+)
 _OPEN_ORDER_STATUSES = {
     OrderStatus.PENDING_SUBMIT,
     OrderStatus.SUBMITTED,
@@ -108,6 +127,7 @@ class _QMTBindings:
 class QMTReadOnlyBroker(Broker):
     adapter_name = ADAPTER_NAME
     environment = BrokerEnvironment.SANDBOX
+    capabilities = QMT_CAPABILITIES
     read_only = True
     runtime_environment_verified = False
     qualifying_reconciliation_supported = False
@@ -384,6 +404,10 @@ def create_broker(config: Any, environment: BrokerEnvironment) -> Broker:
     if environment != BrokerEnvironment.SANDBOX:
         raise PermissionError("The QMT read-only adapter cannot be created in live mode")
     return QMTReadOnlyBroker(QMTSettings.from_config(config))
+
+
+def broker_capabilities() -> BrokerCapabilities:
+    return QMT_CAPABILITIES
 
 
 def _load_bindings(python_path: Path | None) -> _QMTBindings:
