@@ -446,6 +446,8 @@ class StrategyLabStore:
             total = 0
             recent: list[tuple[str, str, str, dict[str, Any]]] = []
             for item in path.glob("*.json"):
+                if not item.is_file():
+                    continue
                 event = _read_json(item)
                 total += 1
                 entry = (
@@ -604,9 +606,23 @@ class StrategyLabStore:
         path = self.owner_directory(owner) / directory
         if not path.exists():
             return []
-        records = [_read_json(item) for item in path.glob("*.json")]
+        records = [
+            _read_json(item)
+            for item in path.glob("*.json")
+            if item.is_file()
+        ]
         return sorted(
-            records, key=lambda item: str(item.get(order_key, "")), reverse=reverse
+            records,
+            key=lambda item: (
+                str(item.get(order_key, "")),
+                str(
+                    item.get("candidate_id")
+                    or item.get("monitor_id")
+                    or item.get("event_id")
+                    or ""
+                ),
+            ),
+            reverse=reverse,
         )
 
     @contextmanager

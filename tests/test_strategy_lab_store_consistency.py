@@ -370,6 +370,24 @@ class StrategyLabStoreConsistencyTests(TestCase):
                 with self.assertRaisesRegex(RuntimeError, "schema fields"):
                     reader("alice", record_id)
 
+    def test_list_records_are_deterministic_when_timestamps_tie(self):
+        for suffix in ("b", "a"):
+            self.store.write_event(
+                "alice",
+                {
+                    "event_id": "event_" + suffix * 32,
+                    "created_at": "2026-07-14T00:00:00Z",
+                    "action": "test",
+                },
+            )
+
+        events = self.store.list_events("alice")
+
+        self.assertEqual(
+            [event["event_id"] for event in events],
+            ["event_" + "a" * 32, "event_" + "b" * 32],
+        )
+
 
 if __name__ == "__main__":
     import unittest
