@@ -157,7 +157,8 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/base.py`: broker environments, account/position/order/fill contracts, and plugin discovery.
 - `broker/reconciliation.py`: account and position comparison plus append-only sandbox evidence.
 - `broker/ledger.py`: idempotent order intents, broker order events, and fills.
-- `broker/live_guard.py`: paper, configuration, adapter, reconciliation, kill-switch, authorization, and process-confirmation gates.
+- `broker/mandate.py`: strict authorization scopes, exact batch fingerprints, and one-time human approval consumption with retained local audit records.
+- `broker/live_guard.py`: paper, configuration, adapter capability, reconciliation, kill-switch, mandate, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
 - `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
 - `strategy_lab/`: allowlisted strategy/risk parameters, immutable per-user candidates, same-snapshot validation, human approval, isolated paper export, activation history, and rollback.

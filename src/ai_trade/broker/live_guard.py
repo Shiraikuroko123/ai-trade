@@ -13,7 +13,13 @@ from ..config import (
     DEFAULT_BROKER_MAX_ORDER_NOTIONAL,
 )
 from ..data.market import MarketData
-from .base import BrokerRegistry
+from .base import (
+    BrokerAccessLevel,
+    BrokerEnvironment,
+    BrokerOperation,
+    BrokerRegistry,
+)
+from .mandate import authorization_mandate_status
 from .paper import _config_fingerprint
 from .paper_audit import audit_paper
 from .reconciliation import audit_reconciliations
@@ -37,6 +43,12 @@ def evaluate_live_readiness(
     broker = config.raw.get("broker", {})
     adapter = broker.get("adapter")
     account_id = broker.get("account_id")
+    max_order_notional = float(
+        broker.get("max_order_notional", DEFAULT_BROKER_MAX_ORDER_NOTIONAL)
+    )
+    max_daily_notional = float(
+        broker.get("max_daily_notional", DEFAULT_BROKER_MAX_DAILY_NOTIONAL)
+    )
     fingerprint = _config_fingerprint(config)
     live_fingerprint = _live_configuration_fingerprint(config, fingerprint)
     paper_fingerprint = str((paper_audit or {}).get("config_fingerprint", ""))
@@ -56,10 +68,19 @@ def evaluate_live_readiness(
         config_fingerprint=live_fingerprint,
     )
     installed = set(BrokerRegistry.available())
+    capability_valid, capability_reason, capability = _live_capability_status(
+        str(adapter or ""), installed
+    )
+    mandate, mandate_reason = authorization_mandate_status(
+        authorization,
+        configured_max_order_notional=max_order_notional,
+        configured_max_daily_notional=max_daily_notional,
+    )
     checks = {
         "broker_mode_live": broker.get("mode") == "live",
         "adapter_configured": bool(adapter),
         "adapter_installed": bool(adapter) and adapter in installed,
+        "adapter_live_capable": capability_valid,
         "account_configured": bool(account_id),
         "paper_configuration_current": paper_configuration_current,
         "paper_gate_passed": paper_configuration_current
@@ -67,6 +88,7 @@ def evaluate_live_readiness(
         "sandbox_reconciled": reconciliation["eligible"],
         "kill_switch_clear": not config.live_kill_switch_file.exists(),
         "authorization_valid": authorization_valid,
+        "mandate_valid": mandate is not None,
         "environment_confirmed": (
             os.environ.get("AI_TRADE_LIVE_CONFIRMATION") == LIVE_CONFIRMATION
         ),
@@ -80,24 +102,22 @@ def evaluate_live_readiness(
         "paper_config_fingerprint": fingerprint,
         "config_fingerprint": live_fingerprint,
         "installed_adapters": sorted(installed),
+        "adapter_capabilities": capability.public_dict() if capability else None,
+        "adapter_capability_reason": capability_reason,
         "reconciliation": reconciliation,
         "authorization": {
             "valid": authorization_valid,
             "reason": authorization_reason,
             "expires_at": authorization.get("expires_at") if authorization else None,
+            "mandate_valid": mandate is not None,
+            "mandate_reason": mandate_reason,
+            "mandate": mandate.public_dict() if mandate else None,
         },
         "kill_switch_file": str(config.live_kill_switch_file),
+        "batch_approval_file": str(config.live_batch_approval_file),
         "limits": {
-            "max_order_notional": float(
-                broker.get(
-                    "max_order_notional", DEFAULT_BROKER_MAX_ORDER_NOTIONAL
-                )
-            ),
-            "max_daily_notional": float(
-                broker.get(
-                    "max_daily_notional", DEFAULT_BROKER_MAX_DAILY_NOTIONAL
-                )
-            ),
+            "max_order_notional": max_order_notional,
+            "max_daily_notional": max_daily_notional,
         },
     }
 
@@ -163,6 +183,38 @@ def _authorization_status(
     return True, "authorization matches the active account and configuration"
 
 
+def _live_capability_status(
+    adapter: str, installed: set[str]
+) -> tuple[bool, str, Any | None]:
+    if not adapter or adapter not in installed:
+        return False, "adapter is not installed", None
+    capabilities = None
+    try:
+        capabilities = BrokerRegistry.capabilities(adapter)
+        capabilities.require(
+            frozenset(
+                {
+                    BrokerOperation.READ_ACCOUNT,
+                    BrokerOperation.READ_POSITIONS,
+                    BrokerOperation.READ_ORDERS,
+                    BrokerOperation.READ_FILLS,
+                    BrokerOperation.SUBMIT_ORDERS,
+                    BrokerOperation.CANCEL_ORDERS,
+                }
+            ),
+            BrokerEnvironment.LIVE,
+        )
+    except (PermissionError, RuntimeError, TypeError) as exc:
+        return False, str(exc), capabilities
+    if capabilities.access_level != BrokerAccessLevel.LIVE:
+        return False, "adapter access level is not live", capabilities
+    if not capabilities.runtime_environment_verified:
+        return False, "adapter cannot verify its runtime environment", capabilities
+    if not capabilities.qualifying_reconciliation_supported:
+        return False, "adapter cannot produce qualifying reconciliation", capabilities
+    return True, "adapter declares the complete verified live surface", capabilities
+
+
 def _live_configuration_fingerprint(
     config: AppConfig, paper_fingerprint: str
 ) -> str:
@@ -193,6 +245,9 @@ def _live_configuration_fingerprint(
             "fills_file": broker.get("fills_file", "state/broker_fills.csv"),
             "authorization_file": broker.get(
                 "authorization_file", "state/live_authorization.json"
+            ),
+            "batch_approval_file": broker.get(
+                "batch_approval_file", "state/live_batch_approval.json"
             ),
             "kill_switch_file": broker.get(
                 "kill_switch_file", "state/LIVE_KILL_SWITCH"

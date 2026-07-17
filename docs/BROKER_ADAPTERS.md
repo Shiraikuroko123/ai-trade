@@ -125,15 +125,38 @@ The default gate requires 20 consecutive clean reconciliations. A mismatch reset
 
 ## Live Authorization
 
-Live authorization is a local, expiring JSON record containing:
+Live authorization is a local schema-versioned, expiring JSON record containing:
 
+- `schema_version: 2`;
 - `approved: true`;
+- a non-empty human approver and timezone-aware approval timestamp;
 - adapter name;
 - account ID;
 - the active live configuration fingerprint;
-- a timezone-aware expiry timestamp.
+- a timezone-aware expiry timestamp;
+- an exact mandate symbol allowlist and side allowlist;
+- mandate order, daily-notional, and daily-order-count ceilings;
+- `require_batch_approval: true`.
 
-Authorization is necessary but not sufficient. The runtime also requires `broker.mode=live`, `AI_TRADE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_TRADING_RISK`, an installed adapter, a clear kill-switch file, current paper evidence, and eligible reconciliation evidence.
+Unknown authorization or mandate fields are rejected instead of ignored. Mandate
+limits may tighten configured hard limits but cannot expand them. An adapter must
+separately declare the complete `live` operation surface, verified runtime
+environment, and qualifying reconciliation support. The QMT read-only plugin
+cannot satisfy these checks.
+
+Authorization is necessary but not sufficient. The runtime also requires
+`broker.mode=live`, `AI_TRADE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_TRADING_RISK`, an
+installed live-capable adapter, a clear kill-switch file, current paper evidence,
+and eligible reconciliation evidence.
+
+Each exact order batch additionally requires a short-lived approval record at
+the configured `batch_approval_file`. Its SHA-256 fingerprint binds the order
+date, adapter, account, live configuration, client IDs, symbols, sides,
+quantities, limit prices, time-in-force values, and ordering. Approval lifetime
+is limited to 15 minutes. A valid record is atomically moved to an immutable
+`.consumed.json` audit record before intent reservation or broker submission; it
+cannot authorize a retry or a changed batch. There is intentionally no live
+order UI or approval generator while no verified live adapter exists.
 
 ## Pre-Trade Validation
 
@@ -145,7 +168,9 @@ Authorization is necessary but not sufficient. The runtime also requires `broker
 - previous-close daily price-limit bounds;
 - broker-available positions for sells and cash for buys;
 - configured maximum order notional;
-- previously reserved plus new daily notional;
+- mandate symbol/side, order, daily-notional, and daily-order-count limits;
+- a matching short-lived one-time batch approval;
+- previously reserved plus new daily notional and order count;
 - exact live broker environment and a healthy trading session.
 
 Adapters must still implement broker-specific validation and reconciliation. Core checks do not replace exchange or broker rules.
@@ -157,5 +182,5 @@ Adapters must still implement broker-specific validation and reconciliation. Cor
 3. Implement sandbox limit orders, cancellations, order polling, and fills.
 4. Accumulate the configured consecutive clean reconciliations.
 5. Test disconnects, partial fills, duplicates, stale quotes, rejects, cancellation races, and restarts.
-6. Review credentials, logs, kill switch, order limits, and authorization expiry.
+6. Review credentials, logs, kill switch, mandate, one-time approvals, and audit files.
 7. Add live environment support only after a separate human review.

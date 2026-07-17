@@ -49,6 +49,20 @@ class DistributionVerificationTests(unittest.TestCase):
                 self.assertIn(f"ai_trade/strategy_lab/{module}", WHEEL_REQUIRED)
                 self.assertIn(f"src/ai_trade/strategy_lab/{module}", SDIST_REQUIRED)
 
+    def test_broker_safety_surface_is_required_in_both_artifacts(self):
+        for module in (
+            "base.py",
+            "ledger.py",
+            "live.py",
+            "live_guard.py",
+            "mandate.py",
+            "probe.py",
+            "reconciliation.py",
+        ):
+            with self.subTest(module=module):
+                self.assertIn(f"ai_trade/broker/{module}", WHEEL_REQUIRED)
+                self.assertIn(f"src/ai_trade/broker/{module}", SDIST_REQUIRED)
+
     def test_vendored_klinecharts_is_required_and_matches_upstream(self):
         assets = REPOSITORY_ROOT / "src" / "ai_trade" / "web" / "assets"
         for name, expected in VENDORED_FILES_SHA256.items():

@@ -28,10 +28,17 @@ def reserve_order_intents(
     orders: list[BrokerOrderRequest],
     on_date: date,
     max_daily_notional: float,
+    max_daily_orders: int | None = None,
 ) -> float:
     """Persist order IDs before broker I/O and enforce the daily limit atomically."""
     if not math.isfinite(max_daily_notional) or max_daily_notional <= 0:
         raise ValueError("max_daily_notional must be finite and positive")
+    if max_daily_orders is not None and (
+        isinstance(max_daily_orders, bool)
+        or not isinstance(max_daily_orders, int)
+        or max_daily_orders < 1
+    ):
+        raise ValueError("max_daily_orders must be a positive integer")
     timestamp = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
     snapshots = [
         BrokerOrderSnapshot(
@@ -71,6 +78,13 @@ def reserve_order_intents(
         submitted = _submitted_order_notional(existing_rows, on_date)
         if submitted + batch_notional > max_daily_notional:
             raise ValueError("Orders exceed configured daily notional limit")
+        if max_daily_orders is not None:
+            submitted_count = sum(
+                updated_at.date() == on_date
+                for updated_at, _ in _first_order_events(existing_rows).values()
+            )
+            if submitted_count + len(orders) > max_daily_orders:
+                raise ValueError("Orders exceed configured daily order count")
         _append_rows(path, rows, "event_id", existing_rows)
     return submitted + batch_notional
 
@@ -110,9 +124,31 @@ def submitted_order_notional(path: Path, on_date: date) -> float:
     return _submitted_order_notional(_read_rows(path, "event_id"), on_date)
 
 
+def submitted_order_count(path: Path, on_date: date) -> int:
+    """Return client orders first reserved on a date, counted once per order."""
+    if not path.exists():
+        return 0
+    return sum(
+        updated_at.date() == on_date
+        for updated_at, _ in _first_order_events(
+            _read_rows(path, "event_id")
+        ).values()
+    )
+
+
 def _submitted_order_notional(
     rows: list[dict[str, str]], on_date: date
 ) -> float:
+    return sum(
+        notional
+        for updated_at, notional in _first_order_events(rows).values()
+        if updated_at.date() == on_date
+    )
+
+
+def _first_order_events(
+    rows: list[dict[str, str]],
+) -> dict[str, tuple[datetime, float]]:
     first_events: dict[str, tuple[datetime, float]] = {}
     for row in rows:
         try:
@@ -130,11 +166,7 @@ def _submitted_order_notional(
         current = first_events.get(order_id)
         if current is None or updated_at < current[0]:
             first_events[order_id] = (updated_at, notional)
-    return sum(
-        notional
-        for updated_at, notional in first_events.values()
-        if updated_at.date() == on_date
-    )
+    return first_events
 
 
 def _append_unique(path: Path, rows: list[dict[str, object]], key: str) -> None:

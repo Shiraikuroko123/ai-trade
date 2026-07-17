@@ -22,9 +22,15 @@ from .base import (
 from .ledger import (
     append_order_events,
     reserve_order_intents,
+    submitted_order_count,
     submitted_order_notional,
 )
 from .live_guard import assert_live_submission_allowed
+from .mandate import (
+    consume_batch_approval,
+    order_batch_fingerprint,
+    parse_mandate,
+)
 
 
 CHINA_STANDARD_TIME = timezone(timedelta(hours=8))
@@ -195,7 +201,7 @@ class LiveOrderRouter:
         on_date: date,
         paper_audit: dict[str, Any],
     ) -> list[BrokerOrderSnapshot]:
-        assert_live_submission_allowed(self.config, paper_audit, market)
+        readiness = assert_live_submission_allowed(self.config, paper_audit, market)
         if self.broker.environment != BrokerEnvironment.LIVE:
             raise RuntimeError("A live broker environment is required for submission")
         self.broker.capabilities.require(
@@ -209,22 +215,55 @@ class LiveOrderRouter:
             BrokerEnvironment.LIVE,
         )
         self._assert_broker_identity()
-        self.validate(orders, market, on_date)
+        validation = self.validate(orders, market, on_date)
+        broker_cfg = self.config.raw.get("broker", {})
+        mandate = parse_mandate(
+            readiness.get("authorization", {}).get("mandate"),
+            configured_max_order_notional=float(
+                broker_cfg.get(
+                    "max_order_notional", DEFAULT_BROKER_MAX_ORDER_NOTIONAL
+                )
+            ),
+            configured_max_daily_notional=float(
+                broker_cfg.get(
+                    "max_daily_notional", DEFAULT_BROKER_MAX_DAILY_NOTIONAL
+                )
+            ),
+        )
+        submitted_count = submitted_order_count(
+            self.config.broker_orders_file, on_date
+        )
+        mandate.enforce(
+            orders,
+            submitted_orders=submitted_count,
+            submitted_notional=float(validation["submitted_today"]),
+        )
         health = self.broker.health()
         if not health.connected or not health.trading_session:
             raise RuntimeError(f"Broker is not ready for submission: {health.message}")
         _assert_current_trading_session(on_date, health.checked_at)
-        broker_cfg = self.config.raw.get("broker", {})
-        max_daily = float(
-            broker_cfg.get(
-                "max_daily_notional", DEFAULT_BROKER_MAX_DAILY_NOTIONAL
-            )
+        configured_account = str(broker_cfg.get("account_id") or "")
+        config_fingerprint = str(readiness.get("config_fingerprint") or "")
+        batch_fingerprint = order_batch_fingerprint(
+            orders,
+            on_date=on_date,
+            adapter=self.broker.adapter_name,
+            account_id=configured_account,
+            config_fingerprint=config_fingerprint,
+        )
+        consume_batch_approval(
+            self.config.live_batch_approval_file,
+            adapter=self.broker.adapter_name,
+            account_id=configured_account,
+            config_fingerprint=config_fingerprint,
+            batch_fingerprint=batch_fingerprint,
         )
         reserve_order_intents(
             self.config.broker_orders_file,
             orders,
             on_date,
-            max_daily,
+            mandate.max_daily_notional,
+            mandate.max_orders_per_day,
         )
         # Re-evaluate the authorization and kill switch after all broker and disk I/O.
         # A failed final gate intentionally leaves reserved IDs behind, preventing a

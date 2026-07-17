@@ -24,6 +24,7 @@ from ai_trade.broker.base import (
 from ai_trade.broker.ledger import (
     append_order_events,
     reserve_order_intents,
+    submitted_order_count,
     submitted_order_notional,
 )
 from ai_trade.broker.live import LiveOrderRouter
@@ -32,6 +33,12 @@ from ai_trade.broker.live_guard import (
     _live_configuration_fingerprint,
     assert_live_submission_allowed,
     evaluate_live_readiness,
+)
+from ai_trade.broker.mandate import (
+    BrokerMandate,
+    create_batch_approval,
+    order_batch_fingerprint,
+    write_batch_approval,
 )
 from ai_trade.broker.reconciliation import (
     ReconciliationIssue,
@@ -167,6 +174,7 @@ def _live_router(root: Path, broker):
             }
         },
         broker_orders_file=root / "orders.csv",
+        live_batch_approval_file=root / "batch-approval.json",
     )
     return LiveOrderRouter(config, broker)
 
@@ -179,6 +187,40 @@ def _order(
     price=10.0,
 ):
     return BrokerOrderRequest(order_id, symbol, side, quantity, price)
+
+
+def _mandate() -> BrokerMandate:
+    return BrokerMandate(
+        allowed_symbols=frozenset({"510300"}),
+        allowed_sides=frozenset({OrderSide.BUY, OrderSide.SELL}),
+        max_order_notional=5_000.0,
+        max_daily_notional=10_000.0,
+        max_orders_per_day=5,
+    )
+
+
+def _readiness() -> dict[str, object]:
+    return {
+        "config_fingerprint": "a" * 64,
+        "authorization": {"mandate": _mandate().public_dict()},
+    }
+
+
+def _authorization(config, paper_fingerprint: str, expires_at: datetime) -> dict:
+    approved_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    return {
+        "schema_version": 2,
+        "approved": True,
+        "approved_by": "local-owner",
+        "approved_at": approved_at.isoformat(),
+        "adapter": "mock",
+        "account_id": "account",
+        "config_fingerprint": _live_configuration_fingerprint(
+            config, paper_fingerprint
+        ),
+        "expires_at": expires_at.isoformat(),
+        "mandate": _mandate().public_dict(),
+    }
 
 
 class BrokerTests(unittest.TestCase):
@@ -241,6 +283,7 @@ class BrokerTests(unittest.TestCase):
                 },
                 broker_reconciliation_file=root / "reconciliation.csv",
                 live_authorization_file=root / "authorization.json",
+                live_batch_approval_file=root / "batch-approval.json",
                 live_kill_switch_file=root / "kill-switch",
             )
             for index in range(5):
@@ -254,15 +297,11 @@ class BrokerTests(unittest.TestCase):
                     broker_cash=1000,
                     issues=[],
                 )
-            authorization = {
-                "approved": True,
-                "adapter": "mock",
-                "account_id": "account",
-                "config_fingerprint": _live_configuration_fingerprint(
-                    config, "fingerprint"
-                ),
-                "expires_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
-            }
+            authorization = _authorization(
+                config,
+                "fingerprint",
+                datetime.now(timezone.utc) - timedelta(minutes=1),
+            )
             config.live_authorization_file.write_text(
                 json.dumps(authorization), encoding="utf-8"
             )
@@ -272,6 +311,11 @@ class BrokerTests(unittest.TestCase):
             }
             with (
                 patch.object(BrokerRegistry, "available", return_value=("mock",)),
+                patch.object(
+                    BrokerRegistry,
+                    "capabilities",
+                    return_value=FakeBroker.capabilities,
+                ),
                 patch(
                     "ai_trade.broker.live_guard._config_fingerprint",
                     return_value="fingerprint",
@@ -308,6 +352,7 @@ class BrokerTests(unittest.TestCase):
                 },
                 broker_reconciliation_file=root / "reconciliation.csv",
                 live_authorization_file=root / "authorization.json",
+                live_batch_approval_file=root / "batch-approval.json",
                 live_kill_switch_file=root / "kill-switch",
             )
             for index in range(5):
@@ -323,22 +368,21 @@ class BrokerTests(unittest.TestCase):
                 )
             config.live_authorization_file.write_text(
                 json.dumps(
-                    {
-                        "approved": True,
-                        "adapter": "mock",
-                        "account_id": "account",
-                        "config_fingerprint": _live_configuration_fingerprint(
-                            config, "current"
-                        ),
-                        "expires_at": (
-                            datetime.now(timezone.utc) + timedelta(hours=1)
-                        ).isoformat(),
-                    }
+                    _authorization(
+                        config,
+                        "current",
+                        datetime.now(timezone.utc) + timedelta(hours=1),
+                    )
                 ),
                 encoding="utf-8",
             )
             with (
                 patch.object(BrokerRegistry, "available", return_value=("mock",)),
+                patch.object(
+                    BrokerRegistry,
+                    "capabilities",
+                    return_value=FakeBroker.capabilities,
+                ),
                 patch(
                     "ai_trade.broker.live_guard._config_fingerprint",
                     return_value="current",
@@ -356,6 +400,64 @@ class BrokerTests(unittest.TestCase):
                 )
             self.assertFalse(readiness["checks"]["paper_configuration_current"])
             self.assertFalse(readiness["checks"]["paper_gate_passed"])
+            self.assertFalse(readiness["live_ready"])
+
+    def test_live_readiness_rejects_a_read_only_adapter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = SimpleNamespace(
+                raw={
+                    "broker": {
+                        "mode": "live",
+                        "adapter": "qmt-readonly",
+                        "account_id": "account",
+                        "sandbox_minimum_reconciliations": 5,
+                        "max_order_notional": 5_000,
+                        "max_daily_notional": 10_000,
+                    }
+                },
+                broker_reconciliation_file=root / "reconciliation.csv",
+                live_authorization_file=root / "authorization.json",
+                live_batch_approval_file=root / "batch-approval.json",
+                live_kill_switch_file=root / "kill-switch",
+            )
+            read_only = BrokerCapabilities(
+                adapter_name="qmt-readonly",
+                access_level=BrokerAccessLevel.READ_ONLY,
+                operations=frozenset(
+                    {
+                        BrokerOperation.READ_ACCOUNT,
+                        BrokerOperation.READ_POSITIONS,
+                        BrokerOperation.READ_ORDERS,
+                        BrokerOperation.READ_FILLS,
+                    }
+                ),
+                environments=frozenset({BrokerEnvironment.SANDBOX}),
+            )
+            with (
+                patch.object(
+                    BrokerRegistry, "available", return_value=("qmt-readonly",)
+                ),
+                patch.object(
+                    BrokerRegistry, "capabilities", return_value=read_only
+                ),
+                patch(
+                    "ai_trade.broker.live_guard._config_fingerprint",
+                    return_value="paper",
+                ),
+            ):
+                readiness = evaluate_live_readiness(
+                    config,
+                    {
+                        "eligible_for_broker_sandbox": True,
+                        "config_fingerprint": "paper",
+                    },
+                )
+            self.assertTrue(readiness["checks"]["adapter_installed"])
+            self.assertFalse(readiness["checks"]["adapter_live_capable"])
+            self.assertEqual(
+                readiness["adapter_capabilities"]["access_level"], "read_only"
+            )
             self.assertFalse(readiness["live_ready"])
 
     def test_router_enforces_active_universe_lots_ticks_limits_and_positions(self):
@@ -424,6 +526,7 @@ class BrokerTests(unittest.TestCase):
                 ),
                 9_000,
             )
+            self.assertEqual(submitted_order_count(path, on_date), 1)
             with self.assertRaisesRegex(RuntimeError, "already exists"):
                 reserve_order_intents(
                     path,
@@ -438,6 +541,14 @@ class BrokerTests(unittest.TestCase):
                     on_date,
                     10_000,
                 )
+            with self.assertRaisesRegex(ValueError, "daily order count"):
+                reserve_order_intents(
+                    path,
+                    [_order("third")],
+                    on_date,
+                    20_000,
+                    max_daily_orders=1,
+                )
 
     def test_uncertain_submission_remains_reserved_and_cannot_be_retried(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -445,9 +556,15 @@ class BrokerTests(unittest.TestCase):
             broker = SubmittingBroker(fail=True)
             router = _live_router(root, broker)
             on_date = datetime.now(timezone(timedelta(hours=8))).date()
-            with patch(
-                "ai_trade.broker.live.assert_live_submission_allowed",
-                return_value={},
+            with (
+                patch(
+                    "ai_trade.broker.live.assert_live_submission_allowed",
+                    return_value=_readiness(),
+                ),
+                patch(
+                    "ai_trade.broker.live.consume_batch_approval",
+                    return_value={"approval_id": "approval-test"},
+                ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "uncertain broker submission"):
                     router.submit([_order()], FakeMarket(), on_date, {})
@@ -467,10 +584,80 @@ class BrokerTests(unittest.TestCase):
             on_date = datetime.now(timezone(timedelta(hours=8))).date()
             with patch(
                 "ai_trade.broker.live.assert_live_submission_allowed",
-                return_value={},
+                return_value=_readiness(),
             ):
                 with self.assertRaisesRegex(RuntimeError, "account does not match"):
                     router.submit([_order()], FakeMarket(), on_date, {})
+            self.assertEqual(broker.submission_calls, 0)
+
+    def test_router_consumes_an_exact_one_time_batch_approval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            broker = SubmittingBroker()
+            router = _live_router(root, broker)
+            order = _order()
+            on_date = datetime.now(timezone(timedelta(hours=8))).date()
+            readiness = _readiness()
+            batch_fingerprint = order_batch_fingerprint(
+                [order],
+                on_date=on_date,
+                adapter="mock",
+                account_id="account",
+                config_fingerprint=str(readiness["config_fingerprint"]),
+            )
+            approval = create_batch_approval(
+                approved_by="local-owner",
+                adapter="mock",
+                account_id="account",
+                config_fingerprint=str(readiness["config_fingerprint"]),
+                batch_fingerprint=batch_fingerprint,
+            )
+            write_batch_approval(router.config.live_batch_approval_file, approval)
+            with patch(
+                "ai_trade.broker.live.assert_live_submission_allowed",
+                return_value=readiness,
+            ):
+                submitted = router.submit([order], FakeMarket(), on_date, {})
+            self.assertEqual(len(submitted), 1)
+            self.assertEqual(broker.submission_calls, 1)
+            self.assertFalse(router.config.live_batch_approval_file.exists())
+            self.assertEqual(
+                len(list(root.glob("batch-approval.*.consumed.json"))), 1
+            )
+
+    def test_router_rejects_changed_batch_without_reserving_an_intent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            broker = SubmittingBroker()
+            router = _live_router(root, broker)
+            on_date = datetime.now(timezone(timedelta(hours=8))).date()
+            readiness = _readiness()
+            approved_order = _order(quantity=100)
+            submitted_order = _order(quantity=200)
+            approval = create_batch_approval(
+                approved_by="local-owner",
+                adapter="mock",
+                account_id="account",
+                config_fingerprint=str(readiness["config_fingerprint"]),
+                batch_fingerprint=order_batch_fingerprint(
+                    [approved_order],
+                    on_date=on_date,
+                    adapter="mock",
+                    account_id="account",
+                    config_fingerprint=str(readiness["config_fingerprint"]),
+                ),
+            )
+            write_batch_approval(router.config.live_batch_approval_file, approval)
+            with (
+                patch(
+                    "ai_trade.broker.live.assert_live_submission_allowed",
+                    return_value=readiness,
+                ),
+                self.assertRaisesRegex(PermissionError, "exact order batch"),
+            ):
+                router.submit([submitted_order], FakeMarket(), on_date, {})
+            self.assertFalse(router.config.broker_orders_file.exists())
+            self.assertTrue(router.config.live_batch_approval_file.exists())
             self.assertEqual(broker.submission_calls, 0)
 
     def test_final_live_gate_can_stop_a_reserved_order(self):
@@ -479,9 +666,18 @@ class BrokerTests(unittest.TestCase):
             broker = SubmittingBroker()
             router = _live_router(root, broker)
             on_date = datetime.now(timezone(timedelta(hours=8))).date()
-            with patch(
-                "ai_trade.broker.live.assert_live_submission_allowed",
-                side_effect=({}, RuntimeError("kill switch activated")),
+            with (
+                patch(
+                    "ai_trade.broker.live.assert_live_submission_allowed",
+                    side_effect=(
+                        _readiness(),
+                        RuntimeError("kill switch activated"),
+                    ),
+                ),
+                patch(
+                    "ai_trade.broker.live.consume_batch_approval",
+                    return_value={"approval_id": "approval-test"},
+                ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "kill switch activated"):
                     router.submit([_order()], FakeMarket(), on_date, {})

@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added strict versioned live mandates with explicit symbol/side allowlists,
+  order and daily ceilings, atomic daily order-count enforcement, and short-lived
+  one-time approvals bound to the exact order batch. Consumed approvals remain
+  local audit records and cannot authorize retries.
 - Added machine-readable broker capability declarations with explicit access
   levels, environments, and operation allowlists. Missing declarations,
   undeclared operations, and runtime metadata drift now fail closed before

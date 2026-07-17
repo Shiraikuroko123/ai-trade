@@ -197,6 +197,11 @@ class CloudTests(unittest.TestCase):
         excluded = {
             self.root / "state/beta_users.json": "beta-password-sentinel",
             self.root / "state/live_authorization.json": "live-token-sentinel",
+            self.root / "state/live_batch_approval.json": "batch-approval-sentinel",
+            self.root
+            / "state/live_batch_approval.approval_test.consumed.json": (
+                "consumed-approval-sentinel"
+            ),
             self.root / "reports/private.html": "report-sentinel",
             self.root / "logs/ai_trade.log": "log-sentinel",
             self.root / ".env": "environment-secret-sentinel",

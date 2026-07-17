@@ -106,6 +106,14 @@ class AppConfig:
         )
 
     @property
+    def live_batch_approval_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("broker", {}).get(
+                "batch_approval_file", "state/live_batch_approval.json"
+            )
+        )
+
+    @property
     def live_kill_switch_file(self) -> Path:
         return self.resolve(
             self.raw.get("broker", {}).get(
@@ -458,6 +466,7 @@ def _validate_broker(value: dict[str, Any]) -> None:
         "orders_file": "state/broker_orders.csv",
         "fills_file": "state/broker_fills.csv",
         "authorization_file": "state/live_authorization.json",
+        "batch_approval_file": "state/live_batch_approval.json",
         "kill_switch_file": "state/LIVE_KILL_SWITCH",
     }
     configured_paths: dict[str, str] = {}
