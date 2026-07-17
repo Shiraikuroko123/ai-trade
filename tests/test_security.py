@@ -1,10 +1,31 @@
+import json
+import tempfile
 import unittest
 from datetime import date
+from pathlib import Path
 
 from ai_trade.security import SecurityMaster
 
 
 class SecurityMasterTests(unittest.TestCase):
+    def test_security_master_rejects_duplicate_json_keys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "security-master.json"
+            value = {
+                "schema_version": 1,
+                "instruments": [],
+                "universes": {},
+                "status_periods": [],
+            }
+            content = json.dumps(value).replace(
+                '"universes": {}',
+                '"universes": {}, "universes": {"other": []}',
+            )
+            path.write_text(content, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "duplicate JSON object key"):
+                SecurityMaster.load(path)
+
     def test_point_in_time_universe_is_not_limited_to_eight_symbols(self):
         instruments = []
         memberships = []

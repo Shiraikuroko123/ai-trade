@@ -28,6 +28,20 @@ from ai_trade.data.tencent import (
 
 
 class DataTests(unittest.TestCase):
+    def test_configuration_rejects_duplicate_json_keys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = _write_config(Path(temporary))
+            content = path.read_text(encoding="utf-8")
+            content = content.replace(
+                '"provider": "eastmoney"',
+                '"provider": "eastmoney", "provider": "tencent"',
+                1,
+            )
+            path.write_text(content, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "duplicate JSON object key"):
+                load_config(path)
+
     def test_completed_session_cutoff_excludes_market_day_before_close(self):
         china = timezone(timedelta(hours=8))
         morning = datetime(2024, 1, 3, 10, 0, tzinfo=china)

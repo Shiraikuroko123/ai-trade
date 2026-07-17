@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Main configuration and point-in-time security-master JSON now reject duplicate
+  keys and use explicit 5 MiB/32 MiB bounds, preventing ambiguous broker, risk,
+  universe, or data-source settings without limiting a professional universe.
 - Live routing now refreshes the configured account identity, available cash,
   sellable positions, and trading-session health after approval/ledger I/O. The
   authorization and kill switch are then checked last before broker submission.

@@ -22,6 +22,8 @@ Future live submission requires every independent gate: current paper-account co
 
 Authorization, batch-approval, and broker ledger-scope controls are bounded UTF-8 JSON. Duplicate object keys, invalid encoding, oversized files, unknown fields, stale fingerprints, and malformed values fail closed; do not hand-edit these files with tools that silently preserve duplicate fields.
 
+The main configuration and point-in-time security master also use bounded UTF-8 parsing and reject duplicate object keys at every nesting level. This prevents different JSON consumers from disagreeing about broker mode, limits, control paths, strategy/risk settings, provider routing, or universe membership.
+
 Never commit or paste broker passwords, fund passwords, beta password files, exported beta-user bundles, API secrets, session cookies, private keys, or recovery phrases. Portable beta-user bundles contain offline password verifiers: distribute them privately and rotate affected passwords if a bundle leaks. The project never requires a crypto-wallet signature, token purchase, or deposit to unlock features.
 
 ## AI Assistant Boundary

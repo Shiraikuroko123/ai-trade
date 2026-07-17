@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import os
 import re
@@ -13,6 +12,7 @@ from .broker.base import (
     BROKER_ACCOUNT_ID_MAX_LENGTH,
     BROKER_ADAPTER_NAME_MAX_LENGTH,
 )
+from .json_utils import load_unique_json
 from .models import CostSettings, Instrument, RiskSettings, StrategySettings
 from .security import SecurityMaster
 
@@ -23,6 +23,7 @@ DEFAULT_AUTH_SESSION_HOURS = 8
 DEFAULT_AUTH_MAX_FAILED_ATTEMPTS = 5
 DEFAULT_AUTH_FAILURE_WINDOW_MINUTES = 15
 DEFAULT_AUTH_LOCKOUT_MINUTES = 15
+MAX_CONFIG_FILE_BYTES = 5 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,9 @@ class AppConfig:
 
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path).resolve()
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw = load_unique_json(config_path, max_bytes=MAX_CONFIG_FILE_BYTES)
+    if not isinstance(raw, dict):
+        raise ValueError("configuration must be a JSON object")
     project_root = config_path.parent.parent
     master_spec = raw.get("security_master")
     if master_spec:

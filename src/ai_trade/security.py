@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from .json_utils import load_unique_json
 from .models import Instrument
+
+
+MAX_SECURITY_MASTER_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -61,7 +65,9 @@ class SecurityMaster:
 
     @classmethod
     def load(cls, path: Path) -> "SecurityMaster":
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = load_unique_json(path, max_bytes=MAX_SECURITY_MASTER_BYTES)
+        if not isinstance(raw, dict):
+            raise ValueError("security master must be a JSON object")
         return cls.from_dict(raw, source_path=path)
 
     @classmethod
