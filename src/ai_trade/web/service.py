@@ -60,7 +60,6 @@ class DashboardService:
         except (OSError, RuntimeError, ValueError) as exc:
             market = None
             market_issue = self._market_issue(exc)
-
         if market is None:
             diagnosis = self._unavailable_diagnosis(market_issue)
             paper_audit = self._unavailable_paper_audit(
@@ -75,6 +74,18 @@ class DashboardService:
                 "universe": diagnosis["point_in_time_universe"],
                 "warnings": diagnosis["research_warnings"],
                 "error": market_issue,
+                "freshness": {
+                    "status": diagnosis.get("status", "ERROR"),
+                    "completed_session_cutoff": diagnosis.get(
+                        "completed_session_cutoff"
+                    ),
+                    "latest_common_market_date": diagnosis.get(
+                        "latest_common_market_date"
+                    ),
+                    "lag_calendar_days": diagnosis.get("market_data_lag_days"),
+                    "current": diagnosis.get("market_data_current", False),
+                },
+                "provenance": diagnosis.get("cache_manifest", {}),
             }
         else:
             diagnosis = diagnose(self.config, market)
@@ -88,6 +99,18 @@ class DashboardService:
                 "universe": diagnosis["point_in_time_universe"],
                 "warnings": diagnosis["research_warnings"],
                 "error": None,
+                "freshness": {
+                    "status": diagnosis["status"],
+                    "completed_session_cutoff": diagnosis[
+                        "completed_session_cutoff"
+                    ],
+                    "latest_common_market_date": diagnosis[
+                        "latest_common_market_date"
+                    ],
+                    "lag_calendar_days": diagnosis["market_data_lag_days"],
+                    "current": diagnosis["market_data_current"],
+                },
+                "provenance": diagnosis["cache_manifest"],
             }
         report_statuses = self._report_statuses(
             {
@@ -181,55 +204,145 @@ class DashboardService:
                 "positions": [],
                 "pending_targets": [],
                 "equity_curve": [],
+                "valuation_available": False,
+                "valuation_status": "uninitialized",
             }
-        market = self.market()
         equity = float(state.get("last_equity", 0))
+        instrument_by_symbol = {
+            item.symbol: item for item in getattr(self.config, "instruments", ())
+        }
+        market_issue = None
+        try:
+            market = self.market()
+        except (OSError, RuntimeError, ValueError) as exc:
+            market = None
+            market_issue = self._market_issue(exc)
+
+        freshness = None
+        valuation_status = "unavailable"
+        valuation_errors: list[dict[str, str]] = []
+        latest_market_date = None
+        if market is not None:
+            freshness = _portfolio_market_freshness(self.config, market)
+            latest_market_date = _safe_market_date(market, "latest_date")
+            if freshness and freshness.get("status") == "OK":
+                valuation_status = "current"
+            elif freshness and freshness.get("current") is False:
+                valuation_status = "stale"
+            else:
+                valuation_status = "needs_review"
+
         positions = []
         for symbol, raw_quantity in dict(state.get("positions", {})).items():
             quantity = int(raw_quantity)
-            bar = market.latest_bar_on_or_before(symbol, market.latest_date())
-            price = bar.close if bar else 0.0
-            value = price * quantity
-            instrument = market.instrument(symbol)
+            instrument = instrument_by_symbol.get(symbol)
+            if market is None:
+                positions.append(
+                    {
+                        "symbol": symbol,
+                        "name": instrument.name if instrument else symbol,
+                        "quantity": quantity,
+                        "price": None,
+                        "market_value": None,
+                        "weight": None,
+                        "asset_class": instrument.asset_class if instrument else None,
+                        "sector": instrument.sector if instrument else None,
+                        "valuation_status": "unavailable",
+                        "valuation_error": "market_unavailable",
+                    }
+                )
+                continue
+            market_instrument = instrument
+            try:
+                market_instrument = market.instrument(symbol)
+            except (AttributeError, KeyError, RuntimeError, ValueError):
+                pass
+            bar = None
+            if latest_market_date is not None:
+                try:
+                    bar = market.latest_bar_on_or_before(symbol, latest_market_date)
+                except (AttributeError, KeyError, RuntimeError, ValueError):
+                    bar = None
+            close = _finite_float(getattr(bar, "close", None))
+            if bar is None:
+                valuation_error = "missing_completed_bar"
+            elif close is None or close <= 0:
+                valuation_error = "invalid_close"
+            else:
+                valuation_error = None
+            if valuation_error:
+                valuation_errors.append(
+                    {
+                        "code": valuation_error,
+                        "symbol": symbol,
+                        "message": (
+                            "No validated completed close is available for this position; "
+                            "refresh the market snapshot before using price-derived values."
+                        ),
+                        "recovery_action": "refresh-data",
+                    }
+                )
+            price = close if valuation_error is None else None
+            market_value = price * quantity if price is not None else None
             positions.append(
                 {
                     "symbol": symbol,
-                    "name": instrument.name,
+                    "name": market_instrument.name if market_instrument else symbol,
                     "quantity": quantity,
                     "price": price,
-                    "market_value": value,
-                    "weight": value / equity if equity > 0 else 0.0,
-                    "asset_class": instrument.asset_class,
-                    "sector": instrument.sector,
+                    "market_value": market_value,
+                    "weight": (
+                        market_value / equity
+                        if market_value is not None and equity > 0
+                        else None
+                    ),
+                    "asset_class": (
+                        market_instrument.asset_class if market_instrument else None
+                    ),
+                    "sector": market_instrument.sector if market_instrument else None,
+                    "valuation_status": "valued" if valuation_error is None else "unavailable",
+                    "valuation_error": valuation_error,
                 }
             )
         pending = []
         for symbol, weight in dict(state.get("pending_targets") or {}).items():
-            instrument = market.instrument(symbol)
+            instrument = instrument_by_symbol.get(symbol)
             current = next(
                 (value["weight"] for value in positions if value["symbol"] == symbol),
-                0.0,
+                None if market is None else 0.0,
             )
+            target_weight = float(weight)
             pending.append(
                 {
                     "symbol": symbol,
-                    "name": instrument.name,
+                    "name": instrument.name if instrument else symbol,
                     "current_weight": current,
-                    "target_weight": float(weight),
-                    "difference": float(weight) - current,
+                    "target_weight": target_weight,
+                    "difference": None if current is None else target_weight - current,
                 }
             )
+        cash = float(state.get("cash", 0))
+        high_water_mark = float(state.get("high_water_mark", equity))
+        if valuation_errors:
+            valuation_status = "partial"
+        errors = [market_issue] if market_issue else []
+        errors.extend(valuation_errors)
+        valuation_date = (
+            freshness.get("date")
+            if isinstance(freshness, dict) and freshness.get("date")
+            else _date_text(latest_market_date)
+        )
         return {
             "generated_at": _now(),
             "initialized": True,
             "account_id": state.get("account_id"),
             "date": state.get("last_run_date"),
             "equity": equity,
-            "cash": float(state.get("cash", 0)),
-            "cash_weight": float(state.get("cash", 0)) / equity if equity > 0 else 0.0,
+            "cash": cash,
+            "cash_weight": cash / equity if equity > 0 else 0.0,
             "drawdown": (
-                equity / float(state.get("high_water_mark", equity)) - 1.0
-                if equity > 0 and float(state.get("high_water_mark", equity)) > 0
+                equity / high_water_mark - 1.0
+                if equity > 0 and high_water_mark > 0
                 else 0.0
             ),
             "cooldown_remaining": int(state.get("cooldown_remaining", 0)),
@@ -237,6 +350,11 @@ class DashboardService:
             "positions": positions,
             "pending_targets": pending,
             "equity_curve": self._paper_equity_curve(480),
+            "valuation_available": market is not None and not valuation_errors,
+            "valuation_status": valuation_status,
+            "valuation_date": valuation_date,
+            "market_freshness": freshness,
+            "errors": errors,
         }
 
     def trading(self, *, owner_id: str = "local-owner") -> dict[str, Any]:
@@ -1314,3 +1432,67 @@ def _public_live_readiness(
     for field in ("account_id", "kill_switch_file", "batch_approval_file"):
         readiness.pop(field, None)
     return readiness
+
+
+def _portfolio_market_freshness(config: AppConfig, market: Any) -> dict[str, Any]:
+    """Return a small, defensive freshness projection for the portfolio view.
+
+    The portfolio route must remain useful while a cache is being repaired. A
+    lightweight market double used by integrations may not implement the full
+    diagnostics protocol, so the projection falls back to the dates available
+    on the market reader instead of turning an otherwise readable ledger into
+    a server error.
+    """
+    try:
+        diagnosis = diagnose(config, market)
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+        latest = _date_text(_safe_market_date(market, "latest_date"))
+        completed = _date_text(getattr(market, "completed_through", None))
+        common = _date_text(getattr(market, "latest_common_session", None)) or latest
+        lag = None
+        if completed and common:
+            try:
+                lag = max(0, (date.fromisoformat(completed) - date.fromisoformat(common)).days)
+            except ValueError:
+                lag = None
+        manifest = getattr(market, "manifest", None)
+        current = bool(completed and common and common >= completed)
+        return {
+            "status": "OK" if current and isinstance(manifest, dict) else "WARNING",
+            "date": common,
+            "completed_session_cutoff": completed,
+            "lag_calendar_days": lag,
+            "current": current,
+            "manifest_available": isinstance(manifest, dict),
+        }
+    return {
+        "status": diagnosis["status"],
+        "date": diagnosis["latest_common_market_date"],
+        "completed_session_cutoff": diagnosis["completed_session_cutoff"],
+        "lag_calendar_days": diagnosis["market_data_lag_days"],
+        "current": diagnosis["market_data_current"],
+        "manifest_available": diagnosis["cache_manifest"]["available"],
+    }
+
+
+def _safe_market_date(market: Any, method_name: str) -> date | None:
+    method = getattr(market, method_name, None)
+    if not callable(method):
+        return None
+    try:
+        value = method()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return value if isinstance(value, date) else None
+
+
+def _date_text(value: date | None) -> str | None:
+    return value.isoformat() if isinstance(value, date) else None
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None

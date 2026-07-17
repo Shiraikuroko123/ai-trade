@@ -65,6 +65,20 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("历史指标不参与权限解锁", self.javascript)
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
+    def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
+        self.assertIn("app.css?v=0.12.0-ui8", self.html)
+        self.assertIn("app.js?v=0.12.0-ui8", self.html)
+        self.assertIn("data.market?.freshness", self.javascript)
+        self.assertIn("共同最新", self.javascript)
+        self.assertIn("行情估值暂不可用", self.javascript)
+        self.assertIn("部分持仓暂未估值", self.javascript)
+        self.assertIn("估值口径", self.javascript)
+        self.assertIn('aria-label="估值不可用"', self.javascript)
+        self.assertIn("账本权益（最近记录）", self.javascript)
+        self.assertIn("valuation_available", self.javascript)
+        self.assertIn("共同最新行情", self.javascript)
+        self.assertIn("marketDecisionDate", self.javascript)
+
     def test_market_pulse_is_compact_auditable_and_keyboard_scannable(self):
         self.assertIn('id="market-pulse"', self.html)
         self.assertIn('id="market-pulse-track"', self.html)

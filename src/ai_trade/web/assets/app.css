@@ -667,6 +667,22 @@ p {
   font-size: 1.15rem;
 }
 
+.portfolio-valuation-meta {
+  align-items: center;
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  gap: 0.55rem 0.8rem;
+  padding: 0.55rem 0.75rem;
+}
+
+.portfolio-valuation-meta > span:not(.status-chip) {
+  font-variant-numeric: tabular-nums;
+}
+
 .tone-positive {
   color: var(--positive);
 }
@@ -793,6 +809,18 @@ p {
 .symbol-cell span {
   color: var(--ink-soft);
   font-size: 0.7rem;
+}
+
+.symbol-cell .table-status {
+  color: var(--warning);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.value-unavailable {
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-style: normal;
 }
 
 .empty-row {

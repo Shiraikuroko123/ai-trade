@@ -211,6 +211,108 @@ class WebReleaseTests(unittest.TestCase):
             self.assertEqual(trading["paper_trades"], [])
             self.assertEqual(trading["errors"][0]["recovery_action"], "refresh-data")
 
+    def test_portfolio_keeps_ledger_visible_when_market_cache_is_unavailable(self):
+        config = load_config(REPOSITORY_ROOT / "config/default.json")
+        service = DashboardService(config)
+        symbol = config.instruments[0].symbol
+        service._paper_state = lambda: {
+            "account_id": "acct_test",
+            "last_run_date": "2026-07-17",
+            "last_equity": 100000.0,
+            "cash": 25000.0,
+            "high_water_mark": 105000.0,
+            "cooldown_remaining": 0,
+            "positions": {symbol: 100},
+            "pending_targets": {symbol: 0.5},
+            "pending_signal_date": "2026-07-17",
+        }
+        with patch.object(service, "market", side_effect=RuntimeError("cache missing")):
+            result = service.portfolio()
+
+        self.assertTrue(result["initialized"])
+        self.assertFalse(result["valuation_available"])
+        self.assertEqual(result["valuation_status"], "unavailable")
+        self.assertEqual(result["positions"][0]["quantity"], 100)
+        self.assertIsNone(result["positions"][0]["price"])
+        self.assertIsNone(result["positions"][0]["market_value"])
+        self.assertIsNone(result["pending_targets"][0]["current_weight"])
+        self.assertIsNone(result["pending_targets"][0]["difference"])
+        self.assertEqual(result["errors"][0]["recovery_action"], "refresh-data")
+
+    def test_portfolio_does_not_turn_a_missing_position_bar_into_zero_value(self):
+        config = load_config(REPOSITORY_ROOT / "config/default.json")
+        symbol = config.instruments[0].symbol
+        service = DashboardService(config)
+        service._paper_state = lambda: {
+            "account_id": "acct_test",
+            "last_run_date": "2026-07-17",
+            "last_equity": 100000.0,
+            "cash": 25000.0,
+            "high_water_mark": 100000.0,
+            "positions": {symbol: 100},
+            "pending_targets": {symbol: 0.5},
+        }
+
+        market = SimpleNamespace(
+            latest_date=lambda: date(2026, 7, 17),
+            latest_common_session=date(2026, 7, 16),
+            completed_through=date(2026, 7, 17),
+            manifest={"files": {}},
+            instrument=lambda requested: config.instruments[0],
+            latest_bar_on_or_before=lambda requested, on_date: None,
+        )
+        service.market = lambda: market
+        service._paper_equity_curve = lambda _maximum: []
+
+        result = service.portfolio()
+
+        self.assertFalse(result["valuation_available"])
+        self.assertEqual(result["valuation_status"], "partial")
+        self.assertEqual(result["valuation_date"], "2026-07-16")
+        self.assertIsNone(result["positions"][0]["price"])
+        self.assertIsNone(result["positions"][0]["market_value"])
+        self.assertIsNone(result["positions"][0]["weight"])
+        self.assertEqual(result["positions"][0]["valuation_error"], "missing_completed_bar")
+        self.assertEqual(result["errors"][0]["symbol"], symbol)
+        self.assertIsNone(result["pending_targets"][0]["current_weight"])
+
+    def test_overview_exposes_freshness_and_provenance_fields(self):
+        config = load_config(REPOSITORY_ROOT / "config/default.json")
+        service = DashboardService(config)
+        market_date = date(2026, 7, 17)
+        market = SimpleNamespace(
+            latest_date=lambda: market_date,
+            completed_through=market_date,
+        )
+        diagnosis = {
+            "status": "OK",
+            "completed_session_cutoff": market_date.isoformat(),
+            "latest_common_market_date": market_date.isoformat(),
+            "market_data_current": True,
+            "market_data_lag_days": 0,
+            "point_in_time_universe": {"active_count": 8},
+            "research_warnings": [],
+            "cache_manifest": {
+                "available": True,
+                "latest_common_session": market_date.isoformat(),
+                "source_counts": {"network": 8},
+            },
+        }
+        service._paper_state = lambda: None
+        service._paper_audit = lambda _market: {"sessions": 0}
+        service._signal = lambda _market, _state: None
+        service._equity_curve = lambda _maximum: []
+        service._report_statuses = lambda _reports, _market: {}
+        with patch.object(service, "market", return_value=market), patch(
+            "ai_trade.web.service.diagnose", return_value=diagnosis
+        ):
+            result = service.overview()
+
+        freshness = result["market"]["freshness"]
+        self.assertEqual(freshness["completed_session_cutoff"], market_date.isoformat())
+        self.assertEqual(freshness["latest_common_market_date"], market_date.isoformat())
+        self.assertEqual(result["market"]["provenance"]["source_counts"], {"network": 8})
+
     def test_historical_universe_coverage_is_capped_at_selected_date(self):
         config = load_config(REPOSITORY_ROOT / "config/default.json")
         selected = date(2020, 1, 2)

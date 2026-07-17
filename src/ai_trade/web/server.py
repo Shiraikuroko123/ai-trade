@@ -141,6 +141,22 @@ def _handler_factory(
         server_version = "AITradeDashboard"
         sys_version = ""
 
+        def handle(self) -> None:
+            """Treat a browser closing a request as a normal disconnect.
+
+            The dashboard is polled and navigated frequently. A tab reload or a
+            client-side abort can happen after the response headers are sent;
+            letting that socket exception escape only creates noisy worker
+            tracebacks and can make the next local request look unavailable.
+            """
+            try:
+                super().handle()
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                LOGGER.debug(
+                    "Dashboard client disconnected during %s",
+                    getattr(self, "requestline", "<unknown request>"),
+                )
+
         def do_HEAD(self) -> None:
             if not self._valid_host():
                 self._json_error(HTTPStatus.FORBIDDEN, "Invalid host header")

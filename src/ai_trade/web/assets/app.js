@@ -274,6 +274,35 @@ function statusChip(label, kind = "neutral") {
   return `<span class="status-chip ${kind}">${escapeHtml(label)}</span>`;
 }
 
+const VALUATION_STATUS_LABELS = {
+  current: "估值已校验",
+  stale: "快照滞后",
+  needs_review: "需要复核",
+  partial: "部分估值",
+  unavailable: "估值不可用",
+  uninitialized: "尚未建立",
+};
+
+function valuationStatusLabel(value) {
+  return VALUATION_STATUS_LABELS[String(value || "").toLowerCase()] || "估值状态未知";
+}
+
+function valuationStatusKind(value) {
+  return {
+    current: "success",
+    stale: "warning",
+    needs_review: "warning",
+    partial: "warning",
+    unavailable: "danger",
+    uninitialized: "neutral",
+  }[String(value || "").toLowerCase()] || "neutral";
+}
+
+function valuationCell(value, formatter, available = true) {
+  if (available) return formatter(value);
+  return '<span class="value-unavailable" aria-label="估值不可用">—</span>';
+}
+
 function booleanChip(value, passed = "通过", failed = "未通过") {
   return statusChip(value ? passed : failed, value ? "success" : "danger");
 }
@@ -333,11 +362,15 @@ function updateMarketPulse(payload = null, failure = "") {
   const routeChart = state.route === "market" ? payload?.chart || {} : {};
   const diagnostics = routeChart.diagnostics || {};
   const market = overview.market || {};
+  const marketFreshness = market.freshness || {};
   const marketWarnings = Array.isArray(market.warnings) ? market.warnings : [];
   const fallbackUsed = marketWarnings.some((item) => String(item).includes("network fallback"));
-  const marketDateValue = routeChart.data_date || market.date || "不可用";
+  const marketDateValue = routeChart.data_date
+    || marketFreshness.latest_common_market_date
+    || market.date
+    || "不可用";
   const marketMissing = routeChart.available === false || diagnostics.missing || market.available === false;
-  const marketStale = Boolean(diagnostics.stale);
+  const marketStale = diagnostics.stale === true || marketFreshness.current === false;
   const marketState = marketMissing
     ? "数据缺失"
     : marketStale
@@ -698,8 +731,8 @@ function updateRouteDate(payload) {
   let value = "";
   let label = "数据日期";
   if (state.route === "overview") {
-    value = payload.market?.date;
-    label = "行情快照";
+    value = payload.market?.freshness?.latest_common_market_date || payload.market?.date;
+    label = "共同最新行情";
     if (payload.version) versionLabel.textContent = `AI Trade v${payload.version}`;
   } else if (state.route === "market") {
     value = payload.chart?.data_date;
@@ -725,8 +758,9 @@ function updateRouteDate(payload) {
     value = payload.paper_audit?.period?.[1];
     label = "审计截止";
   } else if (state.route === "risk") {
-    value = payload.overview?.market?.date;
-    label = "行情快照";
+    value = payload.overview?.market?.freshness?.latest_common_market_date
+      || payload.overview?.market?.date;
+    label = "共同最新行情";
   } else if (state.route === "universe") {
     value = payload.date;
     label = "截面日期";
@@ -1356,7 +1390,24 @@ function renderOverview(data) {
     String(item).includes("network fallback") || /\.json /.test(String(item))
   ));
   const methodologyWarnings = warnings.filter((item) => !operationalWarnings.includes(item));
-  const signalMatchesMarket = Boolean(data.signal?.date) && data.signal?.date === data.market?.date;
+  const freshness = data.market?.freshness || {};
+  const marketDecisionDate = freshness.latest_common_market_date || data.market?.date;
+  const signalMatchesMarket = Boolean(data.signal?.date) && data.signal?.date === marketDecisionDate;
+  const freshnessLag = finite(freshness.lag_calendar_days);
+  const marketCurrent = freshness.current !== false;
+  const marketStatus = data.market?.available === false
+    ? "不可用"
+    : !marketCurrent
+      ? `滞后 ${formatInteger(freshnessLag)} 日`
+      : fallbackUsed
+        ? "备用源补齐"
+        : "已校验";
+  const marketStatusKind = data.market?.available === false
+    ? "danger"
+    : !marketCurrent || fallbackUsed
+      ? "warning"
+      : "success";
+  const freshnessNote = `共同最新 ${freshness.latest_common_market_date || data.market?.date || "—"} · 完成截止 ${freshness.completed_session_cutoff || "—"}`;
   const grossExposure = targets.reduce((total, [, weight]) => total + (finite(weight) || 0), 0);
   const researchEnd = data.research?.period?.[1] || "—";
   const actions = [
@@ -1371,9 +1422,9 @@ function renderOverview(data) {
         {
           label: "行情快照",
           value: data.market?.date || "不可用",
-          status: data.market?.available === false ? "不可用" : fallbackUsed ? "备用源补齐" : "已校验",
-          kind: data.market?.available === false ? "danger" : fallbackUsed ? "warning" : "success",
-          note: `配置源 ${marketProviderLabel(data.market?.provider)} · ${data.market?.universe?.active_count ?? 0} 支有效`,
+          status: marketStatus,
+          kind: marketStatusKind,
+          note: `${freshnessNote} · ${marketProviderLabel(data.market?.provider)} · ${data.market?.universe?.active_count ?? 0} 支有效`,
         },
         {
           label: "策略信号",
@@ -2757,11 +2808,52 @@ function renderPortfolio(data) {
       </section>
     </div>`;
   }
+  const valuationStatus = data.valuation_status
+    || (data.valuation_available === false ? "unavailable" : "current");
+  const valuationUnavailable = valuationStatus === "unavailable";
+  const valuationPartial = valuationStatus === "partial";
+  const freshness = data.market_freshness || {};
+  const valuationErrors = Array.isArray(data.errors)
+    ? data.errors.filter((item) => item?.code && item?.symbol)
+    : [];
+  const valuationErrorSymbols = [...new Set(valuationErrors.map((item) => item.symbol))];
+  const freshnessReviewText = freshness.current === false
+    ? `共同最新交易日 ${freshness.date || "—"}，完成交易日截止 ${freshness.completed_session_cutoff || "—"}；滞后 ${formatInteger(freshness.lag_calendar_days)} 个自然日。`
+    : `共同最新交易日 ${freshness.date || "—"} 与完成交易日截止 ${freshness.completed_session_cutoff || "—"} 一致；来源或清单状态仍需复核。`;
+  const valuationNotice = valuationUnavailable
+    ? `<aside class="callout warning" role="status">
+        <strong>行情估值暂不可用</strong>
+        <p>下方数量、现金和最近账本权益仍来自本地账本；价格、市值、权重和目标差额不会在缺少已校验行情时猜测。运行“刷新行情”后再复核组合。</p>
+        <div class="action-row">${actionButton("refresh-data", "primary")}</div>
+      </aside>`
+    : valuationPartial
+      ? `<aside class="callout warning" role="status">
+          <strong>部分持仓暂未估值</strong>
+          <p>${escapeHtml(valuationErrorSymbols.join("、") || "部分证券")} 缺少已校验的完整收盘价；其数量仍保留，价格、市值、权重和相关目标差额显示为不可用。运行“刷新行情”后再复核。</p>
+          <div class="action-row">${actionButton("refresh-data", "primary")}</div>
+        </aside>`
+    : freshness.status && freshness.status !== "OK"
+      ? `<aside class="callout warning" role="status">
+          <strong>组合行情快照需要复核</strong>
+          <p>${escapeHtml(freshnessReviewText)}</p>
+        </aside>`
+      : "";
+  const equityLabel = valuationStatus === "current" ? "账户权益" : "账本权益（最近记录）";
+  const equityNote = valuationStatus === "current"
+    ? "唯一模拟记账口径"
+    : "行情状态复核后重新估值";
   return `
     <div class="page-stack">
       ${pageIntro("模拟组合", `账户 ${String(data.account_id || "").slice(0, 8)} · 状态日期 ${data.date || "—"}`, actionButton("paper-run", "primary"))}
+      <div class="portfolio-valuation-meta" aria-label="组合估值状态">
+        <span>估值口径</span>
+        ${statusChip(valuationStatusLabel(valuationStatus), valuationStatusKind(valuationStatus))}
+        <span>共同最新 ${escapeHtml(data.valuation_date || freshness.date || "—")}</span>
+        <span>快照截止 ${escapeHtml(freshness.completed_session_cutoff || "—")}</span>
+      </div>
+      ${valuationNotice}
       <section class="metric-strip metric-strip-priority portfolio-risk-strip" aria-label="组合摘要">
-        ${metric("账户权益", formatMoney(data.equity), "唯一模拟记账口径")}
+        ${metric(equityLabel, formatMoney(data.equity), equityNote)}
         ${metric("现金缓冲", formatPercent(data.cash_weight), `${formatMoney(data.cash)} 可用`)}
         ${metric("当前回撤", formatPercent(data.drawdown), "相对账户高水位", tone(data.drawdown))}
         ${metric("风险冷却", `${formatInteger(data.cooldown_remaining)} 日`, data.cooldown_remaining ? "暂停新增风险仓位" : "未触发冷却", data.cooldown_remaining ? "tone-warning" : "tone-positive")}
@@ -2797,11 +2889,11 @@ function positionsTable(rows) {
   return `<div class="table-wrap"><table class="data-table compact">
     <thead><tr><th>证券</th><th class="numeric">数量</th><th class="numeric">价格</th><th class="numeric">市值</th><th class="numeric">权重</th></tr></thead>
     <tbody>${rows.length ? rows.map((row) => `<tr>
-      <td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol, row.name))}</span></td>
+      <td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol, row.name))}</span>${row.valuation_status === "unavailable" ? '<span class="table-status">估值不可用</span>' : ""}</td>
       <td class="numeric">${formatInteger(row.quantity)}</td>
-      <td class="numeric">${formatNumber(row.price, 3)}</td>
-      <td class="numeric">${formatMoney(row.market_value)}</td>
-      <td class="numeric">${formatPercent(row.weight)}</td>
+      <td class="numeric">${valuationCell(row.price, (value) => formatNumber(value, 3), row.valuation_status !== "unavailable")}</td>
+      <td class="numeric">${valuationCell(row.market_value, formatMoney, row.valuation_status !== "unavailable")}</td>
+      <td class="numeric">${valuationCell(row.weight, formatPercent, row.valuation_status !== "unavailable")}</td>
     </tr>`).join("") : emptyRow(5, "当前账户全部为现金")}</tbody>
   </table></div>`;
 }
@@ -2810,10 +2902,10 @@ function pendingTable(rows) {
   return `<div class="table-wrap"><table class="data-table compact">
     <thead><tr><th>证券</th><th class="numeric">当前</th><th class="numeric">目标</th><th class="numeric">差额</th></tr></thead>
     <tbody>${rows.length ? rows.map((row) => `<tr>
-      <td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol, row.name))}</span></td>
-      <td class="numeric">${formatPercent(row.current_weight)}</td>
+      <td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol, row.name))}</span>${row.current_weight === null ? '<span class="table-status">当前估值不可用</span>' : ""}</td>
+      <td class="numeric">${valuationCell(row.current_weight, formatPercent, row.current_weight !== null)}</td>
       <td class="numeric">${formatPercent(row.target_weight)}</td>
-      <td class="numeric ${tone(row.difference)}">${formatPercent(row.difference, true)}</td>
+      <td class="numeric ${tone(row.difference)}">${valuationCell(row.difference, (value) => formatPercent(value, true), row.difference !== null)}</td>
     </tr>`).join("") : emptyRow(4, "暂无待执行目标")}</tbody>
   </table></div>`;
 }

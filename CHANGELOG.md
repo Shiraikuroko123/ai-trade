@@ -4,6 +4,20 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Portfolio responses now retain validated paper-ledger quantities, cash, and
+  recorded equity when the market cache is unavailable. Price, market-value,
+  weight, and target-difference fields stay explicitly unavailable until a
+  fresh snapshot is restored, instead of failing the whole portfolio view.
+- Overview and portfolio payloads now expose the completed-session cutoff,
+  common latest market date, calendar-day lag, manifest availability, and
+  source provenance so data age and trust can be audited without opening raw
+  diagnostics. The market pulse also reflects stale snapshots.
+- Portfolio valuation now distinguishes current, stale, review-required, and
+  partial snapshots. Missing position bars remain explicit unavailable values
+  with a recovery action instead of becoming zero-price estimates, and the UI
+  uses the common latest session date in its top-level date label.
+- The local HTTP handler treats browser aborts and reset sockets as normal
+  disconnects, preventing harmless reloads from producing worker tracebacks.
 - Strategy-lab candidate, validation, approval, monitoring, active-state, and
   transition records now use bounded duplicate-key-rejecting JSON with explicit
   top-level field allowlists. Atomic writes enforce the same limits before
