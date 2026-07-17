@@ -316,6 +316,7 @@ order UI or approval generator while no verified live adapter exists.
 `LiveOrderRouter` fails closed before calling the adapter. It checks:
 
 - unique client order IDs and append-only intent reservations;
+- empty order metadata until a bounded cross-adapter schema is defined;
 - active point-in-time universe membership and tradable status;
 - positive whole-lot quantities and tick-aligned positive limit prices;
 - previous-close daily price-limit bounds;

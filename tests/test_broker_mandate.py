@@ -136,6 +136,25 @@ class BrokerMandateTests(unittest.TestCase):
         changed["account_id"] = "other-account"
         self.assertNotEqual(first, order_batch_fingerprint(orders, **changed))
 
+    def test_batch_fingerprint_rejects_unbound_order_metadata(self):
+        order = BrokerOrderRequest(
+            "order-with-metadata",
+            "510300",
+            OrderSide.BUY,
+            100,
+            10.0,
+            metadata={"routing": "adapter-defined"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "empty order metadata"):
+            order_batch_fingerprint(
+                [order],
+                on_date=date(2026, 7, 18),
+                adapter="mock",
+                account_id="account",
+                config_fingerprint=FINGERPRINT,
+            )
+
     def test_batch_approval_is_one_time_and_retained_as_audit_record(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "live_batch_approval.json"

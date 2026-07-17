@@ -477,6 +477,17 @@ class BrokerTests(unittest.TestCase):
                 (_order(price=10.005), "tick size"),
                 (_order(price=11.01), "daily range"),
                 (_order(side=OrderSide.SELL, quantity=200), "available broker position"),
+                (
+                    BrokerOrderRequest(
+                        "metadata-order",
+                        "510300",
+                        OrderSide.BUY,
+                        100,
+                        10.0,
+                        metadata={"routing": "adapter-defined"},
+                    ),
+                    "metadata is unsupported",
+                ),
             )
             for order, message in cases:
                 with self.subTest(message=message):

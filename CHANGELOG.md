@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Live validation and one-time batch fingerprints now reject arbitrary order
+  metadata until a bounded adapter-independent schema exists, preventing
+  unapproved routing semantics from bypassing exact-batch review.
 - Broker control and evidence paths are now compared after resolution against
   the configuration root, preventing relative or absolute path aliases from
   bypassing file-isolation checks.

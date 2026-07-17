@@ -124,6 +124,10 @@ class LiveOrderRouter:
                 raise ValueError(f"Unsupported live order side: {order.side!r}")
             if order.time_in_force != "DAY":
                 raise ValueError("Only DAY live orders are supported")
+            if not isinstance(order.metadata, dict) or order.metadata:
+                raise ValueError(
+                    "Live order metadata is unsupported without an explicit schema"
+                )
             if order.symbol not in active_symbols:
                 raise ValueError(
                     f"Order symbol is outside the active universe on {on_date}: "

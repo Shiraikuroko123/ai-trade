@@ -162,6 +162,13 @@ def order_batch_fingerprint(
 ) -> str:
     if not orders:
         raise ValueError("Cannot fingerprint an empty order batch")
+    for order in orders:
+        if not isinstance(order, BrokerOrderRequest):
+            raise ValueError("Broker batch contains an invalid order request")
+        if not isinstance(order.metadata, dict) or order.metadata:
+            raise ValueError(
+                "Broker batch approvals require empty order metadata"
+            )
     payload = {
         "schema_version": 1,
         "date": on_date.isoformat(),
