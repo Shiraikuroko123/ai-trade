@@ -4,6 +4,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Broker adapter/account identities and runtime account, position, order, fill,
+  currency, and message text now share explicit length and canonical-text
+  boundaries; leading/trailing whitespace, non-printing Unicode, control
+  characters, DEL, and oversized adapter output fail closed before persistence
+  or rendering.
 - Live routing now validates the complete broker submission collection and its
   exact request identities before appending any returned snapshot. A malformed
   or changed response leaves only the pre-I/O reservation for manual recovery.

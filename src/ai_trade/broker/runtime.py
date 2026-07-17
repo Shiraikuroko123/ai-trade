@@ -4,6 +4,10 @@ import math
 from datetime import datetime
 
 from .base import (
+    BROKER_ACCOUNT_ID_MAX_LENGTH,
+    BROKER_CURRENCY_MAX_LENGTH,
+    BROKER_MESSAGE_MAX_LENGTH,
+    BROKER_SYMBOL_MAX_LENGTH,
     BrokerAccount,
     BrokerFill,
     BrokerHealth,
@@ -16,8 +20,8 @@ from .lifecycle import validate_broker_fill, validate_order_snapshot
 def validated_broker_account(value: object) -> BrokerAccount:
     if (
         not isinstance(value, BrokerAccount)
-        or not _broker_text(value.account_id)
-        or not _broker_text(value.currency)
+        or not _broker_text(value.account_id, BROKER_ACCOUNT_ID_MAX_LENGTH)
+        or not _broker_text(value.currency, BROKER_CURRENCY_MAX_LENGTH)
         or not _broker_number(value.cash)
         or not _broker_number(value.available_cash)
         or not _broker_number(value.equity)
@@ -36,7 +40,7 @@ def validated_broker_positions(value: object) -> list[BrokerPosition]:
     for position in value:
         if (
             not isinstance(position, BrokerPosition)
-            or not _broker_text(position.symbol)
+            or not _broker_text(position.symbol, BROKER_SYMBOL_MAX_LENGTH)
             or isinstance(position.quantity, bool)
             or not isinstance(position.quantity, int)
             or position.quantity < 0
@@ -57,8 +61,11 @@ def validated_broker_health(value: object) -> BrokerHealth:
         not isinstance(value, BrokerHealth)
         or type(value.connected) is not bool
         or type(value.trading_session) is not bool
-        or not isinstance(value.message, str)
-        or len(value.message) > 2_000
+        or not _broker_text(
+            value.message,
+            BROKER_MESSAGE_MAX_LENGTH,
+            allow_empty=True,
+        )
         or not isinstance(value.checked_at, datetime)
         or value.checked_at.tzinfo is None
         or value.checked_at.utcoffset() is None
@@ -108,12 +115,18 @@ def validated_broker_flag(value: object, name: str) -> bool:
     return value
 
 
-def _broker_text(value: object) -> bool:
+def _broker_text(
+    value: object,
+    maximum: int,
+    *,
+    allow_empty: bool = False,
+) -> bool:
     return (
         isinstance(value, str)
-        and bool(value)
+        and (allow_empty or bool(value))
+        and len(value) <= maximum
         and value.strip() == value
-        and not any(ord(character) < 32 for character in value)
+        and (not value or value.isprintable())
     )
 
 

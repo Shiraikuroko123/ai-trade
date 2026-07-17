@@ -350,8 +350,10 @@ order UI or approval generator while no verified live adapter exists.
 Account, position, and health annotations are not trusted as runtime
 validation. The router requires exact core model objects, real booleans for
 connection/session flags, finite non-boolean balances and valuations, bounded
-available quantities, and timezone-aware health timestamps before approval is
-consumed. After submission, the router validates the complete returned order
+available quantities, bounded canonical identities/messages, and timezone-aware
+health timestamps before approval is consumed. Surrounding whitespace, control
+characters, DEL, non-printing Unicode, and oversized adapter text are rejected
+before rendering or persistence. After submission, the router validates the complete returned order
 collection and checks every client ID, broker ID, symbol, side, quantity, and
 limit price against the approved request before appending a response event. A
 malformed or changed response leaves the pre-I/O `PENDING_SUBMIT` reservation

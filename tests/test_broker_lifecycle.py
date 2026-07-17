@@ -5,6 +5,7 @@ import hashlib
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -25,6 +26,7 @@ from ai_trade.broker.ledger import (
     recover_order_lifecycle,
     reserve_order_intents,
 )
+from ai_trade.broker.lifecycle import validate_broker_fill, validate_order_snapshot
 
 
 START = datetime(2026, 7, 17, 1, 30, tzinfo=timezone.utc)
@@ -80,6 +82,35 @@ def _fill(
 
 
 class BrokerLifecycleTests(unittest.TestCase):
+    def test_order_and_fill_text_fields_are_bounded_and_canonical(self):
+        valid_event = _event(OrderStatus.SUBMITTED, 0)
+        invalid_events = (
+            replace(valid_event, client_order_id=" client-1"),
+            replace(valid_event, broker_order_id="x" * 201),
+            replace(valid_event, symbol="510300\n"),
+            replace(valid_event, message="x" * 2_001),
+            replace(valid_event, message="unsafe\x7fmessage"),
+            replace(valid_event, message="unsafe\u200bmessage"),
+        )
+        for event in invalid_events:
+            with self.subTest(event=event), self.assertRaisesRegex(
+                ValueError, "invalid or incomplete"
+            ):
+                validate_order_snapshot(event)
+
+        valid_fill = _fill("fill-1", 1, 100, 10.0)
+        invalid_fills = (
+            replace(valid_fill, fill_id="x" * 201),
+            replace(valid_fill, broker_order_id=" broker-1"),
+            replace(valid_fill, client_order_id="client-1\t"),
+            replace(valid_fill, symbol="x" * 65),
+        )
+        for fill in invalid_fills:
+            with self.subTest(fill=fill), self.assertRaisesRegex(
+                ValueError, "invalid or incomplete"
+            ):
+                validate_broker_fill(fill)
+
     def test_intent_reservation_binds_the_exact_approval_and_batch(self):
         with tempfile.TemporaryDirectory() as temporary:
             orders = Path(temporary) / "orders.csv"

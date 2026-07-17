@@ -206,6 +206,19 @@ class BrokerProbeTests(unittest.TestCase):
         def invalid_fee_flag(broker):
             broker.fill_commission_complete = "false"
 
+        def oversized_health_message(broker):
+            broker.health = lambda: BrokerHealth(
+                True,
+                False,
+                "x" * 2_001,
+                datetime.now(timezone.utc),
+            )
+
+        def invalid_position_symbol(broker):
+            broker.positions = lambda: [
+                BrokerPosition("510300\n", 100, 100, 10.0, 1000.0)
+            ]
+
         cases = (
             (invalid_health, "invalid health snapshot"),
             (invalid_account, "invalid account snapshot"),
@@ -213,6 +226,8 @@ class BrokerProbeTests(unittest.TestCase):
             (invalid_orders, "invalid order snapshot"),
             (invalid_fills, "invalid fill snapshot"),
             (invalid_fee_flag, "invalid fill commission completeness flag"),
+            (oversized_health_message, "invalid health snapshot"),
+            (invalid_position_symbol, "invalid position snapshot"),
         )
         for mutate, message in cases:
             broker = ReadOnlyBroker()

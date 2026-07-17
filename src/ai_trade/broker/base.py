@@ -11,6 +11,14 @@ if TYPE_CHECKING:
     from ..config import AppConfig
 
 
+BROKER_ADAPTER_NAME_MAX_LENGTH = 128
+BROKER_ACCOUNT_ID_MAX_LENGTH = 128
+BROKER_CURRENCY_MAX_LENGTH = 16
+BROKER_ORDER_ID_MAX_LENGTH = 200
+BROKER_SYMBOL_MAX_LENGTH = 64
+BROKER_MESSAGE_MAX_LENGTH = 2_000
+
+
 class BrokerEnvironment(str, Enum):
     SANDBOX = "sandbox"
     LIVE = "live"
@@ -298,7 +306,7 @@ def _index_entry_points(
     indexed: dict[str, metadata.EntryPoint] = {}
     for point in points:
         name = getattr(point, "name", None)
-        if not isinstance(name, str) or not name:
+        if not _bounded_broker_text(name, BROKER_ADAPTER_NAME_MAX_LENGTH):
             raise RuntimeError(f"Broker entry point in {group!r} has an invalid name")
         if name in indexed:
             existing_identity = _entry_point_identity(indexed[name])
@@ -330,8 +338,10 @@ def _entry_point_identity(point: object) -> tuple[str, str, str] | None:
 
 def _validate_capability_declaration(value: BrokerCapabilities) -> None:
     if (
-        not isinstance(value.adapter_name, str)
-        or not value.adapter_name
+        not _bounded_broker_text(
+            value.adapter_name,
+            BROKER_ADAPTER_NAME_MAX_LENGTH,
+        )
         or not isinstance(value.access_level, BrokerAccessLevel)
         or not isinstance(value.operations, frozenset)
         or any(not isinstance(item, BrokerOperation) for item in value.operations)
@@ -344,3 +354,13 @@ def _validate_capability_declaration(value: BrokerCapabilities) -> None:
         or type(value.requires_local_client) is not bool
     ):
         raise RuntimeError("Broker capability declaration has invalid runtime types")
+
+
+def _bounded_broker_text(value: object, maximum: int) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and len(value) <= maximum
+        and value.strip() == value
+        and value.isprintable()
+    )

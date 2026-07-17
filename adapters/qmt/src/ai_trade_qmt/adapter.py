@@ -14,6 +14,7 @@ from types import ModuleType
 from typing import Any
 
 from ai_trade.broker.base import (
+    BROKER_ACCOUNT_ID_MAX_LENGTH,
     Broker,
     BrokerAccessLevel,
     BrokerAccount,
@@ -53,9 +54,6 @@ _OPEN_ORDER_STATUSES = {
     OrderStatus.PARTIALLY_FILLED,
     OrderStatus.CANCEL_PENDING,
 }
-_ACCOUNT_ID_MAX_LENGTH = 128
-
-
 @dataclass(frozen=True)
 class QMTSettings:
     userdata_path: Path
@@ -440,8 +438,11 @@ def _validate_account_id(value: str) -> None:
     if (
         not value
         or value != value.strip()
-        or len(value) > _ACCOUNT_ID_MAX_LENGTH
-        or any(ord(character) < 33 or ord(character) == 127 for character in value)
+        or len(value) > BROKER_ACCOUNT_ID_MAX_LENGTH
+        or any(
+            character.isspace() or not character.isprintable()
+            for character in value
+        )
     ):
         raise RuntimeError("broker.account_id is invalid for the QMT adapter")
 

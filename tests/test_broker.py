@@ -923,6 +923,24 @@ class BrokerTests(unittest.TestCase):
     def test_broker_configuration_rejects_missing_identity_and_path_collisions(self):
         with self.assertRaisesRegex(ValueError, "adapter"):
             _validate_broker({"mode": "live", "account_id": "account"})
+        for field, value in (
+            ("adapter", " mock"),
+            ("adapter", "x" * 129),
+            ("account_id", "account\n"),
+            ("account_id", "account\u200b"),
+            ("account_id", "x" * 129),
+        ):
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(
+                ValueError, field
+            ):
+                _validate_broker(
+                    {
+                        "mode": "live",
+                        "adapter": "mock",
+                        "account_id": "account",
+                        field: value,
+                    }
+                )
         with self.assertRaisesRegex(ValueError, "must differ"):
             _validate_broker(
                 {
@@ -1029,6 +1047,20 @@ class BrokerTests(unittest.TestCase):
             return_value={BrokerRegistry.ENTRY_POINT_GROUP: points},
         ), self.assertRaisesRegex(RuntimeError, "Duplicate broker entry point"):
             BrokerRegistry.discover()
+
+    def test_registry_rejects_noncanonical_or_oversized_adapter_names(self):
+        for name in (" mock", "mock\n", "mock\u200b", "x" * 129):
+            with (
+                self.subTest(name=name),
+                patch(
+                    "ai_trade.broker.base.metadata.entry_points",
+                    return_value={
+                        BrokerRegistry.ENTRY_POINT_GROUP: (SimpleNamespace(name=name),)
+                    },
+                ),
+                self.assertRaisesRegex(RuntimeError, "invalid name"),
+            ):
+                BrokerRegistry.discover()
 
     def test_registry_deduplicates_identical_distribution_metadata(self):
         distribution = SimpleNamespace(name="ai-trade-qmt", version="0.2.0")

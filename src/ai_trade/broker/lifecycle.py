@@ -4,7 +4,15 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 
-from .base import BrokerFill, BrokerOrderSnapshot, OrderSide, OrderStatus
+from .base import (
+    BROKER_MESSAGE_MAX_LENGTH,
+    BROKER_ORDER_ID_MAX_LENGTH,
+    BROKER_SYMBOL_MAX_LENGTH,
+    BrokerFill,
+    BrokerOrderSnapshot,
+    OrderSide,
+    OrderStatus,
+)
 
 
 TERMINAL_ORDER_STATUSES = frozenset(
@@ -69,8 +77,13 @@ def validate_order_snapshot(order: BrokerOrderSnapshot) -> None:
     if not isinstance(order, BrokerOrderSnapshot):
         raise ValueError("Broker order event must be a BrokerOrderSnapshot")
     if (
-        not order.client_order_id
-        or not order.symbol
+        not _bounded_text(order.client_order_id, BROKER_ORDER_ID_MAX_LENGTH)
+        or not _bounded_text(
+            order.broker_order_id,
+            BROKER_ORDER_ID_MAX_LENGTH,
+            allow_empty=True,
+        )
+        or not _bounded_text(order.symbol, BROKER_SYMBOL_MAX_LENGTH)
         or not isinstance(order.side, OrderSide)
         or not isinstance(order.status, OrderStatus)
         or isinstance(order.quantity, bool)
@@ -87,7 +100,11 @@ def validate_order_snapshot(order: BrokerOrderSnapshot) -> None:
         or not isinstance(order.updated_at, datetime)
         or order.updated_at.tzinfo is None
         or order.updated_at.utcoffset() is None
-        or not isinstance(order.message, str)
+        or not _bounded_text(
+            order.message,
+            BROKER_MESSAGE_MAX_LENGTH,
+            allow_empty=True,
+        )
         or (
             order.status != OrderStatus.PENDING_SUBMIT
             and not order.broker_order_id
@@ -123,10 +140,10 @@ def validate_broker_fill(fill: BrokerFill) -> None:
     if not isinstance(fill, BrokerFill):
         raise ValueError("Broker fill must be a BrokerFill")
     if (
-        not fill.fill_id
-        or not fill.broker_order_id
-        or not fill.client_order_id
-        or not fill.symbol
+        not _bounded_text(fill.fill_id, BROKER_ORDER_ID_MAX_LENGTH)
+        or not _bounded_text(fill.broker_order_id, BROKER_ORDER_ID_MAX_LENGTH)
+        or not _bounded_text(fill.client_order_id, BROKER_ORDER_ID_MAX_LENGTH)
+        or not _bounded_text(fill.symbol, BROKER_SYMBOL_MAX_LENGTH)
         or not isinstance(fill.side, OrderSide)
         or isinstance(fill.quantity, bool)
         or not isinstance(fill.quantity, int)
@@ -469,6 +486,21 @@ def _nonnegative_finite(value: object) -> bool:
         and isinstance(value, (int, float))
         and math.isfinite(float(value))
         and float(value) >= 0
+    )
+
+
+def _bounded_text(
+    value: object,
+    maximum: int,
+    *,
+    allow_empty: bool = False,
+) -> bool:
+    return (
+        isinstance(value, str)
+        and (allow_empty or bool(value))
+        and len(value) <= maximum
+        and value.strip() == value
+        and (not value or value.isprintable())
     )
 
 

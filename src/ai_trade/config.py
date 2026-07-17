@@ -9,6 +9,10 @@ from datetime import date, time
 from pathlib import Path
 from typing import Any
 
+from .broker.base import (
+    BROKER_ACCOUNT_ID_MAX_LENGTH,
+    BROKER_ADAPTER_NAME_MAX_LENGTH,
+)
 from .models import CostSettings, Instrument, RiskSettings, StrategySettings
 from .security import SecurityMaster
 
@@ -474,10 +478,22 @@ def _validate_broker(
     if mode not in {"disabled", "sandbox", "live"}:
         raise ValueError("broker.mode must be disabled, sandbox, or live")
     if mode in {"sandbox", "live"}:
-        for name in ("adapter", "account_id"):
+        for name, maximum in (
+            ("adapter", BROKER_ADAPTER_NAME_MAX_LENGTH),
+            ("account_id", BROKER_ACCOUNT_ID_MAX_LENGTH),
+        ):
             configured = value.get(name)
-            if not isinstance(configured, str) or not configured.strip():
-                raise ValueError(f"broker.{name} is required in {mode} mode")
+            if (
+                not isinstance(configured, str)
+                or not configured
+                or configured.strip() != configured
+                or len(configured) > maximum
+                or not configured.isprintable()
+            ):
+                raise ValueError(
+                    f"broker.{name} must be canonical text of at most {maximum} "
+                    f"characters in {mode} mode"
+                )
     raw_minimum = value.get("sandbox_minimum_reconciliations", 20)
     if isinstance(raw_minimum, bool) or not isinstance(raw_minimum, int):
         raise ValueError("broker.sandbox_minimum_reconciliations must be an integer")
