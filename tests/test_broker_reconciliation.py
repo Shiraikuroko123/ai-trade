@@ -48,6 +48,29 @@ def _write_rows(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 class BrokerReconciliationTests(unittest.TestCase):
+    def test_clean_reconciliation_requires_nonnegative_matching_cash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            for expected_cash, broker_cash, message in (
+                (-1.0, -1.0, "non-negative"),
+                (1_000.0, 900.0, "mismatched cash"),
+            ):
+                with self.subTest(message=message), self.assertRaisesRegex(
+                    ValueError, message
+                ):
+                    append_reconciliation(
+                        path,
+                        **(
+                            _arguments()
+                            | {
+                                "expected_cash": expected_cash,
+                                "broker_cash": broker_cash,
+                                "issues": [],
+                            }
+                        ),
+                    )
+            self.assertFalse(path.exists())
+
     def test_v2_content_fingerprint_detects_cash_tampering(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "reconciliation.csv"

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .base import BrokerAccount, BrokerPosition
 from .ledger import atomic_append_csv, ledger_lock
+from .runtime import validated_broker_account, validated_broker_positions
 
 
 RECONCILIATION_FIELDS = [
@@ -24,6 +25,7 @@ RECONCILIATION_FIELDS = [
     "issues",
 ]
 RECONCILIATION_V2_PREFIX = "v2_"
+RECONCILIATION_CASH_TOLERANCE = 0.01
 
 
 @dataclass(frozen=True)
@@ -49,12 +51,28 @@ def reconcile_account(
     expected_positions: dict[str, int],
     broker_account: BrokerAccount,
     broker_positions: list[BrokerPosition],
-    cash_tolerance: float = 0.01,
+    cash_tolerance: float = RECONCILIATION_CASH_TOLERANCE,
 ) -> list[ReconciliationIssue]:
-    if not math.isfinite(expected_cash) or not math.isfinite(broker_account.cash):
-        raise ValueError("Reconciliation cash values must be finite")
-    if cash_tolerance < 0 or not math.isfinite(cash_tolerance):
+    if (
+        isinstance(expected_cash, bool)
+        or not isinstance(expected_cash, (int, float))
+        or not math.isfinite(expected_cash)
+        or expected_cash < 0
+    ):
+        raise ValueError("Expected reconciliation cash must be finite and non-negative")
+    if (
+        isinstance(cash_tolerance, bool)
+        or not isinstance(cash_tolerance, (int, float))
+        or cash_tolerance < 0
+        or not math.isfinite(cash_tolerance)
+    ):
         raise ValueError("cash_tolerance must be finite and non-negative")
+    if not isinstance(expected_positions, dict):
+        raise ValueError("Expected positions must be a dictionary")
+    broker_account = validated_broker_account(broker_account)
+    broker_positions = validated_broker_positions(broker_positions)
+    if broker_account.currency != "CNY":
+        raise ValueError("Reconciliation requires a CNY broker account")
     issues: list[ReconciliationIssue] = []
     if not math.isclose(
         expected_cash, broker_account.cash, rel_tol=0.0, abs_tol=cash_tolerance
@@ -202,9 +220,14 @@ def _reconciliation_row(
     config_fingerprint = _identity_value(
         config_fingerprint, "config_fingerprint"
     )
-    expected_cash_value = _finite_number(expected_cash, "expected_cash")
-    broker_cash_value = _finite_number(broker_cash, "broker_cash")
+    expected_cash_value = _nonnegative_number(expected_cash, "expected_cash")
+    broker_cash_value = _nonnegative_number(broker_cash, "broker_cash")
     issue_payload = _canonical_issues(issues)
+    _validate_clean_cash_evidence(
+        expected_cash_value,
+        broker_cash_value,
+        len(issue_payload),
+    )
     content = {
         "date": on_date.isoformat(),
         "adapter": adapter,
@@ -274,8 +297,8 @@ def _validate_reconciliation_row(
     config_fingerprint = _identity_value(
         row["config_fingerprint"], "config_fingerprint"
     )
-    expected_cash = _finite_number(row["expected_cash"], "expected_cash")
-    broker_cash = _finite_number(row["broker_cash"], "broker_cash")
+    expected_cash = _nonnegative_number(row["expected_cash"], "expected_cash")
+    broker_cash = _nonnegative_number(row["broker_cash"], "broker_cash")
     raw_issue_count = str(row["issue_count"])
     try:
         issue_count = int(raw_issue_count)
@@ -312,6 +335,7 @@ def _validate_reconciliation_row(
         valid_id = reconciliation_id == expected_legacy_id
     if not valid_id:
         raise ValueError("reconciliation_id failed content validation")
+    _validate_clean_cash_evidence(expected_cash, broker_cash, issue_count)
     return _ValidatedReconciliation(
         reconciliation_id=reconciliation_id,
         logical_key=(adapter, account_id, on_date.isoformat(), config_fingerprint),
@@ -383,6 +407,29 @@ def _finite_number(value: object, label: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"Reconciliation {label} must be finite")
     return 0.0 if number == 0 else number
+
+
+def _nonnegative_number(value: object, label: str) -> float:
+    number = _finite_number(value, label)
+    if number < 0:
+        raise ValueError(f"Reconciliation {label} must be non-negative")
+    return number
+
+
+def _validate_clean_cash_evidence(
+    expected_cash: float,
+    broker_cash: float,
+    issue_count: int,
+) -> None:
+    if issue_count == 0 and not math.isclose(
+        expected_cash,
+        broker_cash,
+        rel_tol=0.0,
+        abs_tol=RECONCILIATION_CASH_TOLERANCE,
+    ):
+        raise ValueError(
+            "A clean reconciliation cannot contain mismatched cash balances"
+        )
 
 
 def _format_number(value: float) -> str:

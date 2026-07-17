@@ -272,6 +272,8 @@ adapter, account, date, configuration, cash values, issue count, and issue
 details. Every audit validates the exact schema and every row in the shared
 ledger before selecting the configured account. A malformed row, changed
 fingerprint, duplicate logical session, or non-increasing date fails closed.
+Expected and broker cash must both be non-negative; a zero-issue session is
+invalid unless those balances match within the fixed 0.01 cash tolerance.
 Different content for an existing logical session is atomically retained as a
 conflict before the writer raises, so the earlier clean row cannot silently keep
 its authority.

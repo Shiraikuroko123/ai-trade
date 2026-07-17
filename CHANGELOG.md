@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Qualifying reconciliation now rejects negative cash and any zero-issue row
+  whose expected and broker cash differ beyond the fixed 0.01 tolerance, both
+  at write time and during whole-ledger audit.
 - Read-only broker probes now share strict runtime validation with live routing
   and additionally reject malformed or duplicate order/fill collections and
   truthy non-boolean fee-completeness flags before rendering observations.

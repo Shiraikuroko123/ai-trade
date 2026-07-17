@@ -922,6 +922,18 @@ class BrokerTests(unittest.TestCase):
         ]
         self.assertEqual(reconcile_account(1000, {"510300": 200}, account, rows), [])
 
+    def test_reconciliation_rejects_invalid_cash_and_account_currency(self):
+        account = BrokerAccount("account", "CNY", 1000, 1000, 1200)
+        with self.assertRaisesRegex(ValueError, "finite and non-negative"):
+            reconcile_account(True, {}, account, [])
+        with self.assertRaisesRegex(ValueError, "CNY"):
+            reconcile_account(
+                1000,
+                {},
+                BrokerAccount("account", "USD", 1000, 1000, 1200),
+                [],
+            )
+
     def test_registry_supports_legacy_entry_point_mapping(self):
         point = SimpleNamespace(name="mock")
         with patch(
