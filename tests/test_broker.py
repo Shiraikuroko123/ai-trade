@@ -504,6 +504,34 @@ class BrokerTests(unittest.TestCase):
                     on_date,
                 )
 
+    def test_router_rejects_malformed_broker_account_and_positions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            market = FakeMarket()
+            on_date = date(2024, 1, 3)
+            invalid_account = FakeBroker()
+            invalid_account._account = BrokerAccount(
+                "account",
+                "CNY",
+                True,
+                1.0,
+                1.0,
+            )
+            with self.assertRaisesRegex(RuntimeError, "invalid account snapshot"):
+                _router(root, invalid_account).validate([_order()], market, on_date)
+
+            invalid_positions = FakeBroker()
+            invalid_positions._positions = [
+                BrokerPosition("510300", 100.5, 100, 10.0, 1_000.0)
+            ]
+            with self.assertRaisesRegex(RuntimeError, "invalid position snapshot"):
+                _router(root, invalid_positions).validate([_order()], market, on_date)
+
+            invalid_collection = FakeBroker()
+            invalid_collection._positions = tuple(invalid_collection._positions)
+            with self.assertRaisesRegex(RuntimeError, "invalid position collection"):
+                _router(root, invalid_collection).validate([_order()], market, on_date)
+
     def test_router_counts_prior_orders_and_available_cash(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -604,6 +632,35 @@ class BrokerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "account does not match"):
                     router.submit([_order()], FakeMarket(), on_date, {})
             self.assertEqual(broker.submission_calls, 0)
+
+    def test_router_rejects_truthy_non_boolean_broker_health(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            broker = SubmittingBroker()
+            broker.health = MagicMock(
+                return_value=BrokerHealth(
+                    "connected",
+                    "trading",
+                    "invalid runtime types",
+                    datetime.now(timezone.utc),
+                )
+            )
+            router = _live_router(Path(temporary), broker)
+            on_date = datetime.now(timezone(timedelta(hours=8))).date()
+
+            with (
+                patch(
+                    "ai_trade.broker.live.assert_live_submission_allowed",
+                    return_value=_readiness(),
+                ),
+                patch("ai_trade.broker.live.consume_batch_approval") as consume,
+                self.assertRaisesRegex(RuntimeError, "invalid health snapshot"),
+            ):
+                router.submit([_order()], FakeMarket(), on_date, {})
+
+            self.assertEqual(broker.submission_calls, 0)
+            consume.assert_not_called()
+            self.assertFalse(router.config.live_batch_approval_file.exists())
+            self.assertFalse(router.config.broker_orders_file.exists())
 
     def test_router_rejects_mismatched_ledger_scope_before_adapter_io(self):
         with tempfile.TemporaryDirectory() as temporary:

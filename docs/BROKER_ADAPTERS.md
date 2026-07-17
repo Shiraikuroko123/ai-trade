@@ -332,6 +332,12 @@ order UI or approval generator while no verified live adapter exists.
 - previously reserved plus new daily notional and order count;
 - exact live broker environment and a healthy trading session.
 
+Account, position, and health annotations are not trusted as runtime
+validation. The router requires exact core model objects, real booleans for
+connection/session flags, finite non-boolean balances and valuations, bounded
+available quantities, and timezone-aware health timestamps before approval is
+consumed.
+
 Adapters must still implement broker-specific validation and reconciliation. Core checks do not replace exchange or broker rules.
 
 ## Development Sequence

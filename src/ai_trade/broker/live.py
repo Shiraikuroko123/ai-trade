@@ -14,10 +14,13 @@ from ..config import (
 from ..data.market import MarketData
 from .base import (
     Broker,
+    BrokerAccount,
     BrokerEnvironment,
+    BrokerHealth,
     BrokerOperation,
     BrokerOrderRequest,
     BrokerOrderSnapshot,
+    BrokerPosition,
     OrderSide,
 )
 from .ledger import (
@@ -87,30 +90,13 @@ class LiveOrderRouter:
         )
         active_symbols = set(market.active_symbols(on_date))
         available_positions: dict[str, int] = {}
-        for value in self.broker.positions():
-            if (
-                not value.symbol
-                or isinstance(value.available_quantity, bool)
-                or not isinstance(value.available_quantity, int)
-                or value.available_quantity < 0
-                or value.available_quantity > value.quantity
-            ):
-                raise RuntimeError("Broker reported an invalid available position")
+        positions = _validated_broker_positions(self.broker.positions())
+        for value in positions:
             available_positions[value.symbol] = (
                 available_positions.get(value.symbol, 0) + value.available_quantity
             )
         if account is None:
-            account = self.broker.account()
-        if (
-            not math.isfinite(account.cash)
-            or not math.isfinite(account.available_cash)
-            or not math.isfinite(account.equity)
-            or account.cash < 0
-            or account.available_cash < 0
-            or account.available_cash > account.cash + 1e-8
-            or account.equity < 0
-        ):
-            raise RuntimeError("Broker reported invalid account balances")
+            account = _validated_broker_account(self.broker.account())
         seen: set[str] = set()
         sell_quantities: dict[str, int] = {}
         total_notional = 0.0
@@ -279,7 +265,7 @@ class LiveOrderRouter:
             submitted_orders=submitted_count,
             submitted_notional=float(validation["submitted_today"]),
         )
-        health = self.broker.health()
+        health = _validated_broker_health(self.broker.health())
         if not health.connected or not health.trading_session:
             raise RuntimeError(f"Broker is not ready for submission: {health.message}")
         _assert_current_trading_session(on_date, health.checked_at)
@@ -337,8 +323,8 @@ class LiveOrderRouter:
             or getattr(self.broker, "adapter_name", None) != configured_adapter
         ):
             raise RuntimeError("Live broker adapter does not match the authorized configuration")
-        account = self.broker.account()
-        actual_account = str(account.account_id)
+        account = _validated_broker_account(self.broker.account())
+        actual_account = account.account_id
         if not configured_account or actual_account != configured_account:
             raise RuntimeError("Live broker account does not match the authorized configuration")
         return account
@@ -356,6 +342,77 @@ def _is_tick_aligned(value: float, tick_size: float) -> bool:
     price = Decimal(str(value))
     tick = Decimal(str(tick_size))
     return price.remainder_near(tick) == 0
+
+
+def _validated_broker_account(value: object) -> BrokerAccount:
+    if (
+        not isinstance(value, BrokerAccount)
+        or not _broker_text(value.account_id)
+        or not _broker_text(value.currency)
+        or not _broker_number(value.cash)
+        or not _broker_number(value.available_cash)
+        or not _broker_number(value.equity)
+        or value.cash < 0
+        or value.available_cash < 0
+        or value.available_cash > value.cash + 1e-8
+        or value.equity < 0
+    ):
+        raise RuntimeError("Broker reported an invalid account snapshot")
+    return value
+
+
+def _validated_broker_positions(value: object) -> list[BrokerPosition]:
+    if not isinstance(value, list):
+        raise RuntimeError("Broker reported an invalid position collection")
+    for position in value:
+        if (
+            not isinstance(position, BrokerPosition)
+            or not _broker_text(position.symbol)
+            or isinstance(position.quantity, bool)
+            or not isinstance(position.quantity, int)
+            or position.quantity < 0
+            or isinstance(position.available_quantity, bool)
+            or not isinstance(position.available_quantity, int)
+            or not 0 <= position.available_quantity <= position.quantity
+            or not _broker_number(position.average_cost)
+            or position.average_cost < 0
+            or not _broker_number(position.market_value)
+            or position.market_value < 0
+        ):
+            raise RuntimeError("Broker reported an invalid position snapshot")
+    return value
+
+
+def _validated_broker_health(value: object) -> BrokerHealth:
+    if (
+        not isinstance(value, BrokerHealth)
+        or type(value.connected) is not bool
+        or type(value.trading_session) is not bool
+        or not isinstance(value.message, str)
+        or len(value.message) > 2_000
+        or not isinstance(value.checked_at, datetime)
+        or value.checked_at.tzinfo is None
+        or value.checked_at.utcoffset() is None
+    ):
+        raise RuntimeError("Broker reported an invalid health snapshot")
+    return value
+
+
+def _broker_text(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value.strip() == value
+        and not any(ord(character) < 32 for character in value)
+    )
+
+
+def _broker_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    )
 
 
 def _price_limits(

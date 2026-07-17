@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Live routing now validates broker account, position, and health objects at
+  runtime with strict booleans, numeric types, identities, and bounds before
+  consuming approval or reserving an intent.
 - Live `PENDING_SUBMIT` reservations now embed a canonical approval ID and exact
   batch fingerprint inside the content-bound order event, linking durable
   intent evidence to the consumed one-time approval without exposing an account.
