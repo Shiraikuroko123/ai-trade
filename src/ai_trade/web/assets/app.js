@@ -2977,7 +2977,7 @@ function brokerLifecycleMarkup(data) {
         <div><dt>恢复状态</dt><dd>${statusChip(BROKER_LIFECYCLE_STATUS_LABELS[lifecycleStatus] || lifecycleStatus, statusKind)}<span>依据本地订单与成交账本重建</span></dd></div>
         <div><dt>订单</dt><dd><strong class="numeric">${formatInteger(lifecycle.open_order_count || 0)} / ${formatInteger(lifecycle.order_count || 0)}</strong><span>未终结 / 全部，最近 ${escapeHtml(latestUpdate)}</span></dd></div>
         <div><dt>执行中状态</dt><dd><strong class="numeric">${formatInteger(lifecycle.partial_order_count || 0)} / ${formatInteger(lifecycle.cancel_pending_count || 0)}</strong><span>部分成交 / 撤单处理中</span></dd></div>
-        <div><dt>成交明细</dt><dd><strong class="numeric">${formatInteger(lifecycle.fill_count || 0)}</strong><span>按唯一成交号累计</span></dd></div>
+        <div><dt>成交明细</dt><dd><strong class="numeric">${formatInteger(lifecycle.fill_count || 0)}</strong><span>按成交号与内容指纹校验</span></dd></div>
         <div><dt>证据作用域</dt><dd>${statusChip(BROKER_LEDGER_SCOPE_STATUS_LABELS[scopeStatus] || scopeStatus, scopeKind)}<span>${escapeHtml(scopeDetail)}</span></dd></div>
       </dl>
 
@@ -3020,7 +3020,7 @@ function brokerLifecycleMarkup(data) {
 
       <section class="broker-ledger-section" aria-labelledby="broker-fill-ledger-title">
         <div class="broker-ledger-heading">
-          <div><h3 id="broker-fill-ledger-title">成交明细账本</h3><p>最近 ${formatInteger(fills.length)} 条原始标准化记录；数量和均价必须能与上方最新订单快照复算一致。</p></div>
+          <div><h3 id="broker-fill-ledger-title">成交明细账本</h3><p>最近 ${formatInteger(fills.length)} 条原始标准化记录；新记录校验完整 SHA-256，数量和均价还必须能与上方最新订单快照复算一致。</p></div>
         </div>
         <div class="table-wrap"><table class="data-table">
           <thead><tr><th>成交时间</th><th>成交号</th><th>客户端订单</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th class="numeric">价格</th><th class="numeric">费用</th></tr></thead>

@@ -51,7 +51,7 @@ ORDER_EVENT_FIELDS = [
     "event_id",
 ]
 
-FILL_FIELDS = [
+LEGACY_FILL_FIELDS = [
     "fill_id",
     "broker_order_id",
     "client_order_id",
@@ -63,6 +63,7 @@ FILL_FIELDS = [
     "tax",
     "filled_at",
 ]
+FILL_FIELDS = [*LEGACY_FILL_FIELDS, "record_sha256"]
 
 INTEGER_LEDGER_FIELDS = frozenset({"quantity", "filled_quantity"})
 FLOAT_LEDGER_FIELDS = frozenset(
@@ -120,7 +121,11 @@ def append_order_events(
     path.parent.mkdir(parents=True, exist_ok=True)
     with _ledger_locks(_scoped_paths([path], scope_path, scope)):
         _require_bound_scope(scope_path, scope)
-        existing_rows = _read_rows(path, "event_id")
+        existing_rows = _read_rows(
+            path,
+            "event_id",
+            allowed_schemas=(ORDER_EVENT_FIELDS,),
+        )
         existing_events = _order_events_from_rows(existing_rows)
         recover_order_states(existing_events + orders)
         pending_orders = [order for order in orders if order not in existing_events]
@@ -176,7 +181,11 @@ def reserve_order_intents(
     path.parent.mkdir(parents=True, exist_ok=True)
     with _ledger_locks(_scoped_paths([path], scope_path, scope)):
         _require_bound_scope(scope_path, scope)
-        existing_rows = _read_rows(path, "event_id")
+        existing_rows = _read_rows(
+            path,
+            "event_id",
+            allowed_schemas=(ORDER_EVENT_FIELDS,),
+        )
         existing_client_ids = {
             str(row.get("client_order_id", "")) for row in existing_rows
         }
@@ -215,12 +224,18 @@ def append_fills(
     if not fills:
         return
     _require_scope_ledger_path(scope, "fills", path)
-    rows = [_fill_payload(fill) for fill in fills]
+    for fill in fills:
+        validate_broker_fill(fill)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _ledger_locks(_scoped_paths([path], scope_path, scope)):
         _require_bound_scope(scope_path, scope)
-        existing_rows = _read_rows(path, "fill_id")
+        existing_rows = _read_rows(
+            path,
+            "fill_id",
+            allowed_schemas=(FILL_FIELDS, LEGACY_FILL_FIELDS),
+        )
         _fills_from_rows(existing_rows)
+        rows = _fill_rows_for_ledger(path, fills, existing_rows)
         _append_rows(path, rows, "fill_id", existing_rows)
 
 
@@ -238,7 +253,8 @@ def append_broker_observation(
         raise ValueError("Broker order and fill ledgers must use different paths")
     _require_scope_ledger_path(scope, "orders", orders_path)
     _require_scope_ledger_path(scope, "fills", fills_path)
-    fill_rows = [_fill_payload(fill) for fill in fills]
+    for fill in fills:
+        validate_broker_fill(fill)
     orders_path.parent.mkdir(parents=True, exist_ok=True)
     fills_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -250,8 +266,21 @@ def append_broker_observation(
                 scope,
                 legacy_ledgers_exist=orders_path.exists() or fills_path.exists(),
             )
-        existing_order_rows = _read_rows(orders_path, "event_id")
-        existing_fill_rows = _read_rows(fills_path, "fill_id")
+        existing_order_rows = _read_rows(
+            orders_path,
+            "event_id",
+            allowed_schemas=(ORDER_EVENT_FIELDS,),
+        )
+        existing_fill_rows = _read_rows(
+            fills_path,
+            "fill_id",
+            allowed_schemas=(FILL_FIELDS, LEGACY_FILL_FIELDS),
+        )
+        fill_rows = _fill_rows_for_ledger(
+            fills_path,
+            fills,
+            existing_fill_rows,
+        )
         existing_events = _order_events_from_rows(existing_order_rows)
         pending_orders = [order for order in orders if order not in existing_events]
         order_rows = [_order_event_payload(order) for order in pending_orders]
@@ -283,14 +312,26 @@ def read_order_events(path: Path) -> list[BrokerOrderSnapshot]:
     if not path.exists():
         return []
     with ledger_lock(path):
-        return _order_events_from_rows(_read_rows(path, "event_id"))
+        return _order_events_from_rows(
+            _read_rows(
+                path,
+                "event_id",
+                allowed_schemas=(ORDER_EVENT_FIELDS,),
+            )
+        )
 
 
 def read_fills(path: Path) -> list[BrokerFill]:
     if not path.exists():
         return []
     with ledger_lock(path):
-        return _fills_from_rows(_read_rows(path, "fill_id"))
+        return _fills_from_rows(
+            _read_rows(
+                path,
+                "fill_id",
+                allowed_schemas=(FILL_FIELDS, LEGACY_FILL_FIELDS),
+            )
+        )
 
 
 def recover_order_lifecycle(
@@ -358,7 +399,11 @@ def submitted_order_notional(
             _require_scope_if_present(scope_path, scope)
             return 0.0
         _require_bound_scope(scope_path, scope)
-        rows = _read_rows(path, "event_id")
+        rows = _read_rows(
+            path,
+            "event_id",
+            allowed_schemas=(ORDER_EVENT_FIELDS,),
+        )
         recover_order_states(_order_events_from_rows(rows))
         return _submitted_order_notional(rows, on_date)
 
@@ -379,7 +424,11 @@ def submitted_order_count(
             _require_scope_if_present(scope_path, scope)
             return 0
         _require_bound_scope(scope_path, scope)
-        rows = _read_rows(path, "event_id")
+        rows = _read_rows(
+            path,
+            "event_id",
+            allowed_schemas=(ORDER_EVENT_FIELDS,),
+        )
         recover_order_states(_order_events_from_rows(rows))
         return sum(
             updated_at.date() == on_date
@@ -606,12 +655,25 @@ def atomic_append_csv(
         temporary.unlink(missing_ok=True)
 
 
-def _read_rows(path: Path, key: str) -> list[dict[str, str]]:
+def _read_rows(
+    path: Path,
+    key: str,
+    *,
+    allowed_schemas: tuple[list[str], ...] | None = None,
+) -> list[dict[str, str]]:
     if not path.exists():
         return []
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        if not reader.fieldnames or key not in reader.fieldnames:
+        fieldnames = list(reader.fieldnames or [])
+        if (
+            not fieldnames
+            or key not in fieldnames
+            or (
+                allowed_schemas is not None
+                and not any(fieldnames == schema for schema in allowed_schemas)
+            )
+        ):
             raise RuntimeError(f"Invalid broker ledger schema: {path}")
         rows = list(reader)
     seen: dict[str, tuple[tuple[str, str], ...]] = {}
@@ -685,6 +747,18 @@ def _order_event_payload(order: BrokerOrderSnapshot) -> dict[str, object]:
 
 
 def _fill_payload(fill: BrokerFill) -> dict[str, object]:
+    payload = _legacy_fill_payload(fill)
+    raw = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    payload["record_sha256"] = hashlib.sha256(raw.encode("ascii")).hexdigest()
+    return payload
+
+
+def _legacy_fill_payload(fill: BrokerFill) -> dict[str, object]:
     validate_broker_fill(fill)
     return {
         "fill_id": fill.fill_id,
@@ -693,11 +767,35 @@ def _fill_payload(fill: BrokerFill) -> dict[str, object]:
         "symbol": fill.symbol,
         "side": fill.side.value,
         "quantity": fill.quantity,
-        "price": float(fill.price),
-        "commission": float(fill.commission),
-        "tax": float(fill.tax),
+        "price": _canonical_float(fill.price),
+        "commission": _canonical_float(fill.commission),
+        "tax": _canonical_float(fill.tax),
         "filled_at": fill.filled_at.isoformat(),
     }
+
+
+def _canonical_float(value: float) -> float:
+    numeric = float(value)
+    return 0.0 if numeric == 0.0 else numeric
+
+
+def _fill_rows_for_ledger(
+    path: Path,
+    fills: list[BrokerFill],
+    existing_rows: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    if existing_rows:
+        schema = list(existing_rows[0])
+    elif path.exists():
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            schema = list(csv.DictReader(handle).fieldnames or [])
+    else:
+        schema = FILL_FIELDS
+    if schema == FILL_FIELDS:
+        return [_fill_payload(fill) for fill in fills]
+    if schema == LEGACY_FILL_FIELDS:
+        return [_legacy_fill_payload(fill) for fill in fills]
+    raise RuntimeError("Invalid broker fill ledger schema")
 
 
 def _order_events_from_rows(
@@ -744,7 +842,8 @@ def _order_events_from_rows(
 def _fills_from_rows(rows: list[dict[str, object]]) -> list[BrokerFill]:
     fills = []
     for row in rows:
-        if list(row) != FILL_FIELDS:
+        schema = list(row)
+        if schema not in (FILL_FIELDS, LEGACY_FILL_FIELDS):
             raise RuntimeError("Invalid broker fill ledger schema")
         try:
             fill = BrokerFill(
@@ -759,9 +858,16 @@ def _fills_from_rows(rows: list[dict[str, object]]) -> list[BrokerFill]:
                 tax=float(row["tax"]),
                 filled_at=datetime.fromisoformat(str(row["filled_at"])),
             )
-            _fill_payload(fill)
+            expected_record_sha256 = str(_fill_payload(fill)["record_sha256"])
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError(f"Invalid broker fill ledger row: {exc}") from exc
+        if (
+            schema == FILL_FIELDS
+            and str(row["record_sha256"]) != expected_record_sha256
+        ):
+            raise RuntimeError(
+                f"Broker fill ledger row failed content validation: {fill.fill_id}"
+            )
         fills.append(fill)
     return fills
 

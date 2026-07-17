@@ -20,6 +20,7 @@ from ai_trade.broker.ledger import (
     append_broker_observation,
     append_fills,
     append_order_events,
+    read_fills,
     read_order_events,
     recover_order_lifecycle,
     reserve_order_intents,
@@ -228,11 +229,100 @@ class BrokerLifecycleTests(unittest.TestCase):
                 writer.writeheader()
                 writer.writerow(row)
 
+            later = _fill("fill-legacy-later", 2, 50, 12)
+            append_fills(fills, [fill, later])
+
+            with fills.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                self.assertEqual(reader.fieldnames, list(row))
+                persisted = list(reader)
+            self.assertEqual(persisted[0], row)
+            self.assertEqual(persisted[1]["fill_id"], later.fill_id)
+            self.assertNotIn("record_sha256", persisted[1])
+            self.assertEqual(read_fills(fills), [fill, later])
+
+    def test_new_fill_fingerprint_detects_fee_tampering(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fills = root / "fills.csv"
+            fill = _fill("fill-content", 1, 100, 10)
+            append_fills(fills, [fill])
+            with fills.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                fieldnames = reader.fieldnames
+                rows = list(reader)
+            self.assertIsNotNone(fieldnames)
+            self.assertEqual(len(rows[0]["record_sha256"]), 64)
+            rows[0]["commission"] = "999.0"
+            with fills.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            with self.assertRaisesRegex(RuntimeError, "failed content validation"):
+                read_fills(fills)
+            report = recover_order_lifecycle(root / "orders.csv", fills)
+            self.assertEqual(report["status"], "INTEGRITY_ERROR")
+            self.assertEqual(
+                report["integrity_errors"][0]["code"],
+                "fill_ledger_invalid",
+            )
+
+    def test_new_fill_fingerprint_uses_canonical_numeric_values(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fills = Path(temporary) / "fills.csv"
+            fill = _fill("fill-canonical", 1, 100, 10)
+            append_fills(fills, [fill])
+            with fills.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                fieldnames = reader.fieldnames
+                rows = list(reader)
+            self.assertIsNotNone(fieldnames)
+            rows[0]["price"] = "10"
+            rows[0]["commission"] = "1"
+            rows[0]["tax"] = "0"
+            with fills.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            self.assertEqual(read_fills(fills), [fill])
+            append_fills(fills, [fill])
+            with fills.open("r", encoding="utf-8", newline="") as handle:
+                self.assertEqual(len(list(csv.DictReader(handle))), 1)
+
+    def test_new_fill_fingerprint_normalizes_negative_zero_fees(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fills = Path(temporary) / "fills.csv"
+            fill = _fill("fill-negative-zero", 1, 100, 10)
+            fill = BrokerFill(
+                fill_id=fill.fill_id,
+                broker_order_id=fill.broker_order_id,
+                client_order_id=fill.client_order_id,
+                symbol=fill.symbol,
+                side=fill.side,
+                quantity=fill.quantity,
+                price=fill.price,
+                commission=-0.0,
+                tax=-0.0,
+                filled_at=fill.filled_at,
+            )
+
             append_fills(fills, [fill])
 
             with fills.open("r", encoding="utf-8", newline="") as handle:
                 persisted = list(csv.DictReader(handle))
-            self.assertEqual(persisted, [row])
+            self.assertEqual(persisted[0]["commission"], "0.0")
+            self.assertEqual(persisted[0]["tax"], "0.0")
+            self.assertEqual(read_fills(fills), [fill])
+
+    def test_header_only_fill_ledger_requires_an_exact_schema(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fills = Path(temporary) / "fills.csv"
+            fills.write_text("fill_id,price\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "Invalid broker ledger schema"):
+                read_fills(fills)
 
     def test_partial_fills_reconstruct_a_verified_terminal_order(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added full canonical SHA-256 fingerprints to new broker fill rows, with
+  strict header validation and read-time content verification. Legacy fill
+  ledgers remain readable and retain their original schema during exact or
+  incremental retries; they are never silently migrated into stronger evidence.
 - Added an atomic broker-ledger scope manifest binding lifecycle evidence to the
   adapter, a non-plaintext account reference, runtime environment, live
   configuration fingerprint, and exact ledger paths. Scoped writes reject

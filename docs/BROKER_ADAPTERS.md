@@ -171,12 +171,19 @@ not UTC midnight, so early-morning broker responses retain the correct event
 order for the China trading session.
 
 New order events use a `v2_`-prefixed SHA-256 fingerprint over the canonical
-event payload. The fingerprint is recomputed on every read so an accidental
-field rewrite fails closed. Existing 24-hex-character legacy event IDs remain
-readable and exact retries do not migrate or duplicate those rows. Numeric
-ledger fields compare by parsed integer or floating-point meaning, so an older
-`10` and a canonical `10.0` do not create a false conflict during recovery.
-This local fingerprint is corruption evidence, not a keyed signature or a
+event payload. New fill rows retain the broker `fill_id` as their idempotency
+key and add a full canonical `record_sha256`. Both fingerprints are recomputed
+on every read, so an accidental order-field, fill-price, commission, or tax
+rewrite fails closed. Header-only files are validated against the same exact
+schemas before they can be treated as empty ledgers.
+
+Existing 24-hex-character legacy event IDs and fill CSVs without
+`record_sha256` remain readable. Exact retries do not migrate or duplicate
+those rows, and appending another fill to a legacy CSV preserves its old schema
+instead of making the historical file appear content-bound. Numeric ledger
+fields compare by parsed integer or floating-point meaning, so an older `10`
+and a canonical `10.0` do not create a false conflict during recovery. These
+local fingerprints are corruption evidence, not keyed signatures or a
 replacement for filesystem permissions, backups, and broker reconciliation.
 
 `state/broker_ledger_scope.json` is a separate, atomically published scope
