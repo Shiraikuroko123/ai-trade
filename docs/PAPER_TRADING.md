@@ -13,6 +13,12 @@ python -m ai_trade.cli paper-audit
 
 `paper-audit` checks schema, unique session IDs, strict date ordering, state-to-ledger reconciliation, configuration fingerprints, forward metrics, and promotion gates. `state/paper_rejections.csv` remains available for execution-quality review even when an order never became a trade.
 
+The active `paper_state.json` is a bounded, versioned accounting record. Duplicate
+JSON keys, unknown fields, invalid dates, non-finite or negative balances,
+malformed positions or target weights, and configuration drift fail closed before
+the simulator, auditor, or browser can use the state. Do not hand-edit it; start a
+new archived epoch when the frozen configuration changes.
+
 The same operations are available in the loopback-only workstation:
 
 ```powershell

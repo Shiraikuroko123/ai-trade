@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Paper account state now uses bounded duplicate-key-rejecting JSON and validates
+  an exact versioned schema, canonical identity and dates, finite balances,
+  positions, targets, and counters before simulation, audit, or rendering.
 - Sandbox reconciliation rejects future dates and counts position-bound rows
   only through the verified completed market date. Later valid rows remain
   visible as pending evidence instead of prematurely advancing live readiness.

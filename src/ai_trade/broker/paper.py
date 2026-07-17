@@ -15,7 +15,26 @@ from uuid import uuid4
 from ..config import AppConfig
 from ..data.market import MarketData
 from ..execution import Portfolio, execute_target_weights, portfolio_value
+from ..json_utils import load_unique_json
 from ..strategy import MomentumTrendStrategy
+
+
+PAPER_STATE_VERSION = 5
+MAX_PAPER_STATE_BYTES = 1024 * 1024
+PAPER_STATE_FIELDS = {
+    "version",
+    "account_id",
+    "config_fingerprint",
+    "cash",
+    "positions",
+    "high_water_mark",
+    "last_equity",
+    "last_run_date",
+    "pending_targets",
+    "pending_signal_date",
+    "cooldown_remaining",
+    "sessions_since_rebalance",
+}
 
 
 def initialize_paper(
@@ -33,7 +52,7 @@ def initialize_paper(
         if overwrite:
             _archive_existing_account(config)
         state = {
-            "version": 5,
+            "version": PAPER_STATE_VERSION,
             "account_id": uuid4().hex,
             "config_fingerprint": _config_fingerprint(config),
             "cash": starting_cash,
@@ -292,27 +311,148 @@ def _trade_id(account_id: str, trade) -> str:
 def _load_state(path: Path) -> dict[str, object]:
     if not path.exists():
         raise FileNotFoundError("Paper account is not initialized. Run paper-init first.")
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = load_unique_json(path, max_bytes=MAX_PAPER_STATE_BYTES)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RuntimeError(f"Paper state is unreadable or invalid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("Paper state must be a JSON object")
+    return value
 
 
 def _validate_state(state: dict[str, object], config: AppConfig) -> None:
-    if int(state.get("version", 0)) != 5:
+    if set(state) != PAPER_STATE_FIELDS:
+        raise RuntimeError("Paper state schema fields are invalid")
+    if type(state.get("version")) is not int or state["version"] != PAPER_STATE_VERSION:
         raise RuntimeError(
             "Unsupported paper state version. Reinitialize with paper-init --overwrite to archive it."
         )
-    required = {
-        "account_id", "config_fingerprint", "cash", "positions", "high_water_mark",
-        "last_equity",
-    }
-    missing = sorted(required - set(state))
-    if missing:
-        raise RuntimeError(f"Paper state is missing fields: {missing}")
+    _state_text(state["account_id"], "account_id", maximum=128)
+    fingerprint = _state_text(
+        state["config_fingerprint"],
+        "config_fingerprint",
+        maximum=64,
+    )
+    if len(fingerprint) != 64 or any(
+        character not in "0123456789abcdef" for character in fingerprint
+    ):
+        raise RuntimeError("Paper state config_fingerprint is invalid")
+    cash = _state_number(state["cash"], "cash", positive=False)
+    high_water_mark = _state_number(
+        state["high_water_mark"],
+        "high_water_mark",
+        positive=True,
+    )
+    last_equity = _state_number(state["last_equity"], "last_equity", positive=False)
+    if last_equity > high_water_mark + 1e-8:
+        raise RuntimeError("Paper state last_equity exceeds its high_water_mark")
+    positions = _state_positions(state["positions"])
+    pending_targets = _state_targets(state["pending_targets"])
+    last_run_date = _state_date(state["last_run_date"], "last_run_date")
+    pending_signal_date = _state_date(
+        state["pending_signal_date"],
+        "pending_signal_date",
+    )
+    if (pending_targets is None) != (pending_signal_date is None):
+        raise RuntimeError(
+            "Paper state pending_targets and pending_signal_date must be present together"
+        )
+    if last_run_date is None and (positions or pending_targets is not None):
+        raise RuntimeError("Unprocessed paper state cannot contain positions or targets")
+    if pending_signal_date is not None and (
+        last_run_date is None or pending_signal_date > last_run_date
+    ):
+        raise RuntimeError("Paper state pending signal date is after its last run date")
+    _state_counter(state["cooldown_remaining"], "cooldown_remaining")
+    _state_counter(
+        state["sessions_since_rebalance"],
+        "sessions_since_rebalance",
+    )
+    if cash > high_water_mark + 1e-8 and not positions:
+        raise RuntimeError("Paper state cash exceeds its high_water_mark")
     expected = _config_fingerprint(config)
     if state["config_fingerprint"] != expected:
         raise RuntimeError(
             "Paper configuration changed after account initialization. Review the changes and "
             "start a new archived epoch with paper-init --overwrite."
         )
+
+
+def _state_text(value: object, name: str, *, maximum: int) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > maximum
+        or value.strip() != value
+        or not value.isprintable()
+    ):
+        raise RuntimeError(f"Paper state {name} is invalid")
+    return value
+
+
+def _state_number(value: object, name: str, *, positive: bool) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or (float(value) <= 0 if positive else float(value) < 0)
+    ):
+        qualifier = "positive" if positive else "non-negative"
+        raise RuntimeError(f"Paper state {name} must be finite and {qualifier}")
+    return float(value)
+
+
+def _state_positions(value: object) -> dict[str, int]:
+    if not isinstance(value, dict) or len(value) > 10_000:
+        raise RuntimeError("Paper state positions must be a bounded object")
+    positions: dict[str, int] = {}
+    for raw_symbol, raw_quantity in value.items():
+        symbol = _state_text(raw_symbol, "position symbol", maximum=64)
+        if (
+            isinstance(raw_quantity, bool)
+            or not isinstance(raw_quantity, int)
+            or raw_quantity <= 0
+        ):
+            raise RuntimeError("Paper state position quantities must be positive integers")
+        positions[symbol] = raw_quantity
+    return positions
+
+
+def _state_targets(value: object) -> dict[str, float] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or len(value) > 10_000:
+        raise RuntimeError("Paper state pending_targets must be a bounded object or null")
+    targets: dict[str, float] = {}
+    for raw_symbol, raw_weight in value.items():
+        symbol = _state_text(raw_symbol, "target symbol", maximum=64)
+        weight = _state_number(raw_weight, "target weight", positive=False)
+        if weight > 1:
+            raise RuntimeError("Paper state target weights cannot exceed one")
+        targets[symbol] = weight
+    if math.fsum(targets.values()) > 1 + 1e-8:
+        raise RuntimeError("Paper state target weights cannot exceed total exposure one")
+    return targets
+
+
+def _state_date(value: object, name: str) -> date | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"Paper state {name} must be an ISO date or null")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Paper state {name} must be an ISO date or null") from exc
+    if parsed.isoformat() != value:
+        raise RuntimeError(f"Paper state {name} must use canonical ISO format")
+    return parsed
+
+
+def _state_counter(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RuntimeError(f"Paper state {name} must be a non-negative integer")
+    return value
 
 
 def _config_fingerprint(config: AppConfig) -> str:

@@ -42,7 +42,7 @@ Model-enhanced mode sends bounded indicators and evidence derived from the selec
 
 ## Local Data
 
-Market caches, assistant history, account state, trade journals, reports, logs, `.env`, and virtual environments are excluded from Git. Assistant records live under `state/assistant/`, covered by the existing `state/*` ignore rule. They are also outside the R2 market-cache allowlist, and release verification rejects any `state/` member. Review `git status` before every push. Treat generated reports and assistant history as potentially sensitive because they can reveal research interests, capital, or positions.
+Market caches, assistant history, account state, trade journals, reports, logs, `.env`, and virtual environments are excluded from Git. The active paper state is bounded strict JSON with an exact versioned schema; duplicate keys, unknown fields, and malformed accounting values fail closed. Assistant records live under `state/assistant/`, covered by the existing `state/*` ignore rule. They are also outside the R2 market-cache allowlist, and release verification rejects any `state/` member. Review `git status` before every push. Treat generated reports and assistant history as potentially sensitive because they can reveal research interests, capital, or positions.
 
 ## Optional Cloud Storage
 

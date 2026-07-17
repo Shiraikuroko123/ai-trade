@@ -6,7 +6,12 @@ from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from ai_trade.broker.paper import initialize_paper, run_paper
+from ai_trade.broker.paper import (
+    MAX_PAPER_STATE_BYTES,
+    initialize_paper,
+    paper_status,
+    run_paper,
+)
 from ai_trade.broker.paper_audit import audit_paper
 from ai_trade.models import Bar, CostSettings, Instrument, RiskSettings, StrategySettings
 
@@ -100,6 +105,47 @@ class PaperTests(unittest.TestCase):
             config.strategy = replace(config.strategy, rebalance_days=4)
             with self.assertRaisesRegex(RuntimeError, "configuration changed"):
                 run_paper(config, MutableMarket())
+
+    def test_paper_state_rejects_ambiguous_or_oversized_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _config(Path(temporary))
+            initialize_paper(config)
+            original = config.paper_state_file.read_text(encoding="utf-8")
+            ambiguous = original.replace(
+                '"cash": 10000.0',
+                '"cash": 1, "cash": 10000.0',
+                1,
+            )
+            self.assertNotEqual(ambiguous, original)
+            config.paper_state_file.write_text(ambiguous, encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key"):
+                paper_status(config)
+            self.assertEqual(
+                config.paper_state_file.read_text(encoding="utf-8"),
+                ambiguous,
+            )
+
+            config.paper_state_file.write_bytes(b" " * (MAX_PAPER_STATE_BYTES + 1))
+            with self.assertRaisesRegex(RuntimeError, "exceeds"):
+                paper_status(config)
+
+    def test_paper_state_requires_exact_valid_fields(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _config(Path(temporary))
+            initialize_paper(config)
+            state = json.loads(config.paper_state_file.read_text(encoding="utf-8"))
+
+            state["plaintext_broker_password"] = "must-not-be-accepted"
+            config.paper_state_file.write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "schema fields"):
+                paper_status(config)
+
+            state.pop("plaintext_broker_password")
+            state["cash"] = True
+            config.paper_state_file.write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "cash"):
+                paper_status(config)
 
     def test_forward_audit_requires_independent_sessions(self):
         with tempfile.TemporaryDirectory() as temporary:
