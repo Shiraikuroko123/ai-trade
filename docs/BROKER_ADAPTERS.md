@@ -229,6 +229,24 @@ An account reaches sandbox review only after the frozen paper epoch passes its i
 
 The default gate requires 20 consecutive clean reconciliations. A mismatch resets the clean-session run; evidence from another account or configuration does not count.
 
+New reconciliation rows use a `v2_` SHA-256 fingerprint over the canonical
+adapter, account, date, configuration, cash values, issue count, and issue
+details. Every audit validates the exact schema and every row in the shared
+ledger before selecting the configured account. A malformed row, changed
+fingerprint, duplicate logical session, or non-increasing date fails closed.
+Different content for an existing logical session is atomically retained as a
+conflict before the writer raises, so the earlier clean row cannot silently keep
+its authority.
+
+Reconciliation writers use the same in-process serialization, operating-system
+lock, flushed temporary file, and same-directory atomic replacement as broker
+lifecycle ledgers. Exact retries are idempotent and replacement failure preserves
+the previous complete file. Existing 24-character identity-only IDs remain
+readable and an exact retry does not rewrite them, but those legacy rows are
+excluded from the consecutive clean-session count because their cash and issue
+content was never fingerprinted. Accumulate fresh `v2_` sessions after upgrade;
+do not edit or manually migrate the ledger.
+
 ## Live Authorization
 
 Live authorization is a local schema-versioned, expiring JSON record containing:

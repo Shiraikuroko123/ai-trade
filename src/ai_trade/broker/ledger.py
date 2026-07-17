@@ -356,10 +356,10 @@ def _append_rows(
         if row_key in pending:
             selected.append(row)
             pending.pop(row_key)
-    _atomic_append_csv(path, fieldnames, selected)
+    atomic_append_csv(path, fieldnames, selected)
 
 
-def _atomic_append_csv(
+def atomic_append_csv(
     path: Path,
     fieldnames: list[str],
     rows: list[dict[str, object]],
@@ -367,6 +367,7 @@ def _atomic_append_csv(
     exists = path.exists()
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     needs_separator = False
+    write_header = not exists
     try:
         with temporary.open("xb") as target:
             if exists:
@@ -374,6 +375,7 @@ def _atomic_append_csv(
                     source.seek(0, os.SEEK_END)
                     size = source.tell()
                     if size:
+                        write_header = False
                         source.seek(-1, os.SEEK_END)
                         needs_separator = source.read(1) not in {b"\r", b"\n"}
                         source.seek(0)
@@ -384,7 +386,7 @@ def _atomic_append_csv(
             if needs_separator:
                 handle.write("\r\n")
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
-            if not exists:
+            if write_header:
                 writer.writeheader()
             writer.writerows(rows)
             handle.flush()

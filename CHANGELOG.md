@@ -4,6 +4,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Hardened qualifying sandbox reconciliation evidence with canonical `v2_`
+  content fingerprints, strict whole-ledger validation, logical-session conflict
+  detection, in-process and operating-system writer serialization, and atomic
+  CSV publication. Legacy identity-only records remain readable and idempotent
+  but no longer count toward the live-promotion gate.
 - Hardened broker-ledger durability with serialized in-process writers,
   atomic single-ledger publication, injected-failure recovery tests, and an
   independent transition-matrix contract. Order intents now use China-session
