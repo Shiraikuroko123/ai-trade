@@ -11,6 +11,8 @@ import tempfile
 from threading import Lock, RLock
 from typing import Any, Callable, Iterator
 
+from ..json_utils import load_unique_json
+
 
 _CANDIDATE_ID = re.compile(r"cand_[0-9a-f]{32}\Z")
 _MONITOR_ID = re.compile(r"monitor_[0-9a-f]{32}\Z")
@@ -19,6 +21,140 @@ _ACTIVE_TRANSITION_ACTIONS = frozenset(
     {"activate", "rollback", "suspend", "resume", "retire"}
 )
 _ACTIVE_TRANSACTION_SCHEMA_VERSION = 1
+
+# Strategy-lab files are local, but they are still an input boundary: a damaged
+# or manually edited record must not be allowed to consume unbounded memory.
+MAX_STRATEGY_LAB_RECORD_BYTES = 2 * 1024 * 1024
+MAX_CANDIDATE_RECORD_BYTES = 256 * 1024
+MAX_VALIDATION_RECORD_BYTES = 2 * 1024 * 1024
+MAX_APPROVAL_RECORD_BYTES = 128 * 1024
+MAX_EXPORT_RECORD_BYTES = 5 * 1024 * 1024
+MAX_MONITOR_RECORD_BYTES = 512 * 1024
+MAX_EVENT_RECORD_BYTES = 128 * 1024
+MAX_ACTIVE_RECORD_BYTES = 512 * 1024
+MAX_TRANSACTION_RECORD_BYTES = 1 * 1024 * 1024
+
+_CANDIDATE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "candidate_id",
+        "owner",
+        "source",
+        "title",
+        "hypothesis",
+        "reason",
+        "created_at",
+        "parent_candidate_id",
+        "parent_fingerprint",
+        "config_context_fingerprint",
+        "baseline",
+        "changes",
+        "candidate",
+        "candidate_fingerprint",
+        "status",
+        "proposal",
+        "safety",
+    }
+)
+_VALIDATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "candidate_id",
+        "candidate_fingerprint",
+        "config_context_fingerprint",
+        "parent_candidate_id",
+        "parent_fingerprint",
+        "validated_at",
+        "market_snapshot",
+        "period",
+        "baseline_metrics",
+        "candidate_metrics",
+        "holdout",
+        "cost_stress",
+        "stability",
+        "gates",
+        "live_ready",
+    }
+)
+_APPROVAL_FIELDS = frozenset(
+    {
+        "schema_version",
+        "candidate_id",
+        "candidate_fingerprint",
+        "config_context_fingerprint",
+        "parent_candidate_id",
+        "parent_fingerprint",
+        "validation_fingerprint",
+        "approved_at",
+        "approved_by",
+        "note",
+        "explicit_human_approval",
+        "live_trading_authorized",
+    }
+)
+_MONITOR_FIELDS = frozenset(
+    {
+        "schema_version",
+        "monitor_id",
+        "created_at",
+        "actor",
+        "candidate_id",
+        "candidate_fingerprint",
+        "active_lifecycle_state",
+        "market_snapshot",
+        "period",
+        "validation_reference",
+        "recent_candidate_metrics",
+        "recent_parent_metrics",
+        "evidence",
+        "state_changed",
+        "live_trading_authorized",
+        "evidence_fingerprint",
+    }
+)
+_EVENT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "event_id",
+        "action",
+        "created_at",
+        "candidate_id",
+        "candidate_fingerprint",
+        "actor",
+        "source",
+        "note",
+        "from_candidate_id",
+        "from_fingerprint",
+        "from_lifecycle_state",
+        "to_candidate_id",
+        "to_fingerprint",
+        "to_lifecycle_state",
+        "monitor_id",
+        "evidence_fingerprint",
+        "verdict",
+        "monitoring_evidence",
+        "state_changed",
+        "affects_broker_configuration",
+        "live_trading_authorized",
+    }
+)
+_ACTIVE_FIELDS = frozenset(
+    {
+        "candidate_id",
+        "fingerprint",
+        "snapshot",
+        "activated_at",
+        "activated_by",
+        "rollback_stack",
+        "lifecycle_state",
+        "lifecycle_updated_at",
+        "lifecycle_updated_by",
+        "retired_candidates",
+    }
+)
+_TRANSACTION_FIELDS = frozenset(
+    {"schema_version", "owner_id", "active", "event"}
+)
 _LOCKS_GUARD = Lock()
 _LOCKS: dict[str, _OwnerLockState] = {}
 
@@ -545,18 +681,32 @@ def _valid_monitor_id(value: Any) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
+    max_bytes, allowed_fields, label = _record_policy(path)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = load_unique_json(path, max_bytes=max_bytes)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise RuntimeError(f"Invalid strategy-lab record: {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise RuntimeError(f"Strategy-lab record must be an object: {path}")
+    unsupported = sorted(set(value) - allowed_fields) if allowed_fields else []
+    if unsupported:
+        raise RuntimeError(
+            f"{label} schema fields are invalid: " + ", ".join(unsupported)
+        )
     return value
 
 
 def _atomic_write_json(
     path: Path, value: dict[str, Any], *, replace_existing: bool = True
 ) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("Strategy-lab records must be JSON objects")
+    max_bytes, allowed_fields, label = _record_policy(path)
+    unsupported = sorted(set(value) - allowed_fields) if allowed_fields else []
+    if unsupported:
+        raise ValueError(
+            f"{label} schema fields are invalid: " + ", ".join(unsupported)
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -575,6 +725,11 @@ def _atomic_write_json(
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
+        size = temporary.stat().st_size
+        if size > max_bytes:
+            raise ValueError(
+                f"Strategy-lab record exceeds {max_bytes} bytes: {path}"
+            )
         if replace_existing:
             os.replace(temporary, path)
         else:
@@ -610,3 +765,39 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _record_policy(
+    path: Path,
+) -> tuple[int, frozenset[str] | None, str]:
+    """Return the byte limit and top-level schema for a strategy-lab file."""
+    name = path.name
+    directory = path.parent.name
+    if name == "active.json":
+        return MAX_ACTIVE_RECORD_BYTES, _ACTIVE_FIELDS, "Active strategy"
+    if name == ".active-transition.json":
+        return (
+            MAX_TRANSACTION_RECORD_BYTES,
+            _TRANSACTION_FIELDS,
+            "Active strategy transaction",
+        )
+    policies = {
+        "candidates": (
+            MAX_CANDIDATE_RECORD_BYTES,
+            _CANDIDATE_FIELDS,
+            "Candidate",
+        ),
+        "validations": (
+            MAX_VALIDATION_RECORD_BYTES,
+            _VALIDATION_FIELDS,
+            "Validation",
+        ),
+        "approvals": (MAX_APPROVAL_RECORD_BYTES, _APPROVAL_FIELDS, "Approval"),
+        "monitors": (MAX_MONITOR_RECORD_BYTES, _MONITOR_FIELDS, "Monitor"),
+        "events": (MAX_EVENT_RECORD_BYTES, _EVENT_FIELDS, "Event"),
+        "paper_configs": (MAX_EXPORT_RECORD_BYTES, None, "Paper export"),
+    }
+    return policies.get(
+        directory,
+        (MAX_STRATEGY_LAB_RECORD_BYTES, None, "Strategy-lab record"),
+    )

@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Strategy-lab candidate, validation, approval, monitoring, active-state, and
+  transition records now use bounded duplicate-key-rejecting JSON with explicit
+  top-level field allowlists. Atomic writes enforce the same limits before
+  publication, so malformed or oversized research evidence fails closed.
 - Paper account state now uses bounded duplicate-key-rejecting JSON and validates
   an exact versioned schema, canonical identity and dates, finite balances,
   positions, targets, and counters before simulation, audit, or rendering.

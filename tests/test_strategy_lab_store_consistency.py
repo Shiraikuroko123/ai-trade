@@ -10,6 +10,10 @@ from unittest.mock import patch
 
 import ai_trade.strategy_lab.store as store_module
 from ai_trade.strategy_lab.store import (
+    MAX_APPROVAL_RECORD_BYTES,
+    MAX_CANDIDATE_RECORD_BYTES,
+    MAX_MONITOR_RECORD_BYTES,
+    MAX_VALIDATION_RECORD_BYTES,
     StrategyLabCapacityError,
     StrategyLabConflictError,
     StrategyLabStore,
@@ -318,6 +322,53 @@ class StrategyLabStoreConsistencyTests(TestCase):
 
         self.assertNotIsInstance(raised.exception, StrategyLabCapacityError)
         self.assertFalse(transition_called)
+
+    def test_strategy_records_use_bounded_unique_json_and_allowlisted_fields(self):
+        owner_directory = self.store.owner_directory("alice")
+        cases = (
+            (
+                "candidates",
+                "cand_" + "1" * 32,
+                MAX_CANDIDATE_RECORD_BYTES,
+                self.store.read_candidate,
+            ),
+            (
+                "validations",
+                "cand_" + "2" * 32,
+                MAX_VALIDATION_RECORD_BYTES,
+                self.store.read_validation,
+            ),
+            (
+                "approvals",
+                "cand_" + "3" * 32,
+                MAX_APPROVAL_RECORD_BYTES,
+                self.store.read_approval,
+            ),
+            (
+                "monitors",
+                "monitor_" + "4" * 32,
+                MAX_MONITOR_RECORD_BYTES,
+                self.store.read_monitor,
+            ),
+        )
+        for directory, record_id, limit, reader in cases:
+            path = owner_directory / directory / f"{record_id}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            path.write_text('{"value": 1, "value": 2}', encoding="utf-8")
+            with self.subTest(directory=directory, failure="duplicate"):
+                with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key"):
+                    reader("alice", record_id)
+
+            path.write_bytes(b" " * (limit + 1))
+            with self.subTest(directory=directory, failure="oversized"):
+                with self.assertRaisesRegex(RuntimeError, "exceeds"):
+                    reader("alice", record_id)
+
+            path.write_text('{"unexpected": true}', encoding="utf-8")
+            with self.subTest(directory=directory, failure="unknown field"):
+                with self.assertRaisesRegex(RuntimeError, "schema fields"):
+                    reader("alice", record_id)
 
 
 if __name__ == "__main__":
