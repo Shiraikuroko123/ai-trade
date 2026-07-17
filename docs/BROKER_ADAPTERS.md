@@ -22,8 +22,11 @@ example = "example_adapter:broker_capabilities"
 The declaration assigns one access level (`read_only`, `sandbox`, or `live`),
 an explicit environment set, and an allowlist drawn from `read_account`,
 `read_positions`, `read_orders`, `read_fills`, `submit_orders`, and
-`cancel_orders`. A missing declaration, unknown operation, environment mismatch,
-or runtime/declaration mismatch is denied before the core calls the adapter.
+`cancel_orders`. Duplicate names in either entry-point group are rejected rather
+than selected by installation order. Capability fields must contain the exact
+core enum and boolean types. A missing or malformed declaration, unknown
+operation, factory identity mismatch, environment mismatch, or
+runtime/declaration mismatch is denied before the core calls the adapter.
 
 The factory receives `AppConfig` and a `BrokerEnvironment` (`sandbox` or `live`) and returns a subclass of `ai_trade.broker.base.Broker`. The adapter must implement:
 

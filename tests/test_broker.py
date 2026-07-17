@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from ai_trade.broker.base import (
+    Broker,
     BrokerAccessLevel,
     BrokerAccount,
     BrokerCapabilities,
@@ -127,6 +128,17 @@ class SubmittingBroker(FakeBroker):
             )
             for order in orders
         ]
+
+
+class RegistryBroker(SubmittingBroker, Broker):
+    def open_orders(self):
+        return []
+
+    def cancel_order(self, broker_order_id):
+        raise NotImplementedError
+
+    def fills(self, since=None):
+        return []
 
 
 class FakeMarket:
@@ -917,6 +929,68 @@ class BrokerTests(unittest.TestCase):
             return_value={BrokerRegistry.ENTRY_POINT_GROUP: (point,)},
         ):
             self.assertIs(BrokerRegistry.discover()["mock"], point)
+
+    def test_registry_rejects_duplicate_entry_point_names(self):
+        points = (SimpleNamespace(name="mock"), SimpleNamespace(name="mock"))
+        with patch(
+            "ai_trade.broker.base.metadata.entry_points",
+            return_value={BrokerRegistry.ENTRY_POINT_GROUP: points},
+        ), self.assertRaisesRegex(RuntimeError, "Duplicate broker entry point"):
+            BrokerRegistry.discover()
+
+    def test_registry_rejects_malformed_capability_runtime_types(self):
+        invalid = BrokerCapabilities(
+            adapter_name="mock",
+            access_level=BrokerAccessLevel.LIVE,
+            operations=frozenset({BrokerOperation.READ_ACCOUNT}),
+            environments=frozenset({"live"}),
+            runtime_environment_verified=True,
+            qualifying_reconciliation_supported=True,
+        )
+        point = SimpleNamespace(load=MagicMock(return_value=invalid))
+        with (
+            patch.object(
+                BrokerRegistry,
+                "discover_capabilities",
+                return_value={"mock": point},
+            ),
+            self.assertRaisesRegex(RuntimeError, "invalid runtime types"),
+        ):
+            BrokerRegistry.capabilities("mock")
+
+    def test_registry_binds_factory_identity_and_environment(self):
+        declared = FakeBroker.capabilities
+        capability_point = SimpleNamespace(load=MagicMock(return_value=declared))
+        for adapter_name, environment, message in (
+            ("other", BrokerEnvironment.LIVE, "adapter identity"),
+            ("mock", BrokerEnvironment.SANDBOX, "runtime environment"),
+            ("mock", "live", "runtime environment"),
+        ):
+            broker = RegistryBroker()
+            broker.adapter_name = adapter_name
+            broker.environment = environment
+            factory_point = SimpleNamespace(
+                load=MagicMock(return_value=lambda *_: broker)
+            )
+            with (
+                self.subTest(adapter_name=adapter_name, environment=environment),
+                patch.object(
+                    BrokerRegistry,
+                    "discover",
+                    return_value={"mock": factory_point},
+                ),
+                patch.object(
+                    BrokerRegistry,
+                    "discover_capabilities",
+                    return_value={"mock": capability_point},
+                ),
+                self.assertRaisesRegex(RuntimeError, message),
+            ):
+                BrokerRegistry.create(
+                    "mock",
+                    SimpleNamespace(),
+                    BrokerEnvironment.LIVE,
+                )
 
     def test_registry_rejects_undeclared_adapter_before_loading_factory(self):
         point = SimpleNamespace(name="mock", load=MagicMock())

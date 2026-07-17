@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Broker discovery now rejects duplicate entry-point names, malformed typed
+  capability declarations, and factory identity or environment drift at the
+  registry boundary.
 - Live routing now validates broker account, position, and health objects at
   runtime with strict booleans, numeric types, identities, and bounds before
   consuming approval or reserving an intent.

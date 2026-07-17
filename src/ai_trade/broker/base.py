@@ -210,7 +210,7 @@ class BrokerRegistry:
             selected = points.select(group=cls.ENTRY_POINT_GROUP)
         else:  # pragma: no cover - compatibility for older Python 3.10 builds
             selected = points.get(cls.ENTRY_POINT_GROUP, ())
-        return {point.name: point for point in selected}
+        return _index_entry_points(selected, cls.ENTRY_POINT_GROUP)
 
     @classmethod
     def available(cls) -> tuple[str, ...]:
@@ -223,7 +223,7 @@ class BrokerRegistry:
             selected = points.select(group=cls.CAPABILITY_ENTRY_POINT_GROUP)
         else:  # pragma: no cover - compatibility for older Python 3.10 builds
             selected = points.get(cls.CAPABILITY_ENTRY_POINT_GROUP, ())
-        return {point.name: point for point in selected}
+        return _index_entry_points(selected, cls.CAPABILITY_ENTRY_POINT_GROUP)
 
     @classmethod
     def capabilities(cls, name: str) -> BrokerCapabilities:
@@ -237,6 +237,7 @@ class BrokerRegistry:
                 f"Broker capability entry point {name!r} did not return "
                 "BrokerCapabilities"
             )
+        _validate_capability_declaration(value)
         if value.adapter_name != name:
             raise RuntimeError(
                 f"Broker capability entry point {name!r} declared a different adapter"
@@ -266,6 +267,17 @@ class BrokerRegistry:
         broker = factory(config, environment)
         if not isinstance(broker, Broker):
             raise TypeError(f"Broker entry point {name!r} did not return a Broker")
+        if broker.adapter_name != name:
+            raise RuntimeError(
+                f"Broker entry point {name!r} returned a different adapter identity"
+            )
+        if (
+            not isinstance(broker.environment, BrokerEnvironment)
+            or broker.environment is not environment
+        ):
+            raise RuntimeError(
+                f"Broker adapter {name!r} returned a different runtime environment"
+            )
         runtime_capabilities = getattr(broker, "capabilities", None)
         if not isinstance(runtime_capabilities, BrokerCapabilities):
             raise TypeError(
@@ -277,3 +289,38 @@ class BrokerRegistry:
                 "installed declaration"
             )
         return broker
+
+
+def _index_entry_points(
+    points: Any,
+    group: str,
+) -> dict[str, metadata.EntryPoint]:
+    indexed: dict[str, metadata.EntryPoint] = {}
+    for point in points:
+        name = getattr(point, "name", None)
+        if not isinstance(name, str) or not name:
+            raise RuntimeError(f"Broker entry point in {group!r} has an invalid name")
+        if name in indexed:
+            raise RuntimeError(
+                f"Duplicate broker entry point {name!r} in group {group!r}"
+            )
+        indexed[name] = point
+    return indexed
+
+
+def _validate_capability_declaration(value: BrokerCapabilities) -> None:
+    if (
+        not isinstance(value.adapter_name, str)
+        or not value.adapter_name
+        or not isinstance(value.access_level, BrokerAccessLevel)
+        or not isinstance(value.operations, frozenset)
+        or any(not isinstance(item, BrokerOperation) for item in value.operations)
+        or not isinstance(value.environments, frozenset)
+        or any(
+            not isinstance(item, BrokerEnvironment) for item in value.environments
+        )
+        or type(value.runtime_environment_verified) is not bool
+        or type(value.qualifying_reconciliation_supported) is not bool
+        or type(value.requires_local_client) is not bool
+    ):
+        raise RuntimeError("Broker capability declaration has invalid runtime types")
