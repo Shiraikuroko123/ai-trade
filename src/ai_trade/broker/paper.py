@@ -22,6 +22,7 @@ from ..strategy import MomentumTrendStrategy
 
 PAPER_STATE_VERSION = 5
 MAX_PAPER_STATE_BYTES = 1024 * 1024
+MAX_PAPER_REPORT_BYTES = 2 * 1024 * 1024
 PAPER_STATE_FIELDS = {
     "version",
     "account_id",
@@ -266,23 +267,50 @@ def _existing_report(
     on_date: date,
 ) -> dict[str, object]:
     output = config.reports_dir / f"paper_{on_date.strftime('%Y%m%d')}.json"
+    fallback = {
+        "account_id": state["account_id"],
+        "date": on_date.isoformat(),
+        "equity": state.get("last_equity"),
+        "cash": state.get("cash"),
+        "positions": state.get("positions"),
+        "pending_targets": state.get("pending_targets"),
+        "cooldown_remaining": state.get("cooldown_remaining"),
+        "sessions_since_rebalance": state.get("sessions_since_rebalance"),
+        "trades": [],
+        "order_rejections": [],
+        "reason": "Existing state; daily report is missing",
+    }
     if output.exists():
-        report = json.loads(output.read_text(encoding="utf-8"))
+        try:
+            report = load_unique_json(output, max_bytes=MAX_PAPER_REPORT_BYTES)
+        except (OSError, UnicodeError, ValueError):
+            report = None
+        if not _report_matches_state(report, state, on_date):
+            fallback["reason"] = "Existing state; daily report failed validation"
+            report = fallback
     else:
-        report = {
-            "account_id": state["account_id"],
-            "date": on_date.isoformat(),
-            "equity": state.get("last_equity"),
-            "cash": state.get("cash"),
-            "positions": state.get("positions"),
-            "pending_targets": state.get("pending_targets"),
-            "cooldown_remaining": state.get("cooldown_remaining"),
-            "sessions_since_rebalance": state.get("sessions_since_rebalance"),
-            "trades": [],
-            "order_rejections": [],
-            "reason": "Existing state; daily report is missing",
-        }
+        report = fallback
     return report | {"status": "already_processed"}
+
+
+def _report_matches_state(
+    report: object,
+    state: dict[str, object],
+    on_date: date,
+) -> bool:
+    if not isinstance(report, dict):
+        return False
+    expected = {
+        "account_id": state["account_id"],
+        "date": on_date.isoformat(),
+        "equity": state.get("last_equity"),
+        "cash": state.get("cash"),
+        "positions": state.get("positions"),
+        "pending_targets": state.get("pending_targets"),
+        "cooldown_remaining": state.get("cooldown_remaining"),
+        "sessions_since_rebalance": state.get("sessions_since_rebalance"),
+    }
+    return all(report.get(key) == value for key, value in expected.items())
 
 
 def _trade_payload(account_id: str, trade) -> dict[str, object]:

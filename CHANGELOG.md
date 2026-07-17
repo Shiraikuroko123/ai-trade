@@ -9,6 +9,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   positions, targets, and counters before simulation, audit, or rendering.
 - Paper state and daily reports now use fsynced same-directory temporary files
   and atomic replacement, preserving the prior complete file if replacement fails.
+- Repeated paper runs now validate the cached daily report against the authoritative
+  account state and fall back to a safe summary when the report is malformed,
+  oversized, ambiguous, or tampered.
 - Sandbox reconciliation rejects future dates and counts position-bound rows
   only through the verified completed market date. Later valid rows remain
   visible as pending evidence instead of prematurely advancing live readiness.

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from ai_trade.broker.paper import (
     MAX_PAPER_STATE_BYTES,
+    MAX_PAPER_REPORT_BYTES,
     _save_state,
     initialize_paper,
     paper_status,
@@ -165,6 +166,29 @@ class PaperTests(unittest.TestCase):
                 list(config.paper_state_file.parent.glob(".paper_state.json.*.tmp")),
                 [],
             )
+
+    def test_repeated_run_does_not_trust_tampered_daily_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _config(Path(temporary))
+            market = MutableMarket()
+            initialize_paper(config)
+            first = run_paper(config, market)
+            report_path = config.reports_dir / "paper_20240106.json"
+            report = report_path.read_text(encoding="utf-8")
+            report_path.write_text(
+                report.replace('"cash": 10000.0', '"cash": -1.0', 1),
+                encoding="utf-8",
+            )
+
+            repeated = run_paper(config, market)
+
+            self.assertEqual(repeated["status"], "already_processed")
+            self.assertEqual(repeated["cash"], first["cash"])
+            self.assertIn("failed validation", repeated["reason"])
+
+            report_path.write_bytes(b" " * (MAX_PAPER_REPORT_BYTES + 1))
+            repeated_oversized = run_paper(config, market)
+            self.assertIn("failed validation", repeated_oversized["reason"])
 
     def test_forward_audit_requires_independent_sessions(self):
         with tempfile.TemporaryDirectory() as temporary:

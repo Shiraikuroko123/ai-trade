@@ -22,6 +22,10 @@ new archived epoch when the frozen configuration changes.
 State and report updates are written to a same-directory temporary file, flushed
 to disk, and atomically replaced. A replacement failure leaves the previous
 complete file in place; a leftover temporary file is not an active account state.
+When a date has already been processed, the cached report is checked against the
+account state before it is returned. A malformed or inconsistent report produces
+an explicit fallback summary rather than overriding the ledger's cash or position
+values.
 
 The same operations are available in the loopback-only workstation:
 
