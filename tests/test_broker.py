@@ -638,6 +638,77 @@ class BrokerTests(unittest.TestCase):
                 rows = list(csv.DictReader(handle))
             self.assertEqual(rows[0]["status"], OrderStatus.PENDING_SUBMIT.value)
 
+    def test_changed_submission_response_cannot_pollute_the_order_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            broker = SubmittingBroker()
+            broker.submit_orders = MagicMock(
+                return_value=[
+                    BrokerOrderSnapshot(
+                        "order-1",
+                        "broker-order-1",
+                        "510300",
+                        OrderSide.BUY,
+                        200,
+                        0,
+                        10.0,
+                        None,
+                        OrderStatus.SUBMITTED,
+                        datetime.now(timezone.utc),
+                    )
+                ]
+            )
+            router = _live_router(root, broker)
+            on_date = datetime.now(timezone(timedelta(hours=8))).date()
+
+            with (
+                patch(
+                    "ai_trade.broker.live.assert_live_submission_allowed",
+                    return_value=_readiness(),
+                ),
+                patch(
+                    "ai_trade.broker.live.consume_batch_approval",
+                    return_value={"approval_id": "approval_" + "f" * 32},
+                ),
+                self.assertRaisesRegex(RuntimeError, "changed order details"),
+            ):
+                router.submit([_order()], FakeMarket(), on_date, {})
+
+            with router.config.broker_orders_file.open(
+                "r", encoding="utf-8", newline=""
+            ) as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], OrderStatus.PENDING_SUBMIT.value)
+
+    def test_invalid_submission_collection_cannot_pollute_the_order_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            broker = SubmittingBroker()
+            broker.submit_orders = MagicMock(return_value=tuple())
+            router = _live_router(root, broker)
+            on_date = datetime.now(timezone(timedelta(hours=8))).date()
+
+            with (
+                patch(
+                    "ai_trade.broker.live.assert_live_submission_allowed",
+                    return_value=_readiness(),
+                ),
+                patch(
+                    "ai_trade.broker.live.consume_batch_approval",
+                    return_value={"approval_id": "approval_" + "f" * 32},
+                ),
+                self.assertRaisesRegex(RuntimeError, "invalid order collection"),
+            ):
+                router.submit([_order()], FakeMarket(), on_date, {})
+
+            with router.config.broker_orders_file.open(
+                "r", encoding="utf-8", newline=""
+            ) as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], OrderStatus.PENDING_SUBMIT.value)
+
     def test_router_rejects_wrong_live_account_before_submission(self):
         with tempfile.TemporaryDirectory() as temporary:
             broker = SubmittingBroker(account_id="wrong-account")

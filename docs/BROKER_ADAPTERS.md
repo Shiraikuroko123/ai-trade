@@ -351,7 +351,11 @@ Account, position, and health annotations are not trusted as runtime
 validation. The router requires exact core model objects, real booleans for
 connection/session flags, finite non-boolean balances and valuations, bounded
 available quantities, and timezone-aware health timestamps before approval is
-consumed.
+consumed. After submission, the router validates the complete returned order
+collection and checks every client ID, broker ID, symbol, side, quantity, and
+limit price against the approved request before appending a response event. A
+malformed or changed response leaves the pre-I/O `PENDING_SUBMIT` reservation
+intact for manual recovery and cannot contaminate the lifecycle ledger.
 
 Adapters must still implement broker-specific validation and reconciliation. Core checks do not replace exchange or broker rules.
 

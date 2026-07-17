@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Live routing now validates the complete broker submission collection and its
+  exact request identities before appending any returned snapshot. A malformed
+  or changed response leaves only the pre-I/O reservation for manual recovery.
 - New qualifying `v3_` reconciliation rows bind canonical expected and broker
   position maps as well as non-negative cash, and recompute the complete issue
   list at write and audit time. Identity-only and cash-only `v2_` rows remain

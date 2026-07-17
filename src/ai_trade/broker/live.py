@@ -38,6 +38,7 @@ from .scope import BrokerLedgerScope, create_broker_ledger_scope
 from .runtime import (
     validated_broker_account,
     validated_broker_health,
+    validated_broker_orders,
     validated_broker_positions,
 )
 
@@ -306,14 +307,14 @@ class LiveOrderRouter:
         # A failed final gate intentionally leaves reserved IDs behind, preventing a
         # blind retry when submission status is uncertain.
         assert_live_submission_allowed(self.config, paper_audit, market)
-        submitted = self.broker.submit_orders(orders)
+        submitted = validated_broker_orders(self.broker.submit_orders(orders))
+        _validate_submission_response(orders, submitted)
         append_order_events(
             self.config.broker_orders_file,
             submitted,
             scope_path=scope_path,
             scope=ledger_scope,
         )
-        _validate_submission_response(orders, submitted)
         return submitted
 
     def _assert_broker_identity(self):
