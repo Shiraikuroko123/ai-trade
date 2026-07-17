@@ -79,7 +79,8 @@ class WebBrokerLifecycleTests(unittest.TestCase):
         payload = DashboardService(self.config).trading()
 
         lifecycle = payload["broker_lifecycle"]
-        self.assertEqual(lifecycle["status"], "VERIFIED")
+        self.assertEqual(lifecycle["status"], "RECOVERED")
+        self.assertEqual(lifecycle["scope"]["status"], "UNSCOPED")
         self.assertEqual(lifecycle["order_count"], 1)
         self.assertEqual(lifecycle["orders"][0]["status"], "FILLED")
         self.assertEqual(len(payload["broker_orders"]), 2)

@@ -559,7 +559,7 @@ p {
   border-bottom: 1px solid var(--rule);
   border-top: 1px solid var(--rule);
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 0;
 }
 
@@ -2752,12 +2752,17 @@ progress {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .broker-lifecycle-band > div:nth-child(2) {
+  .broker-lifecycle-band > div:nth-child(2),
+  .broker-lifecycle-band > div:nth-child(4) {
     border-inline-end: 0;
   }
 
-  .broker-lifecycle-band > div:nth-child(-n + 2) {
+  .broker-lifecycle-band > div:nth-child(-n + 4) {
     border-bottom: 1px solid var(--rule);
+  }
+
+  .broker-lifecycle-band > div:last-child {
+    grid-column: 1 / -1;
   }
 
   .metric:nth-child(2) {
@@ -3144,6 +3149,7 @@ progress {
 
   .broker-lifecycle-band > div {
     border-inline-end: 0 !important;
+    grid-column: auto !important;
   }
 
   .broker-lifecycle-band > div:not(:last-child) {

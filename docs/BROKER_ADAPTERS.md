@@ -179,6 +179,22 @@ ledger fields compare by parsed integer or floating-point meaning, so an older
 This local fingerprint is corruption evidence, not a keyed signature or a
 replacement for filesystem permissions, backups, and broker reconciliation.
 
+`state/broker_ledger_scope.json` is a separate, atomically published scope
+manifest for the order/fill pair. It binds the adapter, declared sandbox/live
+environment, active live-configuration fingerprint, resolved ledger paths, and
+a SHA-256 account reference. The plaintext broker account ID is never stored in
+the manifest or returned by the lifecycle report; the UI exposes only a
+12-character hexadecimal reference for human comparison.
+
+`append_broker_observation` can initialize the manifest only when both lifecycle
+ledgers are absent. Individual scoped order, intent, and fill writes require an
+already matching manifest. The live router consumes the exact batch approval,
+then creates or verifies the scope before intent reservation and broker I/O. A
+different adapter, account, environment, configuration, or ledger path fails
+closed. Existing unscoped CSV files remain readable with an `UNSCOPED` warning,
+but scoped writers refuse to adopt or append them; archive them and begin with
+empty paths instead of fabricating a migration.
+
 Snapshots use the following state model:
 
 - `PENDING_SUBMIT` may advance to any broker-observed state because submission
@@ -294,6 +310,8 @@ order UI or approval generator while no verified live adapter exists.
 - configured maximum order notional;
 - mandate symbol/side, order, daily-notional, and daily-order-count limits;
 - a matching short-lived one-time batch approval;
+- an exact broker-ledger scope binding for adapter, account, environment,
+  configuration, and order/fill paths;
 - previously reserved plus new daily notional and order count;
 - exact live broker environment and a healthy trading session.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Any
 
 from ..config import (
@@ -21,6 +22,8 @@ from .base import (
 )
 from .ledger import (
     append_order_events,
+    initialize_broker_ledger_scope,
+    preflight_broker_ledger_scope,
     reserve_order_intents,
     submitted_order_count,
     submitted_order_notional,
@@ -31,6 +34,7 @@ from .mandate import (
     order_batch_fingerprint,
     parse_mandate,
 )
+from .scope import BrokerLedgerScope, create_broker_ledger_scope
 
 
 CHINA_STANDARD_TIME = timezone(timedelta(hours=8))
@@ -47,9 +51,19 @@ class LiveOrderRouter:
         orders: list[BrokerOrderRequest],
         market: MarketData,
         on_date: date,
+        *,
+        ledger_scope: BrokerLedgerScope | None = None,
     ) -> dict[str, Any]:
         if not orders:
             raise ValueError("At least one order is required")
+        scope_path = self._scope_path(ledger_scope)
+        if ledger_scope is not None and scope_path is not None:
+            preflight_broker_ledger_scope(
+                scope_path,
+                self.config.broker_orders_file,
+                self.config.broker_fills_file,
+                ledger_scope,
+            )
         self.broker.capabilities.require(
             frozenset(
                 {
@@ -59,6 +73,7 @@ class LiveOrderRouter:
             ),
             self.broker.environment,
         )
+        account = self._assert_broker_identity() if ledger_scope is not None else None
         broker_cfg = self.config.raw.get("broker", {})
         max_order = float(
             broker_cfg.get(
@@ -84,7 +99,8 @@ class LiveOrderRouter:
             available_positions[value.symbol] = (
                 available_positions.get(value.symbol, 0) + value.available_quantity
             )
-        account = self.broker.account()
+        if account is None:
+            account = self.broker.account()
         if (
             not math.isfinite(account.cash)
             or not math.isfinite(account.available_cash)
@@ -183,7 +199,10 @@ class LiveOrderRouter:
         if buy_cash_required > account.available_cash:
             raise ValueError("Buy orders exceed broker available cash")
         submitted_today = submitted_order_notional(
-            self.config.broker_orders_file, on_date
+            self.config.broker_orders_file,
+            on_date,
+            scope_path=scope_path,
+            scope=ledger_scope,
         )
         if max_daily <= 0 or submitted_today + total_notional > max_daily:
             raise ValueError("Orders exceed configured daily notional limit")
@@ -214,9 +233,24 @@ class LiveOrderRouter:
             ),
             BrokerEnvironment.LIVE,
         )
-        self._assert_broker_identity()
-        validation = self.validate(orders, market, on_date)
         broker_cfg = self.config.raw.get("broker", {})
+        configured_account = str(broker_cfg.get("account_id") or "")
+        config_fingerprint = str(readiness.get("config_fingerprint") or "")
+        ledger_scope = create_broker_ledger_scope(
+            adapter=self.broker.adapter_name,
+            account_id=configured_account,
+            environment=self.broker.environment,
+            config_fingerprint=config_fingerprint,
+            orders_path=self.config.broker_orders_file,
+            fills_path=self.config.broker_fills_file,
+        )
+        scope_path = self._scope_path(ledger_scope)
+        validation = self.validate(
+            orders,
+            market,
+            on_date,
+            ledger_scope=ledger_scope,
+        )
         mandate = parse_mandate(
             readiness.get("authorization", {}).get("mandate"),
             configured_max_order_notional=float(
@@ -231,7 +265,10 @@ class LiveOrderRouter:
             ),
         )
         submitted_count = submitted_order_count(
-            self.config.broker_orders_file, on_date
+            self.config.broker_orders_file,
+            on_date,
+            scope_path=scope_path,
+            scope=ledger_scope,
         )
         mandate.enforce(
             orders,
@@ -242,8 +279,6 @@ class LiveOrderRouter:
         if not health.connected or not health.trading_session:
             raise RuntimeError(f"Broker is not ready for submission: {health.message}")
         _assert_current_trading_session(on_date, health.checked_at)
-        configured_account = str(broker_cfg.get("account_id") or "")
-        config_fingerprint = str(readiness.get("config_fingerprint") or "")
         batch_fingerprint = order_batch_fingerprint(
             orders,
             on_date=on_date,
@@ -258,23 +293,36 @@ class LiveOrderRouter:
             config_fingerprint=config_fingerprint,
             batch_fingerprint=batch_fingerprint,
         )
+        initialize_broker_ledger_scope(
+            scope_path,
+            self.config.broker_orders_file,
+            self.config.broker_fills_file,
+            ledger_scope,
+        )
         reserve_order_intents(
             self.config.broker_orders_file,
             orders,
             on_date,
             mandate.max_daily_notional,
             mandate.max_orders_per_day,
+            scope_path=scope_path,
+            scope=ledger_scope,
         )
         # Re-evaluate the authorization and kill switch after all broker and disk I/O.
         # A failed final gate intentionally leaves reserved IDs behind, preventing a
         # blind retry when submission status is uncertain.
         assert_live_submission_allowed(self.config, paper_audit, market)
         submitted = self.broker.submit_orders(orders)
-        append_order_events(self.config.broker_orders_file, submitted)
+        append_order_events(
+            self.config.broker_orders_file,
+            submitted,
+            scope_path=scope_path,
+            scope=ledger_scope,
+        )
         _validate_submission_response(orders, submitted)
         return submitted
 
-    def _assert_broker_identity(self) -> None:
+    def _assert_broker_identity(self):
         broker_cfg = self.config.raw.get("broker", {})
         configured_adapter = str(broker_cfg.get("adapter") or "")
         configured_account = str(broker_cfg.get("account_id") or "")
@@ -283,9 +331,19 @@ class LiveOrderRouter:
             or getattr(self.broker, "adapter_name", None) != configured_adapter
         ):
             raise RuntimeError("Live broker adapter does not match the authorized configuration")
-        actual_account = str(self.broker.account().account_id)
+        account = self.broker.account()
+        actual_account = str(account.account_id)
         if not configured_account or actual_account != configured_account:
             raise RuntimeError("Live broker account does not match the authorized configuration")
+        return account
+
+    def _scope_path(self, scope: BrokerLedgerScope | None) -> Path | None:
+        if scope is None:
+            return None
+        path = getattr(self.config, "broker_ledger_scope_file", None)
+        if path is None:
+            raise RuntimeError("Broker ledger scope file is not configured")
+        return path
 
 
 def _is_tick_aligned(value: float, tick_size: float) -> bool:

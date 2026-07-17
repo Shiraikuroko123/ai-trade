@@ -109,6 +109,7 @@
     "reconciliation_file": "state/broker_reconciliation.csv",
     "orders_file": "state/broker_orders.csv",
     "fills_file": "state/broker_fills.csv",
+    "ledger_scope_file": "state/broker_ledger_scope.json",
     "authorization_file": "state/live_authorization.json",
     "batch_approval_file": "state/live_batch_approval.json",
     "kill_switch_file": "state/LIVE_KILL_SWITCH",

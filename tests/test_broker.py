@@ -23,6 +23,7 @@ from ai_trade.broker.base import (
 )
 from ai_trade.broker.ledger import (
     append_order_events,
+    initialize_broker_ledger_scope,
     reserve_order_intents,
     submitted_order_count,
     submitted_order_notional,
@@ -46,6 +47,7 @@ from ai_trade.broker.reconciliation import (
     audit_reconciliations,
     reconcile_account,
 )
+from ai_trade.broker.scope import create_broker_ledger_scope
 from ai_trade.models import Bar, Instrument
 from ai_trade.config import _validate_broker
 
@@ -174,6 +176,8 @@ def _live_router(root: Path, broker):
             }
         },
         broker_orders_file=root / "orders.csv",
+        broker_fills_file=root / "fills.csv",
+        broker_ledger_scope_file=root / "ledger-scope.json",
         live_batch_approval_file=root / "batch-approval.json",
     )
     return LiveOrderRouter(config, broker)
@@ -590,6 +594,41 @@ class BrokerTests(unittest.TestCase):
                     router.submit([_order()], FakeMarket(), on_date, {})
             self.assertEqual(broker.submission_calls, 0)
 
+    def test_router_rejects_mismatched_ledger_scope_before_adapter_io(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            broker = SubmittingBroker()
+            broker.account = MagicMock(wraps=broker.account)
+            broker.positions = MagicMock(wraps=broker.positions)
+            broker.health = MagicMock(wraps=broker.health)
+            router = _live_router(root, broker)
+            initialize_broker_ledger_scope(
+                router.config.broker_ledger_scope_file,
+                router.config.broker_orders_file,
+                router.config.broker_fills_file,
+                create_broker_ledger_scope(
+                    adapter="mock",
+                    account_id="different-account",
+                    environment=BrokerEnvironment.LIVE,
+                    config_fingerprint="a" * 64,
+                    orders_path=router.config.broker_orders_file,
+                    fills_path=router.config.broker_fills_file,
+                ),
+            )
+            on_date = datetime.now(timezone(timedelta(hours=8))).date()
+
+            with patch(
+                "ai_trade.broker.live.assert_live_submission_allowed",
+                return_value=_readiness(),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "does not match"):
+                    router.submit([_order()], FakeMarket(), on_date, {})
+
+            broker.account.assert_not_called()
+            broker.positions.assert_not_called()
+            broker.health.assert_not_called()
+            self.assertEqual(broker.submission_calls, 0)
+
     def test_router_consumes_an_exact_one_time_batch_approval(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -621,6 +660,12 @@ class BrokerTests(unittest.TestCase):
             self.assertEqual(len(submitted), 1)
             self.assertEqual(broker.submission_calls, 1)
             self.assertFalse(router.config.live_batch_approval_file.exists())
+            self.assertTrue(router.config.broker_ledger_scope_file.exists())
+            scope_text = router.config.broker_ledger_scope_file.read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn('"account_id"', scope_text)
+            self.assertNotIn('"account"', scope_text)
             self.assertEqual(
                 len(list(root.glob("batch-approval.*.consumed.json"))), 1
             )
@@ -720,6 +765,26 @@ class BrokerTests(unittest.TestCase):
                     "fills_file": "state/shared.csv",
                 }
             )
+        with self.assertRaisesRegex(ValueError, "ledger_scope_file"):
+            _validate_broker(
+                {
+                    "mode": "disabled",
+                    "orders_file": "state/shared.json",
+                    "ledger_scope_file": "state/shared.json",
+                }
+            )
+
+    def test_live_configuration_fingerprint_binds_the_scope_manifest_path(self):
+        first = SimpleNamespace(
+            raw={"broker": {"ledger_scope_file": "state/first-scope.json"}}
+        )
+        second = SimpleNamespace(
+            raw={"broker": {"ledger_scope_file": "state/second-scope.json"}}
+        )
+        self.assertNotEqual(
+            _live_configuration_fingerprint(first, "paper"),
+            _live_configuration_fingerprint(second, "paper"),
+        )
 
     def test_conflicting_reconciliation_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:

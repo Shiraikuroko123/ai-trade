@@ -106,6 +106,14 @@ const BROKER_LIFECYCLE_STATUS_LABELS = {
   INTEGRITY_ERROR: "完整性错误",
 };
 
+const BROKER_LEDGER_SCOPE_STATUS_LABELS = {
+  EMPTY: "尚未建立",
+  BOUND: "作用域已绑定",
+  UNSCOPED: "旧账本未绑定",
+  MISMATCH: "与当前配置不符",
+  INVALID: "作用域文件无效",
+};
+
 const BROKER_LIFECYCLE_ISSUE_LABELS = {
   order_ledger_invalid: "订单事件账本无法校验；修复或归档损坏文件后重新读取。",
   fill_ledger_invalid: "成交账本无法校验；修复或归档损坏文件后重新读取。",
@@ -118,6 +126,8 @@ const BROKER_LIFECYCLE_ISSUE_LABELS = {
   average_fill_price_mismatch: "成交明细无法复算订单最新平均成交价。",
   history_started_mid_lifecycle: "本地记录从订单中途开始，早期事件不可用。",
   out_of_order_events_recovered: "检测到延迟回报，已按券商时间归并且未回退当前状态。",
+  ledger_scope_missing: "旧账本未绑定适配器、账户、环境和配置；只可复核，不可继续写入或作为权限证据。",
+  ledger_scope_invalid: "账本作用域损坏或与当前券商配置不一致；继续前必须归档并核对本地证据。",
 };
 
 const SHADOW_VERDICT_LABELS = {
@@ -2932,6 +2942,7 @@ function tradingLedger(data) {
 
 function brokerLifecycleMarkup(data) {
   const lifecycle = data.broker_lifecycle || {};
+  const scope = lifecycle.scope || {};
   const orders = lifecycle.orders || [];
   const fills = data.broker_fills || [];
   const errors = lifecycle.integrity_errors || [];
@@ -2945,6 +2956,20 @@ function brokerLifecycleMarkup(data) {
         ? "warning"
         : "neutral";
   const latestUpdate = orders[0]?.updated_at ? formatDate(orders[0].updated_at, true) : "尚无更新时间";
+  const scopeStatus = scope.status || "EMPTY";
+  const scopeKind = scopeStatus === "BOUND"
+    ? "success"
+    : scopeStatus === "MISMATCH" || scopeStatus === "INVALID"
+      ? "danger"
+      : scopeStatus === "UNSCOPED"
+        ? "warning"
+        : "neutral";
+  const scopeEnvironment = scope.environment === "live" ? "实盘" : scope.environment === "sandbox" ? "沙箱" : "环境未绑定";
+  const scopeDetail = scope.adapter
+    ? `${scope.adapter} · ${scopeEnvironment} · 账户 ${scope.account_reference || "未绑定"}`
+    : scopeStatus === "UNSCOPED"
+      ? "缺少账户、环境和配置绑定"
+      : "尚无券商账本作用域";
 
   return `
     <div class="broker-lifecycle-view">
@@ -2953,6 +2978,7 @@ function brokerLifecycleMarkup(data) {
         <div><dt>订单</dt><dd><strong class="numeric">${formatInteger(lifecycle.open_order_count || 0)} / ${formatInteger(lifecycle.order_count || 0)}</strong><span>未终结 / 全部，最近 ${escapeHtml(latestUpdate)}</span></dd></div>
         <div><dt>执行中状态</dt><dd><strong class="numeric">${formatInteger(lifecycle.partial_order_count || 0)} / ${formatInteger(lifecycle.cancel_pending_count || 0)}</strong><span>部分成交 / 撤单处理中</span></dd></div>
         <div><dt>成交明细</dt><dd><strong class="numeric">${formatInteger(lifecycle.fill_count || 0)}</strong><span>按唯一成交号累计</span></dd></div>
+        <div><dt>证据作用域</dt><dd>${statusChip(BROKER_LEDGER_SCOPE_STATUS_LABELS[scopeStatus] || scopeStatus, scopeKind)}<span>${escapeHtml(scopeDetail)}</span></dd></div>
       </dl>
 
       ${errors.length ? `
@@ -3006,7 +3032,7 @@ function brokerLifecycleMarkup(data) {
 
       <aside class="callout info broker-lifecycle-boundary">
         <strong>审计边界</strong>
-        <p>生命周期恢复只证明本地订单事件与成交明细能否自洽，不等同于现金和持仓对账，也不会写入沙箱晋级证据、改变策略或解除真实下单门禁。</p>
+        <p>生命周期恢复只证明本地订单事件与成交明细能否自洽；作用域绑定只防止不同适配器、账户、环境或配置意外混用。两者都不等同于现金和持仓对账，也不会写入沙箱晋级证据、改变策略或解除真实下单门禁。</p>
       </aside>
     </div>`;
 }

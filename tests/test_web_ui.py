@@ -103,9 +103,14 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn('id="broker-fill-ledger-title"', self.javascript)
         self.assertIn("撤单期间发生成交", self.javascript)
         self.assertIn("已按券商时间归并且未回退当前状态", self.javascript)
+        self.assertIn("BROKER_LEDGER_SCOPE_STATUS_LABELS", self.javascript)
+        self.assertIn("证据作用域", self.javascript)
+        self.assertIn("账户 ${scope.account_reference", self.javascript)
+        self.assertIn("不同适配器、账户、环境或配置意外混用", self.javascript)
         self.assertIn("不会写入沙箱晋级证据、改变策略或解除真实下单门禁", self.javascript)
         self.assertIn(".broker-order-table", self.css)
         self.assertIn("min-width: 1120px", self.css)
+        self.assertIn("repeat(5, minmax(0, 1fr))", self.css)
 
     def test_mobile_navigation_and_dense_surfaces_reflow_without_page_overflow(self):
         mobile_start = self.css.index("@media (max-width: 820px)")

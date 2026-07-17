@@ -1521,6 +1521,9 @@ class StrategyLabEngine:
                 ),
                 "orders_file": str((profile / "broker_orders.csv").resolve()),
                 "fills_file": str((profile / "broker_fills.csv").resolve()),
+                "ledger_scope_file": str(
+                    (profile / "broker_ledger_scope.json").resolve()
+                ),
                 "authorization_file": str(
                     (profile / "live_authorization.json").resolve()
                 ),

@@ -4,6 +4,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added an atomic broker-ledger scope manifest binding lifecycle evidence to the
+  adapter, a non-plaintext account reference, runtime environment, live
+  configuration fingerprint, and exact ledger paths. Scoped writes reject
+  legacy or mismatched ledgers before broker I/O; legacy ledgers remain readable
+  but visibly non-authoritative, and the Trading view exposes the scope state.
 - Hardened qualifying sandbox reconciliation evidence with canonical `v2_`
   content fingerprints, strict whole-ledger validation, logical-session conflict
   detection, in-process and operating-system writer serialization, and atomic

@@ -50,7 +50,7 @@ def evaluate_live_readiness(
         broker.get("max_daily_notional", DEFAULT_BROKER_MAX_DAILY_NOTIONAL)
     )
     fingerprint = _config_fingerprint(config)
-    live_fingerprint = _live_configuration_fingerprint(config, fingerprint)
+    live_fingerprint = broker_configuration_fingerprint(config, fingerprint)
     paper_fingerprint = str((paper_audit or {}).get("config_fingerprint", ""))
     paper_configuration_current = paper_fingerprint == fingerprint
     reconciliation = audit_reconciliations(
@@ -243,6 +243,9 @@ def _live_configuration_fingerprint(
             ),
             "orders_file": broker.get("orders_file", "state/broker_orders.csv"),
             "fills_file": broker.get("fills_file", "state/broker_fills.csv"),
+            "ledger_scope_file": broker.get(
+                "ledger_scope_file", "state/broker_ledger_scope.json"
+            ),
             "authorization_file": broker.get(
                 "authorization_file", "state/live_authorization.json"
             ),
@@ -258,6 +261,16 @@ def _live_configuration_fingerprint(
         payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
     ).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def broker_configuration_fingerprint(
+    config: AppConfig,
+    paper_fingerprint: str | None = None,
+) -> str:
+    return _live_configuration_fingerprint(
+        config,
+        paper_fingerprint or _config_fingerprint(config),
+    )
 
 
 def _stage(checks: dict[str, bool]) -> str:

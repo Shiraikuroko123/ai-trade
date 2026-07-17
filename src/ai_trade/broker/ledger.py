@@ -27,6 +27,13 @@ from .lifecycle import (
     validate_broker_fill,
     validate_order_snapshot,
 )
+from .scope import (
+    BrokerLedgerScope,
+    ensure_scope_manifest,
+    inspect_scope_manifest,
+    preflight_scope_manifest,
+    require_scope_manifest,
+)
 
 
 ORDER_EVENT_FIELDS = [
@@ -65,11 +72,54 @@ _LEDGER_THREAD_LOCK = threading.RLock()
 CHINA_STANDARD_TIME = timezone(timedelta(hours=8))
 
 
-def append_order_events(path: Path, orders: list[BrokerOrderSnapshot]) -> None:
+def initialize_broker_ledger_scope(
+    scope_path: Path,
+    orders_path: Path,
+    fills_path: Path,
+    scope: BrokerLedgerScope,
+) -> None:
+    scope.require_ledger_path("orders", orders_path)
+    scope.require_ledger_path("fills", fills_path)
+    paths = _scoped_paths([orders_path, fills_path], scope_path, scope)
+    with _ledger_locks(paths):
+        ensure_scope_manifest(
+            scope_path,
+            scope,
+            legacy_ledgers_exist=orders_path.exists() or fills_path.exists(),
+        )
+
+
+def preflight_broker_ledger_scope(
+    scope_path: Path,
+    orders_path: Path,
+    fills_path: Path,
+    scope: BrokerLedgerScope,
+) -> None:
+    """Validate an existing binding before any broker adapter I/O."""
+    scope.require_ledger_path("orders", orders_path)
+    scope.require_ledger_path("fills", fills_path)
+    paths = _scoped_paths([orders_path, fills_path], scope_path, scope)
+    with _ledger_locks(paths):
+        preflight_scope_manifest(
+            scope_path,
+            scope,
+            legacy_ledgers_exist=orders_path.exists() or fills_path.exists(),
+        )
+
+
+def append_order_events(
+    path: Path,
+    orders: list[BrokerOrderSnapshot],
+    *,
+    scope_path: Path | None = None,
+    scope: BrokerLedgerScope | None = None,
+) -> None:
     if not orders:
         return
+    _require_scope_ledger_path(scope, "orders", path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with ledger_lock(path):
+    with _ledger_locks(_scoped_paths([path], scope_path, scope)):
+        _require_bound_scope(scope_path, scope)
         existing_rows = _read_rows(path, "event_id")
         existing_events = _order_events_from_rows(existing_rows)
         recover_order_states(existing_events + orders)
@@ -89,6 +139,9 @@ def reserve_order_intents(
     on_date: date,
     max_daily_notional: float,
     max_daily_orders: int | None = None,
+    *,
+    scope_path: Path | None = None,
+    scope: BrokerLedgerScope | None = None,
 ) -> float:
     """Persist order IDs before broker I/O and enforce the daily limit atomically."""
     if not math.isfinite(max_daily_notional) or max_daily_notional <= 0:
@@ -100,6 +153,7 @@ def reserve_order_intents(
     ):
         raise ValueError("max_daily_orders must be a positive integer")
     timestamp = datetime.combine(on_date, time.min, tzinfo=CHINA_STANDARD_TIME)
+    _require_scope_ledger_path(scope, "orders", path)
     snapshots = [
         BrokerOrderSnapshot(
             client_order_id=order.client_order_id,
@@ -120,7 +174,8 @@ def reserve_order_intents(
     batch_notional = sum(order.quantity * order.limit_price for order in orders)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with ledger_lock(path):
+    with _ledger_locks(_scoped_paths([path], scope_path, scope)):
+        _require_bound_scope(scope_path, scope)
         existing_rows = _read_rows(path, "event_id")
         existing_client_ids = {
             str(row.get("client_order_id", "")) for row in existing_rows
@@ -150,12 +205,20 @@ def reserve_order_intents(
     return submitted + batch_notional
 
 
-def append_fills(path: Path, fills: list[BrokerFill]) -> None:
+def append_fills(
+    path: Path,
+    fills: list[BrokerFill],
+    *,
+    scope_path: Path | None = None,
+    scope: BrokerLedgerScope | None = None,
+) -> None:
     if not fills:
         return
+    _require_scope_ledger_path(scope, "fills", path)
     rows = [_fill_payload(fill) for fill in fills]
     path.parent.mkdir(parents=True, exist_ok=True)
-    with ledger_lock(path):
+    with _ledger_locks(_scoped_paths([path], scope_path, scope)):
+        _require_bound_scope(scope_path, scope)
         existing_rows = _read_rows(path, "fill_id")
         _fills_from_rows(existing_rows)
         _append_rows(path, rows, "fill_id", existing_rows)
@@ -166,18 +229,27 @@ def append_broker_observation(
     fills_path: Path,
     orders: list[BrokerOrderSnapshot],
     fills: list[BrokerFill],
+    *,
+    scope_path: Path | None = None,
+    scope: BrokerLedgerScope | None = None,
 ) -> dict[str, object]:
     """Validate and append one restart-safe broker polling observation."""
     if orders_path.resolve() == fills_path.resolve():
         raise ValueError("Broker order and fill ledgers must use different paths")
+    _require_scope_ledger_path(scope, "orders", orders_path)
+    _require_scope_ledger_path(scope, "fills", fills_path)
     fill_rows = [_fill_payload(fill) for fill in fills]
     orders_path.parent.mkdir(parents=True, exist_ok=True)
     fills_path.parent.mkdir(parents=True, exist_ok=True)
 
-    paths = sorted((orders_path, fills_path), key=lambda value: str(value.resolve()))
-    with ExitStack() as stack:
-        for path in paths:
-            stack.enter_context(ledger_lock(path))
+    paths = _scoped_paths([orders_path, fills_path], scope_path, scope)
+    with _ledger_locks(paths):
+        if scope is not None and scope_path is not None:
+            ensure_scope_manifest(
+                scope_path,
+                scope,
+                legacy_ledgers_exist=orders_path.exists() or fills_path.exists(),
+            )
         existing_order_rows = _read_rows(orders_path, "event_id")
         existing_fill_rows = _read_rows(fills_path, "fill_id")
         existing_events = _order_events_from_rows(existing_order_rows)
@@ -224,48 +296,185 @@ def read_fills(path: Path) -> list[BrokerFill]:
 def recover_order_lifecycle(
     orders_path: Path,
     fills_path: Path,
+    *,
+    scope_path: Path | None = None,
+    expected_scope: BrokerLedgerScope | None = None,
 ) -> dict[str, object]:
+    scope_report = (
+        inspect_scope_manifest(
+            scope_path,
+            orders_path,
+            fills_path,
+            expected_scope,
+        )
+        if scope_path is not None
+        else None
+    )
     try:
         events = read_order_events(orders_path)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        return lifecycle_error_report(
-            "order_ledger_invalid", f"Broker order ledger is invalid: {exc}"
+        return _attach_scope_report(
+            lifecycle_error_report(
+                "order_ledger_invalid", f"Broker order ledger is invalid: {exc}"
+            ),
+            scope_report,
         )
     try:
         fills = read_fills(fills_path)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        return lifecycle_error_report(
-            "fill_ledger_invalid", f"Broker fill ledger is invalid: {exc}"
+        return _attach_scope_report(
+            lifecycle_error_report(
+                "fill_ledger_invalid", f"Broker fill ledger is invalid: {exc}"
+            ),
+            scope_report,
         )
     try:
-        return build_lifecycle_report(events, fills)
+        return _attach_scope_report(
+            build_lifecycle_report(events, fills),
+            scope_report,
+        )
     except (RuntimeError, TypeError, ValueError) as exc:
-        return lifecycle_error_report(
-            "lifecycle_invalid", f"Broker order lifecycle is invalid: {exc}"
+        return _attach_scope_report(
+            lifecycle_error_report(
+                "lifecycle_invalid", f"Broker order lifecycle is invalid: {exc}"
+            ),
+            scope_report,
         )
 
 
-def submitted_order_notional(path: Path, on_date: date) -> float:
+def submitted_order_notional(
+    path: Path,
+    on_date: date,
+    *,
+    scope_path: Path | None = None,
+    scope: BrokerLedgerScope | None = None,
+) -> float:
     """Return gross notional first submitted on a date, counted once per client order."""
-    if not path.exists():
+    _require_scope_ledger_path(scope, "orders", path)
+    if scope_path is None and scope is None and not path.exists():
         return 0.0
-    with ledger_lock(path):
+    with _ledger_locks(_scoped_paths([path], scope_path, scope)):
+        if not path.exists():
+            _require_scope_if_present(scope_path, scope)
+            return 0.0
+        _require_bound_scope(scope_path, scope)
         rows = _read_rows(path, "event_id")
         recover_order_states(_order_events_from_rows(rows))
         return _submitted_order_notional(rows, on_date)
 
 
-def submitted_order_count(path: Path, on_date: date) -> int:
+def submitted_order_count(
+    path: Path,
+    on_date: date,
+    *,
+    scope_path: Path | None = None,
+    scope: BrokerLedgerScope | None = None,
+) -> int:
     """Return client orders first reserved on a date, counted once per order."""
-    if not path.exists():
+    _require_scope_ledger_path(scope, "orders", path)
+    if scope_path is None and scope is None and not path.exists():
         return 0
-    with ledger_lock(path):
+    with _ledger_locks(_scoped_paths([path], scope_path, scope)):
+        if not path.exists():
+            _require_scope_if_present(scope_path, scope)
+            return 0
+        _require_bound_scope(scope_path, scope)
         rows = _read_rows(path, "event_id")
         recover_order_states(_order_events_from_rows(rows))
         return sum(
             updated_at.date() == on_date
             for updated_at, _ in _first_order_events(rows).values()
         )
+
+
+def _attach_scope_report(
+    report: dict[str, object],
+    scope_report: dict[str, object] | None,
+) -> dict[str, object]:
+    if scope_report is None:
+        return report
+    report["scope"] = scope_report
+    scope_status = str(scope_report.get("status", "INVALID"))
+    if scope_status in {"INVALID", "MISMATCH"}:
+        errors = report.get("integrity_errors")
+        if not isinstance(errors, list):
+            errors = []
+            report["integrity_errors"] = errors
+        errors.append(
+            {
+                "code": "ledger_scope_invalid",
+                "client_order_id": "",
+                "message": str(scope_report.get("message") or "Ledger scope is invalid"),
+            }
+        )
+        report["status"] = "INTEGRITY_ERROR"
+    elif scope_status == "UNSCOPED":
+        warnings = report.get("recovery_warnings")
+        if not isinstance(warnings, list):
+            warnings = []
+            report["recovery_warnings"] = warnings
+        warnings.append(
+            {
+                "code": "ledger_scope_missing",
+                "client_order_id": "",
+                "message": "Lifecycle ledgers predate broker scope binding",
+            }
+        )
+        if report.get("status") == "VERIFIED":
+            report["status"] = "RECOVERED"
+    report["qualifying_evidence"] = False
+    report["execution_enabled"] = False
+    return report
+
+
+def _scoped_paths(
+    ledger_paths: list[Path],
+    scope_path: Path | None,
+    scope: BrokerLedgerScope | None,
+) -> list[Path]:
+    if (scope_path is None) != (scope is None):
+        raise ValueError("Broker ledger scope path and scope must be supplied together")
+    if scope_path is None:
+        return ledger_paths
+    scope_resolved = scope_path.resolve()
+    if any(scope_resolved == path.resolve() for path in ledger_paths):
+        raise ValueError("Broker ledger scope path must differ from CSV ledger paths")
+    return [*ledger_paths, scope_path]
+
+
+@contextmanager
+def _ledger_locks(paths: list[Path]) -> Iterator[None]:
+    indexed = {str(path.resolve()): path for path in paths}
+    ordered = [indexed[key] for key in sorted(indexed)]
+    with ExitStack() as stack:
+        for path in ordered:
+            stack.enter_context(ledger_lock(path))
+        yield
+
+
+def _require_bound_scope(
+    scope_path: Path | None,
+    scope: BrokerLedgerScope | None,
+) -> None:
+    if scope_path is not None and scope is not None:
+        require_scope_manifest(scope_path, scope)
+
+
+def _require_scope_if_present(
+    scope_path: Path | None,
+    scope: BrokerLedgerScope | None,
+) -> None:
+    if scope_path is not None and scope is not None and scope_path.exists():
+        require_scope_manifest(scope_path, scope)
+
+
+def _require_scope_ledger_path(
+    scope: BrokerLedgerScope | None,
+    role: str,
+    path: Path,
+) -> None:
+    if scope is not None:
+        scope.require_ledger_path(role, path)
 
 
 def _submitted_order_notional(

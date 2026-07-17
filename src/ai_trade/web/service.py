@@ -13,11 +13,16 @@ from typing import Any
 
 from .. import __version__
 from ..assistant import AssistantEngine
+from ..broker.base import BrokerEnvironment
 from ..broker.ledger import recover_order_lifecycle
-from ..broker.live_guard import evaluate_live_readiness
+from ..broker.live_guard import (
+    broker_configuration_fingerprint,
+    evaluate_live_readiness,
+)
 from ..broker.paper import paper_status
 from ..broker.paper_audit import audit_paper
 from ..broker.shadow import import_shadow_csv, shadow_account_status
+from ..broker.scope import create_broker_ledger_scope
 from ..config import AppConfig
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
@@ -251,6 +256,8 @@ class DashboardService:
         broker_lifecycle = recover_order_lifecycle(
             self.config.broker_orders_file,
             self.config.broker_fills_file,
+            scope_path=self.config.broker_ledger_scope_file,
+            expected_scope=self._broker_ledger_scope(),
         )
         return {
             "generated_at": _now(),
@@ -265,6 +272,22 @@ class DashboardService:
             "pending_targets": dict((state or {}).get("pending_targets") or {}),
             "shadow_account": self._shadow_account(owner_id, state),
         }
+
+    def _broker_ledger_scope(self):
+        broker = self.config.raw.get("broker", {})
+        mode = broker.get("mode", "disabled")
+        adapter = broker.get("adapter")
+        account_id = broker.get("account_id")
+        if mode not in {"sandbox", "live"} or not adapter or not account_id:
+            return None
+        return create_broker_ledger_scope(
+            adapter=str(adapter),
+            account_id=str(account_id),
+            environment=BrokerEnvironment(mode),
+            config_fingerprint=broker_configuration_fingerprint(self.config),
+            orders_path=self.config.broker_orders_file,
+            fills_path=self.config.broker_fills_file,
+        )
 
     def import_shadow_account(
         self,

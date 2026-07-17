@@ -98,6 +98,14 @@ class AppConfig:
         )
 
     @property
+    def broker_ledger_scope_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("broker", {}).get(
+                "ledger_scope_file", "state/broker_ledger_scope.json"
+            )
+        )
+
+    @property
     def shadow_fills_file(self) -> Path:
         return self.resolve(
             self.raw.get("shadow_account", {}).get(
@@ -488,6 +496,7 @@ def _validate_broker(value: dict[str, Any]) -> None:
         "reconciliation_file": "state/broker_reconciliation.csv",
         "orders_file": "state/broker_orders.csv",
         "fills_file": "state/broker_fills.csv",
+        "ledger_scope_file": "state/broker_ledger_scope.json",
         "authorization_file": "state/live_authorization.json",
         "batch_approval_file": "state/live_batch_approval.json",
         "kill_switch_file": "state/LIVE_KILL_SWITCH",
