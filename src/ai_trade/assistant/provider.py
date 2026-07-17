@@ -259,7 +259,7 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
             candidate = "\n".join(lines[1:-1])
             if candidate.lstrip().lower().startswith("json\n"):
                 candidate = candidate.lstrip()[5:]
-    value = json.loads(candidate)
+    value = loads_unique_json(candidate)
     if not isinstance(value, dict):
         raise ValueError("model response is not an object")
     return value

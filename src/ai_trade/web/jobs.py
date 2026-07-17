@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import queue
 import subprocess
@@ -11,6 +10,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from ..config import AppConfig
+from ..json_utils import loads_unique_json
 
 
 COMMANDS: dict[str, tuple[str, ...]] = {
@@ -251,8 +251,10 @@ def _extract_cloud_backup_event(output: str) -> tuple[str, str | None]:
         candidate = line.rstrip("\r\n")
         if candidate.startswith(_CLOUD_BACKUP_EVENT_PREFIX):
             try:
-                payload = json.loads(candidate.removeprefix(_CLOUD_BACKUP_EVENT_PREFIX))
-            except json.JSONDecodeError:
+                payload = loads_unique_json(
+                    candidate.removeprefix(_CLOUD_BACKUP_EVENT_PREFIX)
+                )
+            except (UnicodeError, ValueError):
                 clean.append(line)
                 continue
             if (

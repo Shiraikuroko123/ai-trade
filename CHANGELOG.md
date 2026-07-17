@@ -17,6 +17,8 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   rejecting JSON at their local or remote input boundaries. Eastmoney responses
   are size-limited before decoding, keeping refresh and cloud restore failures
   explicit instead of partially accepting ambiguous metadata.
+- Cloud-backup job events and assistant model JSON fragments now reject duplicate
+  keys before status or research evidence is accepted.
 - Paper account state now uses bounded duplicate-key-rejecting JSON and validates
   an exact versioned schema, canonical identity and dates, finite balances,
   positions, targets, and counters before simulation, audit, or rendering.
