@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Live `PENDING_SUBMIT` reservations now embed a canonical approval ID and exact
+  batch fingerprint inside the content-bound order event, linking durable
+  intent evidence to the consumed one-time approval without exposing an account.
 - Live validation and one-time batch fingerprints now reject arbitrary order
   metadata until a bounded adapter-independent schema exists, preventing
   unapproved routing semantics from bypassing exact-batch review.

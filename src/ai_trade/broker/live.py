@@ -290,7 +290,7 @@ class LiveOrderRouter:
             account_id=configured_account,
             config_fingerprint=config_fingerprint,
         )
-        consume_batch_approval(
+        approval = consume_batch_approval(
             self.config.live_batch_approval_file,
             adapter=self.broker.adapter_name,
             account_id=configured_account,
@@ -309,6 +309,8 @@ class LiveOrderRouter:
             on_date,
             mandate.max_daily_notional,
             mandate.max_orders_per_day,
+            approval_id=str(approval["approval_id"]),
+            batch_fingerprint=batch_fingerprint,
             scope_path=scope_path,
             scope=ledger_scope,
         )

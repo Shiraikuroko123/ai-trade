@@ -80,6 +80,55 @@ def _fill(
 
 
 class BrokerLifecycleTests(unittest.TestCase):
+    def test_intent_reservation_binds_the_exact_approval_and_batch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orders = Path(temporary) / "orders.csv"
+            approval_id = "approval_" + "a" * 32
+            batch_fingerprint = "b" * 64
+            request = BrokerOrderRequest(
+                "approved-order",
+                "510300",
+                OrderSide.BUY,
+                100,
+                10.0,
+            )
+
+            reserve_order_intents(
+                orders,
+                [request],
+                date(2026, 7, 18),
+                10_000,
+                approval_id=approval_id,
+                batch_fingerprint=batch_fingerprint,
+            )
+
+            event = read_order_events(orders)[0]
+            self.assertEqual(event.status, OrderStatus.PENDING_SUBMIT)
+            self.assertTrue(event.message.startswith("ai-trade-live-intent-v1:"))
+            self.assertIn(approval_id, event.message)
+            self.assertIn(batch_fingerprint, event.message)
+
+    def test_intent_reservation_rejects_an_incomplete_approval_reference(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orders = Path(temporary) / "orders.csv"
+            request = BrokerOrderRequest(
+                "unbound-order",
+                "510300",
+                OrderSide.BUY,
+                100,
+                10.0,
+            )
+
+            with self.assertRaisesRegex(ValueError, "approval ID"):
+                reserve_order_intents(
+                    orders,
+                    [request],
+                    date(2026, 7, 18),
+                    10_000,
+                    approval_id="approval_" + "a" * 32,
+                )
+            self.assertFalse(orders.exists())
+
     def test_china_session_intent_precedes_pre_utc_midnight_submission(self):
         with tempfile.TemporaryDirectory() as temporary:
             orders = Path(temporary) / "orders.csv"

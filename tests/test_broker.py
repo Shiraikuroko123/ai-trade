@@ -578,7 +578,7 @@ class BrokerTests(unittest.TestCase):
                 ),
                 patch(
                     "ai_trade.broker.live.consume_batch_approval",
-                    return_value={"approval_id": "approval-test"},
+                    return_value={"approval_id": "approval_" + "f" * 32},
                 ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "uncertain broker submission"):
@@ -680,6 +680,15 @@ class BrokerTests(unittest.TestCase):
             self.assertEqual(
                 len(list(root.glob("batch-approval.*.consumed.json"))), 1
             )
+            with router.config.broker_orders_file.open(
+                "r", encoding="utf-8", newline=""
+            ) as handle:
+                rows = list(csv.DictReader(handle))
+            intent = next(
+                row for row in rows if row["status"] == OrderStatus.PENDING_SUBMIT.value
+            )
+            self.assertIn(str(approval["approval_id"]), intent["message"])
+            self.assertIn(batch_fingerprint, intent["message"])
 
     def test_router_rejects_changed_batch_without_reserving_an_intent(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -732,7 +741,7 @@ class BrokerTests(unittest.TestCase):
                 ),
                 patch(
                     "ai_trade.broker.live.consume_batch_approval",
-                    return_value={"approval_id": "approval-test"},
+                    return_value={"approval_id": "approval_" + "f" * 32},
                 ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "kill switch activated"):

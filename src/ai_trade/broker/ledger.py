@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import threading
 from contextlib import ExitStack, contextmanager
@@ -71,6 +72,9 @@ FLOAT_LEDGER_FIELDS = frozenset(
 )
 _LEDGER_THREAD_LOCK = threading.RLock()
 CHINA_STANDARD_TIME = timezone(timedelta(hours=8))
+_APPROVAL_ID = re.compile(r"approval_[0-9a-f]{32}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_LIVE_INTENT_PREFIX = "ai-trade-live-intent-v1:"
 
 
 def initialize_broker_ledger_scope(
@@ -145,6 +149,8 @@ def reserve_order_intents(
     max_daily_notional: float,
     max_daily_orders: int | None = None,
     *,
+    approval_id: str | None = None,
+    batch_fingerprint: str | None = None,
     scope_path: Path | None = None,
     scope: BrokerLedgerScope | None = None,
 ) -> float:
@@ -157,6 +163,10 @@ def reserve_order_intents(
         or max_daily_orders < 1
     ):
         raise ValueError("max_daily_orders must be a positive integer")
+    intent_message = _submission_intent_message(
+        approval_id,
+        batch_fingerprint,
+    )
     timestamp = datetime.combine(on_date, time.min, tzinfo=CHINA_STANDARD_TIME)
     _require_scope_ledger_path(scope, "orders", path)
     snapshots = [
@@ -171,7 +181,7 @@ def reserve_order_intents(
             average_fill_price=None,
             status=OrderStatus.PENDING_SUBMIT,
             updated_at=timestamp,
-            message="Local submission intent reserved before broker I/O",
+            message=intent_message,
         )
         for order in orders
     ]
@@ -212,6 +222,33 @@ def reserve_order_intents(
                 raise ValueError("Orders exceed configured daily order count")
         _append_rows(path, rows, "event_id", existing_rows)
     return submitted + batch_notional
+
+
+def _submission_intent_message(
+    approval_id: str | None,
+    batch_fingerprint: str | None,
+) -> str:
+    if approval_id is None and batch_fingerprint is None:
+        return "Local submission intent reserved before broker I/O"
+    if (
+        not isinstance(approval_id, str)
+        or not _APPROVAL_ID.fullmatch(approval_id)
+        or not isinstance(batch_fingerprint, str)
+        or not _SHA256.fullmatch(batch_fingerprint)
+    ):
+        raise ValueError(
+            "Submission intent approval ID and batch fingerprint must be valid"
+        )
+    payload = json.dumps(
+        {
+            "approval_id": approval_id,
+            "batch_fingerprint": batch_fingerprint,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return _LIVE_INTENT_PREFIX + payload
 
 
 def append_fills(

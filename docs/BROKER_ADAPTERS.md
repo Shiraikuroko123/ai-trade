@@ -306,9 +306,12 @@ Each exact order batch additionally requires a short-lived approval record at
 the configured `batch_approval_file`. Its SHA-256 fingerprint binds the order
 date, adapter, account, live configuration, client IDs, symbols, sides,
 quantities, limit prices, time-in-force values, and ordering. Approval lifetime
-is limited to 15 minutes. A valid record is atomically moved to an immutable
-`.consumed.json` audit record before intent reservation or broker submission; it
-cannot authorize a retry or a changed batch. There is intentionally no live
+is limited to 15 minutes. A valid record is atomically moved to a uniquely named
+retained `.consumed.json` audit record before intent reservation or broker submission; it
+cannot authorize a retry or a changed batch. Each resulting `PENDING_SUBMIT`
+event embeds the approval ID and exact batch fingerprint in a canonical message
+that is covered by the event's content fingerprint, providing a durable link
+between review and reservation. There is intentionally no live
 order UI or approval generator while no verified live adapter exists.
 
 ## Pre-Trade Validation
