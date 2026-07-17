@@ -109,6 +109,34 @@ class CliTests(unittest.TestCase):
             user_id="local-owner",
         )
 
+    def test_broker_probe_commands_are_read_only_cli_surfaces(self):
+        self.assertEqual(build_parser().parse_args(["broker-list"]).command, "broker-list")
+        self.assertEqual(
+            build_parser().parse_args(["broker-probe"]).command, "broker-probe"
+        )
+        self.assertEqual(
+            build_parser().parse_args(["broker-compare"]).command,
+            "broker-compare",
+        )
+
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=object()),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.cli.probe_configured_broker",
+                return_value={"evidence": {"qualifying_reconciliation_recorded": False}},
+            ),
+            redirect_stdout(output),
+        ):
+            status = main(["broker-probe"])
+        self.assertEqual(status, 0)
+        self.assertFalse(
+            json.loads(output.getvalue())["evidence"][
+                "qualifying_reconciliation_recorded"
+            ]
+        )
+
     def test_packaged_default_matches_repository_config(self):
         root = Path(__file__).resolve().parents[1]
         repository = json.loads((root / "config/default.json").read_text(encoding="utf-8"))

@@ -164,7 +164,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
 - `web/`: loopback-only authenticated HTTP server, non-mutating market-chart projection, background job manager, dashboard service, and packaged static application with pinned local KLineChart assets.
 
-No broker adapter ships with the project. The live route exists so its safety contract can be tested before credentials or broker-specific code are introduced; with the default configuration it cannot submit an order.
+No broker adapter ships inside the core wheel. The source repository includes an optional, independently installed QMT read-only observation plugin. It rejects live construction and all submission/cancellation calls, cannot verify paper versus live from QMT, and its diagnostic comparison writes no qualifying reconciliation evidence. The live route exists so its safety contract can be tested before a live-capable broker implementation is introduced; with the default configuration it cannot submit an order.
 
 Provider fallback, cloud backup, and broker routing are separate trust boundaries. A successful data refresh or R2 backup does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision.
 

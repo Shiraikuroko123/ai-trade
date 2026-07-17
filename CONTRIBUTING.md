@@ -28,8 +28,9 @@ Run before opening a pull request:
 ```powershell
 python -m compileall -q src tests
 python -m unittest discover -s tests -v
-ruff check .
+ruff check src tests scripts adapters/qmt/src
 node --check src/ai_trade/web/assets/app.js
 python -m build
+python -m build adapters/qmt --outdir qmt-dist
 python scripts/verify_distribution.py dist
 ```

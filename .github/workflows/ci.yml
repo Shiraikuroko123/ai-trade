@@ -26,9 +26,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install package
-        run: python -m pip install -e .
+        run: |
+          python -m pip install -e .
+          python -m pip install --no-deps -e adapters/qmt
       - name: Compile
-        run: python -m compileall -q src tests
+        run: python -m compileall -q src tests adapters/qmt/src
       - name: Unit tests
         run: python -m unittest discover -s tests -v
 
@@ -74,14 +76,18 @@ jobs:
         run: python -m pip install --disable-pip-version-check build==1.2.2.post1
       - name: Build wheel and source distribution
         run: python -m build
+      - name: Build optional QMT adapter wheel and source distribution
+        run: python -m build adapters/qmt --outdir qmt-dist
       - name: Verify distribution contents
         run: python scripts/verify_distribution.py dist
       - name: Smoke-test wheel installation
         run: |
           python -m venv "$RUNNER_TEMP/wheel-venv"
           "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --no-deps dist/*.whl
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --no-deps qmt-dist/*.whl
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/wheel-venv/bin/python" -c "from importlib.resources import files; root = files('ai_trade.web.assets'); assert all(root.joinpath(name).is_file() for name in ('index.html', 'app.css', 'app.js'))"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -c "from importlib.metadata import entry_points; assert any(point.name == 'qmt-readonly' for point in entry_points().select(group='ai_trade.brokers'))"
           "$RUNNER_TEMP/wheel-venv/bin/ai-trade" --help
           "$RUNNER_TEMP/wheel-venv/bin/ai-trade" init --directory "$RUNNER_TEMP/wheel-workspace"
       - name: Smoke-test source distribution installation

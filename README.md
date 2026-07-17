@@ -55,6 +55,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 
 `serve --owner-local` 只适合工作区所有者在自己的可信电脑上使用，它保留回环地址限制但跳过内测登录。命令会打印并打开类似 `http://127.0.0.1:8765/` 的地址；不要直接双击 `src/ai_trade/web/assets/index.html`。端口占用时可以增加 `--port 8877`。
 
+### 可选 QMT 只读连接
+
+源码仓库包含独立安装的 `adapters/qmt` 观察插件。它只读取本机已登录 QMT 的账户、持仓、可撤委托和当日成交，拒绝实盘模式、下单与撤单；由于 QMT API 不能可靠证明账号属于模拟盘，读取和比较结果不会写入 20 次沙盒晋级证据。安装、创建 Git 忽略配置和运行 `broker-list`、`broker-probe`、`broker-compare` 的完整步骤见 [券商适配器](docs/BROKER_ADAPTERS.md#optional-qmt-read-only-probe)。
+
 ### Windows 后台运行与登录自启
 
 工作台必须有一个本地 Python 进程运行，但不需要一直显示 PowerShell 窗口。源码克隆用户完成 `bootstrap.ps1` 后，可以在仓库根目录执行以下命令隐藏启动一次：
@@ -361,7 +365,7 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 - 股票池扩容前仍缺少可靠的历史成分、ST/停复牌、退市、逐时点复权因子与公司行动数据；仅把今天的沪深 300 名单塞进回测会产生错误结论。
 - 当前 500 万元流动性阈值和风险模型已经参考过现有历史及滚动窗口结果，因此这些“样本外”窗口也已成为开发数据，不再是完全未触碰的最终检验集。下一阶段独立证据只能来自未来模拟盘。
 
-更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。首发版本提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的券商连接器。
+更严格的生产版本应把不复权成交价、逐时点复权因子、分红拆并和交易日历分别建模。在完成这些工作并选定券商前，实盘适配器保持缺失是有意的安全边界。可选 QMT 插件只完成读取和非晋级比较；首发版本提供的是隔离适配器契约和失败关闭的路由，不是可直接使用的实盘券商连接器。
 
 ## 与外部参考项目的关系
 
@@ -375,8 +379,8 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m ruff check src tests scripts
-.\.venv\Scripts\python.exe -m compileall -q src tests scripts
+.\.venv\Scripts\python.exe -m ruff check src tests scripts adapters/qmt/src
+.\.venv\Scripts\python.exe -m compileall -q src tests scripts adapters/qmt/src
 node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m pip install build==1.2.2.post1
 .\.venv\Scripts\python.exe -m build
@@ -386,4 +390,4 @@ node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m ai_trade.cli live-check
 ```
 
-`live-check` 正常情况下应失败：即使设置风险确认环境变量，系统仍会因为没有券商适配器而拒绝下单。
+`live-check` 正常情况下应失败：即使安装 QMT 只读插件并设置风险确认环境变量，系统仍会因为没有可实盘下单的券商适配器而拒绝。

@@ -16,6 +16,11 @@ from .backtest import BacktestEngine
 from .broker.live_guard import BrokerNotConfigured, require_live_confirmation
 from .broker.paper import initialize_paper, paper_status, run_paper
 from .broker.paper_audit import audit_paper, save_paper_audit
+from .broker.probe import (
+    available_broker_adapters,
+    compare_configured_broker,
+    probe_configured_broker,
+)
 from .config import AppConfig, load_config
 from .data.eastmoney import download_universe
 from .data.market import MarketData
@@ -128,6 +133,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser(
         "live-check", help="Verify the live-trading guard; does not submit orders"
+    )
+    subparsers.add_parser(
+        "broker-list", help="List installed broker adapter plugins"
+    )
+    subparsers.add_parser(
+        "broker-probe",
+        help="Read the configured sandbox broker without changing broker state",
+    )
+    subparsers.add_parser(
+        "broker-compare",
+        help="Compare the paper account with a read-only broker observation",
     )
     serve = subparsers.add_parser("serve", help="Start the local AI Trade workstation")
     serve.add_argument("--host", default="127.0.0.1")
@@ -440,10 +456,32 @@ def main(argv: list[str] | None = None) -> int:
             diagnosis = diagnose(config, market)
             print(json.dumps(diagnosis, ensure_ascii=False, indent=2))
             return 0 if diagnosis["status"] == "OK" else 1
+        if args.command == "broker-list":
+            print(
+                json.dumps(
+                    available_broker_adapters(), ensure_ascii=False, indent=2
+                )
+            )
+            return 0
+        if args.command == "broker-probe":
+            print(
+                json.dumps(
+                    probe_configured_broker(config), ensure_ascii=False, indent=2
+                )
+            )
+            return 0
+        if args.command == "broker-compare":
+            print(
+                json.dumps(
+                    compare_configured_broker(config), ensure_ascii=False, indent=2
+                )
+            )
+            return 0
         if args.command == "live-check":
             require_live_confirmation()
             raise BrokerNotConfigured(
-                "Live guard is open, but no broker adapter is configured. Select a broker before live use."
+                "No live-capable broker adapter is configured; read-only adapters "
+                "cannot unlock live trading."
             )
         if args.command == "serve":
             from .web.server import serve_dashboard

@@ -7,7 +7,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [QuantConnect LEAN](https://github.com/QuantConnect/Lean) | Event engine, universe selection, brokerage abstraction | Point-in-time universe now; explicit order lifecycle and broker adapters later |
 | [Microsoft Qlib](https://github.com/microsoft/qlib) | Factor datasets, ML experiments, research workflow | Planned factor registry and point-in-time feature store |
 | [NautilusTrader](https://github.com/nautechsystems/nautilus_trader) | Deterministic event state, execution and reconciliation | Deterministic paper state, append-only ledgers and rejection audit |
-| [VeighNa](https://github.com/vnpy/vnpy) | China broker gateways and live operations | Gateway contract reference only; no live gateway is enabled |
+| [VeighNa](https://github.com/vnpy/vnpy) | China broker gateways and live operations | Gateway contract reference plus an independent QMT read-only probe; no live gateway is enabled |
 | [RQAlpha](https://github.com/ricequant/rqalpha) | China-market simulation rules | Dated stock fees, lot size, suspension and price-limit rules |
 | [vectorbt](https://github.com/polakowo/vectorbt) | Fast parameter and signal research | Useful future research backend, not the accounting authority |
 | [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Planned provider interface and independent data cross-checks |

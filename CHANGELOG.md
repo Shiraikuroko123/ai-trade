@@ -2,6 +2,12 @@
 
 AI Trade follows semantic versioning while the project remains experimental. `v0.12.0` is the first public release; earlier development tags and release notes were consolidated into this baseline.
 
+## Unreleased
+
+- Added an independently packaged QMT/xtquant read-only adapter for local account, position, cancelable-order, and same-day fill observation. It rejects live mode, submission, and cancellation, and does not bundle broker binaries or credentials.
+- Added `broker-list`, `broker-probe`, and `broker-compare` CLI diagnostics. Read-only comparisons are masked, non-mutating, and never count toward qualifying sandbox reconciliation evidence.
+- Added fail-closed QMT account binding, quantity/status validation, unknown-order preservation, fee-completeness warnings, focused tests, and local configuration guidance.
+
 ## 0.12.0 - 2026-07-14
 
 - Added a local, loopback-only investment workstation covering research, backtesting, walk-forward and robustness validation, paper accounting, risk review, report downloads, beta access, storage controls, and broker-readiness diagnostics.

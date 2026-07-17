@@ -1,6 +1,6 @@
 # Broker Adapter Boundary
 
-AI Trade `v0.12.0`, the first public release, defines and tests a broker boundary but intentionally ships no broker-specific implementation. Installing an adapter does not unlock live trading.
+AI Trade `v0.12.0`, the first public release, defines and tests a broker boundary. The core wheel intentionally ships no broker-specific implementation. The source repository now includes an independently installable QMT read-only observation plugin under `adapters/qmt`; it cannot place or cancel orders. Installing any adapter does not unlock live trading.
 
 ## Plugin Contract
 
@@ -22,6 +22,81 @@ The factory receives `AppConfig` and a `BrokerEnvironment` (`sandbox` or `live`)
 - fills since an optional timestamp.
 
 Credentials stay in the adapter's local secret storage. They must never appear in `config/default.json`, logs, reports, authorization files, Git, or exception messages.
+
+## Optional QMT Read-Only Probe
+
+The `ai-trade-qmt` plugin is the first broker-specific integration milestone. It
+connects only to a user-owned, already logged-in QMT/miniQMT process on Windows
+and reads account assets, positions, cancelable orders, and today's fills.
+
+Its authority is deliberately narrow:
+
+- the plugin accepts `sandbox` construction only and rejects `live`;
+- submission and cancellation fail before an xtquant write method can run;
+- QMT does not expose a trustworthy paper/live discriminator, so the configured
+  environment is not considered broker-verified;
+- `broker-probe` and `broker-compare` never append to
+  `state/broker_reconciliation.csv` and cannot contribute to the 20-session gate;
+- no QMT binary, DLL, credential, account, or installation path is bundled;
+- xtquant trade objects differ by broker/version. Commission is used when
+  present, separately reported tax is unavailable, and zero must not be read as
+  proof that the broker charged no fee.
+
+Install from a source checkout after `scripts/bootstrap.ps1`:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --no-deps -e .\adapters\qmt
+```
+
+Keep the account identifier out of tracked `config/default.json`. Create a local,
+Git-ignored configuration instead:
+
+```powershell
+$Directory = Join-Path (Get-Location) 'local\qmt'
+$ConfigPath = Join-Path $Directory 'config.json'
+New-Item -ItemType Directory -Force $Directory | Out-Null
+
+$Config = Get-Content .\config\default.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$Config.broker.mode = 'sandbox'
+$Config.broker.adapter = 'qmt-readonly'
+$Config.broker.account_id = Read-Host 'QMT account ID'
+$Json = $Config | ConvertTo-Json -Depth 100
+[System.IO.File]::WriteAllText(
+    $ConfigPath,
+    $Json,
+    (New-Object System.Text.UTF8Encoding($false))
+)
+```
+
+Start and log in to the broker-provided QMT client. In the same PowerShell used
+for the probe, set the `userdata_mini` directory and, only when Python cannot
+already import xtquant, the directory that directly contains the `xtquant`
+package:
+
+```powershell
+$env:AI_TRADE_QMT_USERDATA_PATH = 'D:\BrokerQMT\userdata_mini'
+$env:AI_TRADE_QMT_PYTHON_PATH = 'D:\BrokerQMT\bin.x64\Lib\site-packages'
+# Optional when another process already uses the generated session ID:
+# $env:AI_TRADE_QMT_SESSION_ID = '987654'
+```
+
+Paths vary by broker. Use the xtquant build supplied with the installed QMT
+client; the project deliberately does not download a third-party mirror.
+
+Run the read-only checks:
+
+```powershell
+$Python = '.\.venv\Scripts\python.exe'
+& $Python -m ai_trade.cli --config .\local\qmt\config.json broker-list
+& $Python -m ai_trade.cli --config .\local\qmt\config.json broker-probe
+& $Python -m ai_trade.cli --config .\local\qmt\config.json broker-compare
+```
+
+`broker-probe` masks the account identifier in console output. Cash, positions,
+orders, and fills remain sensitive local information and are not written by the
+command. `broker-compare` compares account cash and positions with the local
+paper account, reports differences, and explicitly records no promotion
+evidence.
 
 ## Promotion Evidence
 
@@ -58,8 +133,8 @@ Adapters must still implement broker-specific validation and reconciliation. Cor
 
 ## Development Sequence
 
-1. Implement sandbox read methods and health reporting.
-2. Reconcile account and positions without submitting orders.
+1. Implement sandbox read methods and health reporting. The optional QMT probe now covers this stage without trusting its environment label.
+2. Compare account and positions without submitting orders. The QMT diagnostic covers comparison but intentionally does not produce qualifying reconciliation evidence.
 3. Implement sandbox limit orders, cancellations, order polling, and fills.
 4. Accumulate the configured consecutive clean reconciliations.
 5. Test disconnects, partial fills, duplicates, stale quotes, rejects, cancellation races, and restarts.
