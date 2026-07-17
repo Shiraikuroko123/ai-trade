@@ -19,6 +19,10 @@ malformed positions or target weights, and configuration drift fail closed befor
 the simulator, auditor, or browser can use the state. Do not hand-edit it; start a
 new archived epoch when the frozen configuration changes.
 
+State and report updates are written to a same-directory temporary file, flushed
+to disk, and atomically replaced. A replacement failure leaves the previous
+complete file in place; a leftover temporary file is not an active account state.
+
 The same operations are available in the loopback-only workstation:
 
 ```powershell

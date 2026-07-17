@@ -5,9 +5,11 @@ from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from ai_trade.broker.paper import (
     MAX_PAPER_STATE_BYTES,
+    _save_state,
     initialize_paper,
     paper_status,
     run_paper,
@@ -146,6 +148,23 @@ class PaperTests(unittest.TestCase):
             config.paper_state_file.write_text(json.dumps(state), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "cash"):
                 paper_status(config)
+
+    def test_atomic_state_replace_failure_preserves_previous_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _config(Path(temporary))
+            state = initialize_paper(config)
+            before = config.paper_state_file.read_bytes()
+            with patch(
+                "ai_trade.broker.paper.os.replace",
+                side_effect=OSError("injected state replace failure"),
+            ):
+                with self.assertRaisesRegex(OSError, "injected state replace"):
+                    _save_state(config.paper_state_file, state)
+            self.assertEqual(config.paper_state_file.read_bytes(), before)
+            self.assertEqual(
+                list(config.paper_state_file.parent.glob(".paper_state.json.*.tmp")),
+                [],
+            )
 
     def test_forward_audit_requires_independent_sessions(self):
         with tempfile.TemporaryDirectory() as temporary:

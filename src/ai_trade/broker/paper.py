@@ -6,6 +6,7 @@ import json
 import math
 import os
 import shutil
+import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import date, datetime
@@ -492,9 +493,41 @@ def _save_state(path: Path, state: dict[str, object]) -> None:
 
 
 def _atomic_write_json(path: Path, value: dict[str, object]) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(
+                value,
+                handle,
+                ensure_ascii=False,
+                indent=2,
+                allow_nan=False,
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _append_trades(path: Path, account_id: str, trades: list) -> None:
