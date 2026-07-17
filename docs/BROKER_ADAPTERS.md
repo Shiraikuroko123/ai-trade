@@ -322,6 +322,11 @@ separately declare the complete `live` operation surface, verified runtime
 environment, and qualifying reconciliation support. The QMT read-only plugin
 cannot satisfy these checks.
 
+Both authorization timestamps must include a timezone. The approval time may be
+at most one minute ahead of the local UTC clock to tolerate small clock skew, and
+the expiry must be strictly later than approval. A future approval or inverted
+window is non-authoritative even when the expiry itself has not passed.
+
 Authorization is necessary but not sufficient. The runtime also requires
 `broker.mode=live`, `AI_TRADE_LIVE_CONFIRMATION=I_ACCEPT_LIVE_TRADING_RISK`, an
 installed live-capable adapter, a clear kill-switch file, current paper evidence,

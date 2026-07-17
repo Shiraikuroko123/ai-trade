@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -172,16 +172,27 @@ def _authorization_status(
     if authorization.get("config_fingerprint") != config_fingerprint:
         return False, "authorization configuration fingerprint is stale"
     try:
+        raw_approved_at = str(authorization["approved_at"])
+        if raw_approved_at.endswith("Z"):
+            raw_approved_at = raw_approved_at[:-1] + "+00:00"
+        approved_at = datetime.fromisoformat(raw_approved_at)
         raw_expiry = str(authorization["expires_at"])
         if raw_expiry.endswith("Z"):
             raw_expiry = raw_expiry[:-1] + "+00:00"
         expires = datetime.fromisoformat(raw_expiry)
-        if expires.tzinfo is None:
-            return False, "authorization expiry must include a timezone"
-        if expires <= datetime.now(timezone.utc):
+        if approved_at.tzinfo is None or expires.tzinfo is None:
+            return False, "authorization timestamps must include a timezone"
+        current = datetime.now(timezone.utc)
+        approved_at = approved_at.astimezone(timezone.utc)
+        expires = expires.astimezone(timezone.utc)
+        if approved_at > current + timedelta(minutes=1):
+            return False, "authorization approval timestamp is in the future"
+        if expires <= approved_at:
+            return False, "authorization expiry must follow its approval timestamp"
+        if expires <= current:
             return False, "authorization has expired"
     except (KeyError, TypeError, ValueError):
-        return False, "authorization expiry is invalid"
+        return False, "authorization timestamps are invalid"
     return True, "authorization matches the active account and configuration"
 
 

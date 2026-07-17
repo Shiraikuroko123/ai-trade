@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Live authorization now rejects future approval timestamps and expiry windows
+  that do not follow their approval time, preventing internally inconsistent
+  authorization records from satisfying the live-readiness gate.
 - Active beta-user stores, portable user exports, and browser JSON writes now
   reject duplicate object keys. Versioned user/password records require exact
   fields, so unknown or accidentally embedded plaintext fields fail closed.

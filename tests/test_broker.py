@@ -359,6 +359,56 @@ class BrokerTests(unittest.TestCase):
             self.assertTrue(ready["live_ready"])
             self.assertFalse(changed_limits["checks"]["authorization_valid"])
 
+            config.raw["broker"]["max_daily_notional"] = 10_000
+            now = datetime.now(timezone.utc)
+            authorization["approved_at"] = (now + timedelta(minutes=5)).isoformat()
+            authorization["expires_at"] = (now + timedelta(hours=1)).isoformat()
+            config.live_authorization_file.write_text(
+                json.dumps(authorization), encoding="utf-8"
+            )
+            with (
+                patch(
+                    "ai_trade.broker.live_guard._config_fingerprint",
+                    return_value="fingerprint",
+                ),
+                patch.object(BrokerRegistry, "available", return_value=("mock",)),
+                patch.object(
+                    BrokerRegistry,
+                    "capabilities",
+                    return_value=FakeBroker.capabilities,
+                ),
+                patch.dict(
+                    "os.environ", {"AI_TRADE_LIVE_CONFIRMATION": LIVE_CONFIRMATION}
+                ),
+            ):
+                future_approval = evaluate_live_readiness(config, audit)
+            self.assertFalse(future_approval["checks"]["authorization_valid"])
+            self.assertIn("future", future_approval["authorization"]["reason"])
+
+            authorization["approved_at"] = (now + timedelta(seconds=30)).isoformat()
+            authorization["expires_at"] = (now + timedelta(seconds=10)).isoformat()
+            config.live_authorization_file.write_text(
+                json.dumps(authorization), encoding="utf-8"
+            )
+            with (
+                patch(
+                    "ai_trade.broker.live_guard._config_fingerprint",
+                    return_value="fingerprint",
+                ),
+                patch.object(BrokerRegistry, "available", return_value=("mock",)),
+                patch.object(
+                    BrokerRegistry,
+                    "capabilities",
+                    return_value=FakeBroker.capabilities,
+                ),
+                patch.dict(
+                    "os.environ", {"AI_TRADE_LIVE_CONFIRMATION": LIVE_CONFIRMATION}
+                ),
+            ):
+                inverted_window = evaluate_live_readiness(config, audit)
+            self.assertFalse(inverted_window["checks"]["authorization_valid"])
+            self.assertIn("follow", inverted_window["authorization"]["reason"])
+
     def test_live_authorization_loader_rejects_ambiguous_or_unbounded_json(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "authorization.json"
