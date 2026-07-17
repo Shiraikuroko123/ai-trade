@@ -1506,6 +1506,7 @@ function rankingTable(ranking) {
 
 function authorityRail(live, audit, researchGates) {
   const reconciliation = live.reconciliation || {};
+  const ignoredReconciliations = Number(reconciliation.ignored_incomplete_sessions ?? reconciliation.ignored_legacy_sessions ?? 0) || 0;
   const researchKnown = Boolean(researchGates.total);
   const researchPassed = researchKnown && researchGates.passed === researchGates.total;
   const paperPassed = Boolean(audit.eligible_for_broker_sandbox);
@@ -1527,7 +1528,7 @@ function authorityRail(live, audit, researchGates) {
     },
     {
       label: "券商沙箱",
-      note: `${reconciliation.clean_sessions ?? 0} / ${reconciliation.minimum_sessions ?? 20} 次连续干净对账`,
+      note: `${reconciliation.clean_sessions ?? 0} / ${reconciliation.minimum_sessions ?? 20} 次连续干净对账${ignoredReconciliations > 0 ? `；另有 ${ignoredReconciliations} 次旧格式不计入` : ""}`,
       complete: sandboxPassed,
       current: paperPassed && !sandboxPassed,
     },
@@ -2834,6 +2835,7 @@ function renderTrading(data) {
   const audit = data.paper_audit || {};
   const live = data.live || {};
   const reconciliation = live.reconciliation || {};
+  const ignoredReconciliations = Number(reconciliation.ignored_incomplete_sessions ?? reconciliation.ignored_legacy_sessions ?? 0) || 0;
   const tabs = `
     <div class="segmented" role="tablist" aria-label="执行记录">
       ${[
@@ -2867,7 +2869,7 @@ function renderTrading(data) {
           value: `${reconciliation.clean_sessions || 0} / ${reconciliation.minimum_sessions || 20} 次对账`,
           status: reconciliation.eligible ? "已具备资格" : "未开始",
           kind: reconciliation.eligible ? "success" : "neutral",
-          note: "只在前向模拟通过后开放复核",
+          note: ignoredReconciliations > 0 ? `另有 ${ignoredReconciliations} 次旧格式对账不计入` : "只在前向模拟通过后开放复核",
         },
         {
           label: "真实交易",

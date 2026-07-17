@@ -13,7 +13,7 @@ from .ledger import atomic_append_csv, ledger_lock
 from .runtime import validated_broker_account, validated_broker_positions
 
 
-RECONCILIATION_FIELDS = [
+LEGACY_RECONCILIATION_FIELDS = [
     "reconciliation_id",
     "date",
     "adapter",
@@ -24,7 +24,14 @@ RECONCILIATION_FIELDS = [
     "issue_count",
     "issues",
 ]
+RECONCILIATION_FIELDS = [
+    *LEGACY_RECONCILIATION_FIELDS[:7],
+    "expected_positions",
+    "broker_positions",
+    *LEGACY_RECONCILIATION_FIELDS[7:],
+]
 RECONCILIATION_V2_PREFIX = "v2_"
+RECONCILIATION_V3_PREFIX = "v3_"
 RECONCILIATION_CASH_TOLERANCE = 0.01
 
 
@@ -41,9 +48,10 @@ class _ValidatedReconciliation:
     reconciliation_id: str
     logical_key: tuple[str, str, str, str]
     content: tuple[tuple[str, str], ...]
+    base_content: tuple[tuple[str, str], ...]
     on_date: date
     issue_count: int
-    content_bound: bool
+    qualifying_evidence: bool
 
 
 def reconcile_account(
@@ -116,6 +124,8 @@ def append_reconciliation(
     config_fingerprint: str,
     expected_cash: float,
     broker_cash: float,
+    expected_positions: dict[str, int],
+    broker_positions: dict[str, int],
     issues: list[ReconciliationIssue],
 ) -> str:
     row = _reconciliation_row(
@@ -125,6 +135,8 @@ def append_reconciliation(
         config_fingerprint=config_fingerprint,
         expected_cash=expected_cash,
         broker_cash=broker_cash,
+        expected_positions=expected_positions,
+        broker_positions=broker_positions,
         issues=issues,
     )
     candidate = _validate_reconciliation_row(row)
@@ -132,13 +144,26 @@ def append_reconciliation(
     conflicting = False
     with ledger_lock(path):
         existing = _read_reconciliations(path)
+        existing_schema = _reconciliation_schema(path)
         same_session = [
             value for value in existing if value.logical_key == candidate.logical_key
         ]
         exact = [value for value in same_session if value.content == candidate.content]
+        legacy_exact = [
+            value
+            for value in same_session
+            if not value.qualifying_evidence
+            and value.base_content == candidate.base_content
+        ]
         if exact:
             return exact[0].reconciliation_id
+        if legacy_exact:
+            return legacy_exact[0].reconciliation_id
         conflicting = bool(same_session)
+        if existing_schema == LEGACY_RECONCILIATION_FIELDS:
+            raise RuntimeError(
+                "Legacy reconciliation ledgers cannot accept position-bound evidence"
+            )
         atomic_append_csv(path, RECONCILIATION_FIELDS, [row])
     if conflicting:
         raise RuntimeError(
@@ -179,9 +204,9 @@ def audit_reconciliations(
         and value.logical_key[3] == config_fingerprint
     ]
     ignored_legacy_sessions = sum(
-        not value.content_bound for value in matching_rows
+        not value.qualifying_evidence for value in matching_rows
     )
-    rows = [value for value in matching_rows if value.content_bound]
+    rows = [value for value in matching_rows if value.qualifying_evidence]
     errors: list[str] = []
     clean_sessions = 0
     previous: date | None = None
@@ -200,6 +225,7 @@ def audit_reconciliations(
         "last_date": previous.isoformat() if previous else None,
         "errors": errors,
         "ignored_legacy_sessions": ignored_legacy_sessions,
+        "ignored_incomplete_sessions": ignored_legacy_sessions,
     }
 
 
@@ -211,6 +237,8 @@ def _reconciliation_row(
     config_fingerprint: str,
     expected_cash: float,
     broker_cash: float,
+    expected_positions: dict[str, int],
+    broker_positions: dict[str, int],
     issues: list[ReconciliationIssue],
 ) -> dict[str, str]:
     if not isinstance(on_date, date) or isinstance(on_date, datetime):
@@ -222,13 +250,26 @@ def _reconciliation_row(
     )
     expected_cash_value = _nonnegative_number(expected_cash, "expected_cash")
     broker_cash_value = _nonnegative_number(broker_cash, "broker_cash")
+    expected_position_values = _canonical_positions(
+        expected_positions, "expected_positions"
+    )
+    broker_position_values = _canonical_positions(
+        broker_positions, "broker_positions"
+    )
     issue_payload = _canonical_issues(issues)
     _validate_clean_cash_evidence(
         expected_cash_value,
         broker_cash_value,
         len(issue_payload),
     )
-    content = {
+    _validate_reconciliation_issues(
+        expected_cash_value,
+        broker_cash_value,
+        expected_position_values,
+        broker_position_values,
+        issue_payload,
+    )
+    base_content = {
         "date": on_date.isoformat(),
         "adapter": adapter,
         "account_id": account_id,
@@ -238,8 +279,13 @@ def _reconciliation_row(
         "issue_count": str(len(issue_payload)),
         "issues": _issue_json(issue_payload),
     }
+    content = _position_bound_content(
+        base_content,
+        expected_position_values,
+        broker_position_values,
+    )
     return {
-        "reconciliation_id": _v2_reconciliation_id(content),
+        "reconciliation_id": _v3_reconciliation_id(content),
         **content,
     }
 
@@ -250,7 +296,10 @@ def _read_reconciliations(path: Path) -> list[_ValidatedReconciliation]:
     try:
         with path.open("r", encoding="utf-8", newline="") as handle:
             reader = csv.DictReader(handle)
-            if reader.fieldnames != RECONCILIATION_FIELDS:
+            if reader.fieldnames not in (
+                RECONCILIATION_FIELDS,
+                LEGACY_RECONCILIATION_FIELDS,
+            ):
                 raise RuntimeError("reconciliation ledger schema is invalid")
             raw_rows = list(reader)
     except (csv.Error, OSError, UnicodeError) as exc:
@@ -280,10 +329,19 @@ def _read_reconciliations(path: Path) -> list[_ValidatedReconciliation]:
     return validated
 
 
+def _reconciliation_schema(path: Path) -> list[str] | None:
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        fieldnames = csv.DictReader(handle).fieldnames
+    return list(fieldnames) if fieldnames is not None else None
+
+
 def _validate_reconciliation_row(
     row: dict[str, object],
 ) -> _ValidatedReconciliation:
-    if list(row) != RECONCILIATION_FIELDS:
+    schema = list(row)
+    if schema not in (RECONCILIATION_FIELDS, LEGACY_RECONCILIATION_FIELDS):
         raise ValueError("row schema does not match the reconciliation ledger")
     if any(value is None for value in row.values()):
         raise ValueError("row has missing or unexpected fields")
@@ -299,6 +357,16 @@ def _validate_reconciliation_row(
     )
     expected_cash = _nonnegative_number(row["expected_cash"], "expected_cash")
     broker_cash = _nonnegative_number(row["broker_cash"], "broker_cash")
+    if schema == RECONCILIATION_FIELDS:
+        expected_positions = _parse_positions(
+            row["expected_positions"], "expected_positions"
+        )
+        broker_positions = _parse_positions(
+            row["broker_positions"], "broker_positions"
+        )
+    else:
+        expected_positions = None
+        broker_positions = None
     raw_issue_count = str(row["issue_count"])
     try:
         issue_count = int(raw_issue_count)
@@ -314,7 +382,7 @@ def _validate_reconciliation_row(
     if len(issue_payload) != issue_count:
         raise ValueError("issue_count does not match issues")
 
-    content = {
+    base_content = {
         "date": on_date.isoformat(),
         "adapter": adapter,
         "account_id": account_id,
@@ -324,25 +392,49 @@ def _validate_reconciliation_row(
         "issue_count": str(issue_count),
         "issues": _issue_json(issue_payload),
     }
-    expected_v2_id = _v2_reconciliation_id(content)
+    if expected_positions is not None and broker_positions is not None:
+        content = _position_bound_content(
+            base_content,
+            expected_positions,
+            broker_positions,
+        )
+    else:
+        content = base_content
+    expected_v3_id = _v3_reconciliation_id(content)
+    expected_v2_id = _v2_reconciliation_id(base_content)
     expected_legacy_id = _legacy_reconciliation_id(
         adapter, account_id, on_date, config_fingerprint
     )
-    content_bound = reconciliation_id.startswith(RECONCILIATION_V2_PREFIX)
-    if content_bound:
+    if schema == RECONCILIATION_FIELDS:
+        valid_id = reconciliation_id == expected_v3_id
+        qualifying_evidence = valid_id
+    elif reconciliation_id.startswith(RECONCILIATION_V2_PREFIX):
         valid_id = reconciliation_id == expected_v2_id
+        qualifying_evidence = False
     else:
         valid_id = reconciliation_id == expected_legacy_id
+        qualifying_evidence = False
     if not valid_id:
         raise ValueError("reconciliation_id failed content validation")
-    _validate_clean_cash_evidence(expected_cash, broker_cash, issue_count)
+    if expected_positions is not None and broker_positions is not None:
+        _validate_clean_cash_evidence(expected_cash, broker_cash, issue_count)
+        _validate_reconciliation_issues(
+            expected_cash,
+            broker_cash,
+            expected_positions,
+            broker_positions,
+            issue_payload,
+        )
+    else:
+        _validate_clean_cash_evidence(expected_cash, broker_cash, issue_count)
     return _ValidatedReconciliation(
         reconciliation_id=reconciliation_id,
         logical_key=(adapter, account_id, on_date.isoformat(), config_fingerprint),
         content=tuple(content.items()),
+        base_content=tuple(base_content.items()),
         on_date=on_date,
         issue_count=issue_count,
-        content_bound=content_bound,
+        qualifying_evidence=qualifying_evidence,
     )
 
 
@@ -387,6 +479,93 @@ def _canonical_issues(
             float(value["actual"]),
         ),
     )
+
+
+def _canonical_positions(value: object, label: str) -> dict[str, int]:
+    if not isinstance(value, dict):
+        raise ValueError(f"Reconciliation {label} must be an object")
+    positions: dict[str, int] = {}
+    for raw_symbol, raw_quantity in value.items():
+        symbol = _identity_value(raw_symbol, f"{label} symbol")
+        if (
+            isinstance(raw_quantity, bool)
+            or not isinstance(raw_quantity, int)
+            or raw_quantity < 0
+        ):
+            raise ValueError(
+                f"Reconciliation {label} quantities must be non-negative integers"
+            )
+        if raw_quantity:
+            positions[symbol] = raw_quantity
+    return dict(sorted(positions.items()))
+
+
+def _parse_positions(value: object, label: str) -> dict[str, int]:
+    if not isinstance(value, str):
+        raise ValueError(f"Reconciliation {label} must be JSON")
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Reconciliation {label} must be valid JSON") from exc
+    return _canonical_positions(parsed, label)
+
+
+def _positions_json(positions: dict[str, int]) -> str:
+    return json.dumps(
+        positions,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _position_bound_content(
+    base: dict[str, str],
+    expected_positions: dict[str, int],
+    broker_positions: dict[str, int],
+) -> dict[str, str]:
+    return {
+        "date": base["date"],
+        "adapter": base["adapter"],
+        "account_id": base["account_id"],
+        "config_fingerprint": base["config_fingerprint"],
+        "expected_cash": base["expected_cash"],
+        "broker_cash": base["broker_cash"],
+        "expected_positions": _positions_json(expected_positions),
+        "broker_positions": _positions_json(broker_positions),
+        "issue_count": base["issue_count"],
+        "issues": base["issues"],
+    }
+
+
+def _validate_reconciliation_issues(
+    expected_cash: float,
+    broker_cash: float,
+    expected_positions: dict[str, int],
+    broker_positions: dict[str, int],
+    issues: list[dict[str, object]],
+) -> None:
+    derived: list[ReconciliationIssue] = []
+    if not math.isclose(
+        expected_cash,
+        broker_cash,
+        rel_tol=0.0,
+        abs_tol=RECONCILIATION_CASH_TOLERANCE,
+    ):
+        derived.append(
+            ReconciliationIssue("cash", "CNY", expected_cash, broker_cash)
+        )
+    for symbol in sorted(set(expected_positions) | set(broker_positions)):
+        expected = expected_positions.get(symbol, 0)
+        actual = broker_positions.get(symbol, 0)
+        if expected != actual:
+            derived.append(
+                ReconciliationIssue("position", symbol, expected, actual)
+            )
+    if issues != _canonical_issues(derived):
+        raise ValueError(
+            "Reconciliation issues do not match the supplied cash and positions"
+        )
 
 
 def _identity_value(value: object, label: str) -> str:
@@ -463,6 +642,18 @@ def _v2_reconciliation_id(content: dict[str, str]) -> str:
     ).hexdigest()[:24]
 
 
+def _v3_reconciliation_id(content: dict[str, str]) -> str:
+    raw = json.dumps(
+        content,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return RECONCILIATION_V3_PREFIX + hashlib.sha256(
+        raw.encode("ascii")
+    ).hexdigest()[:24]
+
+
 def _legacy_reconciliation_id(
     adapter: str,
     account_id: str,
@@ -488,4 +679,5 @@ def _empty_audit(
         "last_date": None,
         "errors": errors or [],
         "ignored_legacy_sessions": 0,
+        "ignored_incomplete_sessions": 0,
     }

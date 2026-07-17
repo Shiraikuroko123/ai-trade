@@ -272,6 +272,8 @@ class BrokerTests(unittest.TestCase):
                     "config_fingerprint": "current",
                     "expected_cash": 1000.0,
                     "broker_cash": 1000.0,
+                    "expected_positions": {},
+                    "broker_positions": {},
                     "issues": [],
                 }
                 append_reconciliation(path, **kwargs)
@@ -311,6 +313,8 @@ class BrokerTests(unittest.TestCase):
                     config_fingerprint="fingerprint",
                     expected_cash=1000,
                     broker_cash=1000,
+                    expected_positions={},
+                    broker_positions={},
                     issues=[],
                 )
             authorization = _authorization(
@@ -380,6 +384,8 @@ class BrokerTests(unittest.TestCase):
                     config_fingerprint="current",
                     expected_cash=1000,
                     broker_cash=1000,
+                    expected_positions={},
+                    broker_positions={},
                     issues=[],
                 )
             config.live_authorization_file.write_text(
@@ -904,9 +910,12 @@ class BrokerTests(unittest.TestCase):
                 "config_fingerprint": "current",
                 "expected_cash": 1000.0,
                 "broker_cash": 1000.0,
+                "expected_positions": {},
+                "broker_positions": {},
                 "issues": [],
             }
             append_reconciliation(path, **kwargs)
+            kwargs["broker_cash"] = 900.0
             kwargs["issues"] = [ReconciliationIssue("cash", "CNY", 1000, 900)]
             with self.assertRaisesRegex(RuntimeError, "Conflicting reconciliation"):
                 append_reconciliation(path, **kwargs)
@@ -949,6 +958,24 @@ class BrokerTests(unittest.TestCase):
             return_value={BrokerRegistry.ENTRY_POINT_GROUP: points},
         ), self.assertRaisesRegex(RuntimeError, "Duplicate broker entry point"):
             BrokerRegistry.discover()
+
+    def test_registry_deduplicates_identical_distribution_metadata(self):
+        distribution = SimpleNamespace(name="ai-trade-qmt", version="0.2.0")
+        first = SimpleNamespace(
+            name="qmt-readonly",
+            value="ai_trade_qmt:create_broker",
+            dist=distribution,
+        )
+        second = SimpleNamespace(
+            name="qmt-readonly",
+            value="ai_trade_qmt:create_broker",
+            dist=distribution,
+        )
+        with patch(
+            "ai_trade.broker.base.metadata.entry_points",
+            return_value={BrokerRegistry.ENTRY_POINT_GROUP: (first, second)},
+        ):
+            self.assertIs(BrokerRegistry.discover()["qmt-readonly"], first)
 
     def test_registry_rejects_malformed_capability_runtime_types(self):
         invalid = BrokerCapabilities(

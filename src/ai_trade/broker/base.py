@@ -301,11 +301,31 @@ def _index_entry_points(
         if not isinstance(name, str) or not name:
             raise RuntimeError(f"Broker entry point in {group!r} has an invalid name")
         if name in indexed:
+            existing_identity = _entry_point_identity(indexed[name])
+            if (
+                existing_identity is not None
+                and existing_identity == _entry_point_identity(point)
+            ):
+                continue
             raise RuntimeError(
                 f"Duplicate broker entry point {name!r} in group {group!r}"
             )
         indexed[name] = point
     return indexed
+
+
+def _entry_point_identity(point: object) -> tuple[str, str, str] | None:
+    value = getattr(point, "value", None)
+    distribution = getattr(point, "dist", None)
+    distribution_name = getattr(distribution, "name", None)
+    distribution_version = getattr(distribution, "version", None)
+    if not all(
+        isinstance(item, str) and item
+        for item in (value, distribution_name, distribution_version)
+    ):
+        return None
+    normalized_name = distribution_name.casefold().replace("_", "-")
+    return value, normalized_name, distribution_version
 
 
 def _validate_capability_declaration(value: BrokerCapabilities) -> None:

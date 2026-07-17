@@ -106,6 +106,7 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("BROKER_LEDGER_SCOPE_STATUS_LABELS", self.javascript)
         self.assertIn("证据作用域", self.javascript)
         self.assertIn("按成交号与内容指纹校验", self.javascript)
+        self.assertIn("旧格式对账不计入", self.javascript)
         self.assertIn("新记录校验完整 SHA-256", self.javascript)
         self.assertIn("账户 ${scope.account_reference", self.javascript)
         self.assertIn("不同适配器、账户、环境或配置意外混用", self.javascript)

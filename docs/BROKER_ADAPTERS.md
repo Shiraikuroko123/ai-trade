@@ -22,8 +22,9 @@ example = "example_adapter:broker_capabilities"
 The declaration assigns one access level (`read_only`, `sandbox`, or `live`),
 an explicit environment set, and an allowlist drawn from `read_account`,
 `read_positions`, `read_orders`, `read_fills`, `submit_orders`, and
-`cancel_orders`. Duplicate names in either entry-point group are rejected rather
-than selected by installation order. Capability fields must contain the exact
+`cancel_orders`. Conflicting duplicate names in either entry-point group are
+rejected rather than selected by installation order; repeated metadata with the
+same distribution, version, and target is safely deduplicated. Capability fields must contain the exact
 core enum and boolean types. A missing or malformed declaration, unknown
 operation, factory identity mismatch, environment mismatch, or
 runtime/declaration mismatch is denied before the core calls the adapter.
@@ -267,13 +268,15 @@ An account reaches sandbox review only after the frozen paper epoch passes its i
 
 The default gate requires 20 consecutive clean reconciliations. A mismatch resets the clean-session run; evidence from another account or configuration does not count.
 
-New reconciliation rows use a `v2_` SHA-256 fingerprint over the canonical
-adapter, account, date, configuration, cash values, issue count, and issue
-details. Every audit validates the exact schema and every row in the shared
-ledger before selecting the configured account. A malformed row, changed
-fingerprint, duplicate logical session, or non-increasing date fails closed.
-Expected and broker cash must both be non-negative; a zero-issue session is
-invalid unless those balances match within the fixed 0.01 cash tolerance.
+New qualifying reconciliation rows use a `v3_` SHA-256 fingerprint over the
+canonical adapter, account, date, configuration, cash values, full expected and
+broker position maps, issue count, and issue details. The writer and auditor
+both recompute the exact cash and position issue list; callers cannot mark a
+mismatch clean by omitting an issue. Every audit validates the exact schema and
+every row in the shared ledger before selecting the configured account. A
+malformed row, changed fingerprint, duplicate logical session, or
+non-increasing date fails closed. Expected and broker cash must both be
+non-negative and use a fixed 0.01 comparison tolerance.
 Different content for an existing logical session is atomically retained as a
 conflict before the writer raises, so the earlier clean row cannot silently keep
 its authority.
@@ -281,11 +284,12 @@ its authority.
 Reconciliation writers use the same in-process serialization, operating-system
 lock, flushed temporary file, and same-directory atomic replacement as broker
 lifecycle ledgers. Exact retries are idempotent and replacement failure preserves
-the previous complete file. Existing 24-character identity-only IDs remain
-readable and an exact retry does not rewrite them, but those legacy rows are
-excluded from the consecutive clean-session count because their cash and issue
-content was never fingerprinted. Accumulate fresh `v2_` sessions after upgrade;
-do not edit or manually migrate the ledger.
+the previous complete file. Existing 24-character identity-only IDs and `v2_`
+cash/issue fingerprints remain readable and exact retries do not rewrite them,
+but neither format counts toward the consecutive clean-session gate because it
+does not bind the compared position maps. A legacy-format file cannot accept
+new `v3_` rows; archive it and accumulate fresh future sessions instead of
+editing or manually migrating evidence.
 
 ## Live Authorization
 

@@ -4,9 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
-- Qualifying reconciliation now rejects negative cash and any zero-issue row
-  whose expected and broker cash differ beyond the fixed 0.01 tolerance, both
-  at write time and during whole-ledger audit.
+- New qualifying `v3_` reconciliation rows bind canonical expected and broker
+  position maps as well as non-negative cash, and recompute the complete issue
+  list at write and audit time. Identity-only and cash-only `v2_` rows remain
+  readable and idempotent but no longer count toward promotion.
 - Read-only broker probes now share strict runtime validation with live routing
   and additionally reject malformed or duplicate order/fill collections and
   truthy non-boolean fee-completeness flags before rendering observations.
@@ -34,11 +35,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   configuration fingerprint, and exact ledger paths. Scoped writes reject
   legacy or mismatched ledgers before broker I/O; legacy ledgers remain readable
   but visibly non-authoritative, and the Trading view exposes the scope state.
-- Hardened qualifying sandbox reconciliation evidence with canonical `v2_`
-  content fingerprints, strict whole-ledger validation, logical-session conflict
+- Established the reconciliation-ledger foundation with canonical content
+  fingerprints, strict whole-ledger validation, logical-session conflict
   detection, in-process and operating-system writer serialization, and atomic
-  CSV publication. Legacy identity-only records remain readable and idempotent
-  but no longer count toward the live-promotion gate.
+  CSV publication; the newer position-bound format above is now authoritative.
 - Hardened broker-ledger durability with serialized in-process writers,
   atomic single-ledger publication, injected-failure recovery tests, and an
   independent transition-matrix contract. Order intents now use China-session

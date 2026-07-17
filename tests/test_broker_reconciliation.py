@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ai_trade.broker.reconciliation import (
-    RECONCILIATION_FIELDS,
+    LEGACY_RECONCILIATION_FIELDS,
     ReconciliationIssue,
     append_reconciliation,
     audit_reconciliations,
@@ -29,6 +29,8 @@ def _arguments(**overrides):
         "config_fingerprint": "active-config",
         "expected_cash": 1000.0,
         "broker_cash": 1000.0,
+        "expected_positions": {"510300": 100},
+        "broker_positions": {"510300": 100},
         "issues": [],
     }
     values.update(overrides)
@@ -42,7 +44,7 @@ def _read_rows(path: Path) -> list[dict[str, str]]:
 
 def _write_rows(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=RECONCILIATION_FIELDS)
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
 
@@ -71,11 +73,11 @@ class BrokerReconciliationTests(unittest.TestCase):
                     )
             self.assertFalse(path.exists())
 
-    def test_v2_content_fingerprint_detects_cash_tampering(self):
+    def test_v3_content_fingerprint_detects_cash_tampering(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "reconciliation.csv"
             reconciliation_id = append_reconciliation(path, **_arguments())
-            self.assertTrue(reconciliation_id.startswith("v2_"))
+            self.assertTrue(reconciliation_id.startswith("v3_"))
             rows = _read_rows(path)
             rows[0]["broker_cash"] = "900.000000"
             _write_rows(path, rows)
@@ -134,7 +136,62 @@ class BrokerReconciliationTests(unittest.TestCase):
             self.assertEqual(audit["clean_sessions"], 0)
             self.assertEqual(audit["ignored_legacy_sessions"], 1)
 
-    def test_v2_logical_session_conflict_is_durable_and_fails_closed(self):
+    def test_v2_cash_only_record_is_readable_but_cannot_qualify(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            content = {
+                "date": START.isoformat(),
+                "adapter": "sandbox-adapter",
+                "account_id": "sandbox-account",
+                "config_fingerprint": "active-config",
+                "expected_cash": "1000.000000",
+                "broker_cash": "1000.000000",
+                "issue_count": "0",
+                "issues": "[]",
+            }
+            encoded = json.dumps(
+                content,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("ascii")
+            reconciliation_id = "v2_" + hashlib.sha256(encoded).hexdigest()[:24]
+            row = {"reconciliation_id": reconciliation_id, **content}
+            _write_rows(path, [row])
+
+            retry_id = append_reconciliation(path, **_arguments())
+            audit = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                1,
+                "active-config",
+            )
+
+            self.assertEqual(retry_id, reconciliation_id)
+            self.assertFalse(audit["eligible"])
+            self.assertEqual(audit["ignored_legacy_sessions"], 1)
+            with self.assertRaisesRegex(RuntimeError, "cannot accept"):
+                append_reconciliation(
+                    path,
+                    **_arguments(on_date=START + timedelta(days=1)),
+                )
+
+    def test_header_only_v2_ledger_cannot_mix_in_v3_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            path.write_text(
+                ",".join(LEGACY_RECONCILIATION_FIELDS) + "\n",
+                encoding="utf-8",
+            )
+            before = path.read_bytes()
+
+            with self.assertRaisesRegex(RuntimeError, "cannot accept"):
+                append_reconciliation(path, **_arguments())
+
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_v3_logical_session_conflict_is_durable_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "reconciliation.csv"
             append_reconciliation(path, **_arguments())
@@ -152,7 +209,7 @@ class BrokerReconciliationTests(unittest.TestCase):
                 rows[0]["reconciliation_id"], rows[1]["reconciliation_id"]
             )
             self.assertTrue(
-                all(row["reconciliation_id"].startswith("v2_") for row in rows)
+                all(row["reconciliation_id"].startswith("v3_") for row in rows)
             )
             audit = audit_reconciliations(
                 path,
@@ -242,15 +299,58 @@ class BrokerReconciliationTests(unittest.TestCase):
 
             first = append_reconciliation(
                 path,
-                **_arguments(broker_cash=900.0, issues=[position, cash]),
+                **_arguments(
+                    broker_cash=900.0,
+                    broker_positions={"510300": 0},
+                    issues=[position, cash],
+                ),
             )
             second = append_reconciliation(
                 path,
-                **_arguments(broker_cash=900.0, issues=[cash, position]),
+                **_arguments(
+                    broker_cash=900.0,
+                    broker_positions={"510300": 0},
+                    issues=[cash, position],
+                ),
             )
 
             self.assertEqual(first, second)
             self.assertEqual(len(_read_rows(path)), 1)
+
+    def test_v3_rejects_issues_that_do_not_match_bound_positions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                append_reconciliation(
+                    path,
+                    **_arguments(
+                        broker_positions={"510300": 0},
+                        issues=[],
+                    ),
+                )
+            self.assertFalse(path.exists())
+
+    def test_v3_position_tampering_invalidates_the_whole_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            append_reconciliation(path, **_arguments())
+            rows = _read_rows(path)
+            rows[0]["broker_positions"] = '{"510300":0}'
+            _write_rows(path, rows)
+
+            audit = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                1,
+                "active-config",
+            )
+
+            self.assertFalse(audit["eligible"])
+            self.assertTrue(
+                any("content validation" in error for error in audit["errors"])
+            )
 
     def test_invalid_issue_schema_in_another_account_invalidates_the_ledger(self):
         with tempfile.TemporaryDirectory() as temporary:
