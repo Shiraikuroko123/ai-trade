@@ -193,6 +193,12 @@ a SHA-256 account reference. The plaintext broker account ID is never stored in
 the manifest or returned by the lifecycle report; the UI exposes only a
 12-character hexadecimal reference for human comparison.
 
+The reconciliation, order, fill, scope, authorization, batch-approval, and
+kill-switch paths must also resolve to different files. Configuration loading
+compares paths against the configuration root, so an alias such as
+`state/a/../broker_orders.csv` or an equivalent absolute path cannot bypass the
+isolation check.
+
 `append_broker_observation` can initialize the manifest only when both lifecycle
 ledgers are absent. Individual scoped order, intent, and fill writes require an
 already matching manifest. The live router consumes the exact batch approval,

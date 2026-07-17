@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from dataclasses import dataclass
 from datetime import date, time
@@ -192,6 +193,7 @@ def load_config(path: str | Path) -> AppConfig:
         security_master,
         universe_name,
         minimum_listing_days,
+        project_root,
     )
     return AppConfig(
         config_path,
@@ -216,6 +218,7 @@ def _validate(
     security_master: SecurityMaster,
     universe_name: str,
     minimum_listing_days: int,
+    project_root: Path,
 ) -> None:
     symbols = [item.symbol for item in instruments]
     if not instruments:
@@ -327,7 +330,7 @@ def _validate(
     if int(raw["paper"].get("minimum_promotion_sessions", 60)) < 20:
         raise ValueError("paper.minimum_promotion_sessions must be at least 20")
     _validate_auth(raw.get("auth", {}))
-    _validate_broker(raw.get("broker", {}))
+    _validate_broker(raw.get("broker", {}), project_root=project_root)
     _validate_shadow_account(raw.get("shadow_account", {}))
 
 
@@ -462,7 +465,11 @@ def _validate_auth(value: dict[str, Any]) -> None:
             )
 
 
-def _validate_broker(value: dict[str, Any]) -> None:
+def _validate_broker(
+    value: dict[str, Any],
+    *,
+    project_root: Path | None = None,
+) -> None:
     mode = value.get("mode", "disabled")
     if mode not in {"disabled", "sandbox", "live"}:
         raise ValueError("broker.mode must be disabled, sandbox, or live")
@@ -502,11 +509,18 @@ def _validate_broker(value: dict[str, Any]) -> None:
         "kill_switch_file": "state/LIVE_KILL_SWITCH",
     }
     configured_paths: dict[str, str] = {}
+    root = (project_root or Path.cwd()).resolve()
     for name, default_path in path_defaults.items():
         raw_path = value.get(name, default_path)
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise ValueError(f"broker.{name} must be a non-empty path")
-        normalized = str(Path(raw_path)).casefold()
+        candidate = Path(raw_path)
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (root / candidate).resolve()
+        )
+        normalized = os.path.normcase(str(resolved))
         previous = configured_paths.get(normalized)
         if previous is not None:
             raise ValueError(f"broker.{name} must differ from broker.{previous}")

@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Broker control and evidence paths are now compared after resolution against
+  the configuration root, preventing relative or absolute path aliases from
+  bypassing file-isolation checks.
 - Added full canonical SHA-256 fingerprints to new broker fill rows, with
   strict header validation and read-time content verification. Legacy fill
   ledgers remain readable and retain their original schema during exact or

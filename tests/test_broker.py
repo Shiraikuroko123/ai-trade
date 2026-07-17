@@ -774,6 +774,25 @@ class BrokerTests(unittest.TestCase):
                 }
             )
 
+    def test_broker_configuration_rejects_resolved_path_aliases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shared = root / "state" / "broker_orders.csv"
+            for fills_file in (
+                "state/nested/../broker_orders.csv",
+                str(shared),
+            ):
+                with self.subTest(fills_file=fills_file), self.assertRaisesRegex(
+                    ValueError, "fills_file must differ from broker.orders_file"
+                ):
+                    _validate_broker(
+                        {
+                            "orders_file": "state/broker_orders.csv",
+                            "fills_file": fills_file,
+                        },
+                        project_root=root,
+                    )
+
     def test_live_configuration_fingerprint_binds_the_scope_manifest_path(self):
         first = SimpleNamespace(
             raw={"broker": {"ledger_scope_file": "state/first-scope.json"}}
