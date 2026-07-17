@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#ffffff">
   <title>AI Trade | 投资工作台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="app.css?v=0.12.0">
+  <link rel="stylesheet" href="app.css?v=0.12.0-ui5">
 </head>
 <body>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -42,7 +42,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <span class="connection-line">
+        <span class="connection-line" role="status" aria-live="polite" aria-atomic="true">
           <span id="connection-dot" class="connection-dot" aria-hidden="true"></span>
           <span id="connection-label">正在连接本机</span>
         </span>
@@ -58,8 +58,8 @@
           <h1 id="route-title">总览</h1>
         </div>
         <div class="topbar-tools">
-          <span id="market-date" class="quiet-meta">数据日期待确认</span>
-          <span id="job-indicator" class="status-chip neutral">无运行任务</span>
+          <span id="market-date" class="quiet-meta" role="status" aria-live="polite" aria-atomic="true">数据日期待确认</span>
+          <span id="job-indicator" class="status-chip neutral" role="status" aria-live="polite" aria-atomic="true">无运行任务</span>
           <span id="signed-in-user" class="quiet-meta account-label">内测账号</span>
           <button id="refresh-view" class="button secondary" type="button">刷新视图</button>
           <button id="logout" class="button secondary" type="button">退出</button>
@@ -70,8 +70,9 @@
     </section>
   </div>
 
+  <p id="table-scroll-help" class="sr-only">宽表可横向滚动；聚焦表格区域后可使用方向键查看隐藏列。</p>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script src="vendor/klinecharts.min.js?v=10.0.0" defer></script>
-  <script src="app.js?v=0.12.0" defer></script>
+  <script src="app.js?v=0.12.0-ui5" defer></script>
 </body>
 </html>

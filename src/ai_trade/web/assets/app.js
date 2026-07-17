@@ -62,6 +62,7 @@ const CHECK_LABELS = {
   adapter_installed: "券商适配器已安装",
   account_configured: "已绑定券商账户",
   paper_gate_passed: "前向模拟门禁通过",
+  paper_configuration_current: "模拟账户配置指纹与当前配置一致",
   sandbox_reconciled: "券商沙箱连续对账通过",
   kill_switch_clear: "紧急停止开关未触发",
   authorization_valid: "人工授权有效且未过期",
@@ -79,6 +80,10 @@ const STATUS_LABELS = {
   succeeded: "已完成",
   failed: "失败",
   cancelled: "已取消",
+  FILLED: "已成交",
+  REJECTED: "已拒绝",
+  CANCELLED: "已取消",
+  SUBMITTED: "已提交",
   normal: "正常",
   paper_evidence: "收集模拟证据",
   sandbox_review: "待沙箱复核",
@@ -225,6 +230,20 @@ function metric(label, value, note = "", valueTone = "") {
     </div>`;
 }
 
+function contextBand(items, label) {
+  return `
+    <dl class="context-band" aria-label="${escapeHtml(label)}">
+      ${items.map((item) => `
+        <div class="context-item">
+          <dt>${escapeHtml(item.label)}</dt>
+          <dd>
+            <span class="context-value"><strong>${escapeHtml(item.value)}</strong>${statusChip(item.status, item.kind)}</span>
+            <span class="context-note">${escapeHtml(item.note)}</span>
+          </dd>
+        </div>`).join("")}
+    </dl>`;
+}
+
 function pageIntro(title, description, actions = "") {
   return `
     <section class="page-intro">
@@ -262,7 +281,7 @@ function actionButton(action, style = "secondary") {
 
 function skeletonPage() {
   return `
-    <div class="skeleton-stack" aria-label="正在加载">
+    <div class="skeleton-stack" role="status" aria-label="正在加载">
       <div class="skeleton-line"></div>
       <div class="skeleton-block"></div>
       <div class="skeleton-block"></div>
@@ -272,6 +291,9 @@ function skeletonPage() {
 
 function friendlyError(message) {
   const value = String(message || "请求失败");
+  if (/failed to fetch|networkerror|network request failed|load failed/i.test(value)) {
+    return "无法连接本机服务。请确认 AI Trade 服务仍在运行，然后重新加载。";
+  }
   if (value.includes("Market data is unavailable")) {
     return "本地行情缓存不可用。刷新行情后，系统会重新校验已完成交易日和快照指纹。";
   }
@@ -293,6 +315,7 @@ function renderError(error) {
     <section class="error-state" role="alert">
       <h2>当前视图无法完成加载</h2>
       <p>${escapeHtml(message)}</p>
+      <p class="error-impact"><strong>影响范围：</strong>本页没有更新；已经写入的本地账本、报告和策略记录不会因此改变。</p>
       <div class="action-row">
         <button class="button secondary" type="button" data-retry>重新加载</button>
         ${actionButton("refresh-data", "primary")}
@@ -492,6 +515,7 @@ function renderRoute(payload) {
     system: renderSystem,
   };
   main.innerHTML = renderers[state.route](payload);
+  enhanceRenderedUi();
   updateRouteDate(payload);
   updateJobButtons();
   requestAnimationFrame(() => {
@@ -502,26 +526,40 @@ function renderRoute(payload) {
 
 function updateRouteDate(payload) {
   let value = "";
+  let label = "数据日期";
   if (state.route === "overview") {
     value = payload.market?.date;
+    label = "行情快照";
     if (payload.version) versionLabel.textContent = `AI Trade v${payload.version}`;
   } else if (state.route === "market") {
     value = payload.chart?.data_date;
+    label = "K 线截止";
   } else if (state.route === "research") {
     value = payload.backtest?.metadata?.end;
+    label = "研究截止";
   } else if (state.route === "assistant") {
     value = (state.assistantResult || payload.history?.[0])?.data_date;
+    label = "分析快照";
   } else if (state.route === "strategy-lab") {
     const selected = strategyLabSelectedCandidate(payload);
+    if (!selected?.validation?.market_snapshot?.date) {
+      marketDate.textContent = selected ? "候选尚未验证" : "尚无候选验证";
+      return;
+    }
     value = selected?.validation?.market_snapshot?.date;
+    label = "验证快照";
   } else if (state.route === "portfolio") {
     value = payload.date;
+    label = "账本日期";
   } else if (state.route === "trading") {
     value = payload.paper_audit?.period?.[1];
+    label = "审计截止";
   } else if (state.route === "risk") {
     value = payload.overview?.market?.date;
+    label = "行情快照";
   } else if (state.route === "universe") {
     value = payload.date;
+    label = "截面日期";
   } else if (state.route === "storage") {
     const scanned = payload.usage?.scanned_at;
     marketDate.textContent = scanned
@@ -530,8 +568,26 @@ function updateRouteDate(payload) {
     return;
   } else if (state.route === "system") {
     value = payload.system?.diagnosis?.latest_market_date;
+    label = "行情截止";
   }
-  marketDate.textContent = value ? `数据日期 ${value}` : "数据日期不可用";
+  marketDate.textContent = value ? `${label} ${value}` : `${label}不可用`;
+}
+
+function enhanceRenderedUi() {
+  let tableIndex = 0;
+  for (const region of main.querySelectorAll(".table-wrap")) {
+    region.tabIndex = 0;
+    region.setAttribute("role", "region");
+    region.setAttribute("aria-describedby", "table-scroll-help");
+    const heading = region.closest(".panel, article, section")?.querySelector("h2, h3");
+    if (heading) {
+      if (!heading.id) heading.id = `${state.route}-table-heading-${tableIndex}`;
+      region.setAttribute("aria-labelledby", heading.id);
+    } else {
+      region.setAttribute("aria-label", "数据表格");
+    }
+    tableIndex += 1;
+  }
 }
 
 function marketProviderLabel(value) {
@@ -541,6 +597,8 @@ function marketProviderLabel(value) {
     tencent_network_fallback: "腾讯网络回退",
     tencent_newfqkline: "腾讯前复权行情",
     eastmoney_network: "东方财富网络行情",
+    network: "网络行情",
+    validated_local_fallback: "已验证本地备用缓存",
   }[String(value || "").toLowerCase()] || value || "未说明";
 }
 
@@ -714,10 +772,10 @@ function renderMarket(data) {
   const snapshot = chart.snapshot || {};
   const chartBody = bars.length >= 2
     ? `<figure class="market-chart-figure">
-        <div id="market-kline-chart" class="market-kline-chart" role="img" tabindex="0" aria-label="${escapeHtml(chartSummary)}">
-          <span class="market-chart-loading">正在准备 K 线</span>
+        <div id="market-kline-chart" class="market-kline-chart" role="img" tabindex="0" aria-label="${escapeHtml(chartSummary)}" aria-describedby="market-chart-summary">
+          <span class="market-chart-loading" role="status">正在准备 K 线</span>
         </div>
-        <figcaption>${escapeHtml(chartSummary)}</figcaption>
+        <figcaption id="market-chart-summary">${escapeHtml(chartSummary)}</figcaption>
       </figure>`
     : `<section class="empty-state market-empty" role="status">
         <h2>当前标的没有足够的行情数据</h2>
@@ -932,6 +990,12 @@ function addMarketTradeMarkers(chart, markers) {
   }
 }
 
+function keepMarketChartFocusOnSummary(container) {
+  for (const descendant of container.querySelectorAll("[tabindex]")) {
+    descendant.tabIndex = -1;
+  }
+}
+
 function initMarketChart(data) {
   const container = document.getElementById("market-kline-chart");
   const bars = marketChartBars(data.chart?.bars || []);
@@ -1046,15 +1110,21 @@ function initMarketChart(data) {
     chart.setOffsetRightDistance(36);
     chart.setPeriod(MARKET_PERIODS[state.marketPeriod]?.chart || MARKET_PERIODS.day.chart);
     addMarketTradeMarkers(chart, data.chart?.trade_markers || []);
+    keepMarketChartFocusOnSummary(container);
     state.marketResizeObserver = new ResizeObserver(() => {
       if (state.marketChart !== chart || !container.isConnected) return;
       chart.resize();
       sizeMarketPanes(chart, container);
+      keepMarketChartFocusOnSummary(container);
     });
     state.marketResizeObserver.observe(container);
   } catch (error) {
     destroyMarketChart();
-    container.innerHTML = `<div class="market-chart-failure" role="alert"><strong>K 线绘制失败</strong><span>${escapeHtml(error.message || error)}</span></div>`;
+    container.setAttribute("role", "alert");
+    container.removeAttribute("aria-label");
+    container.removeAttribute("aria-describedby");
+    container.tabIndex = -1;
+    container.innerHTML = `<div class="market-chart-failure"><strong>K 线绘制失败</strong><span>${escapeHtml(error.message || error)}</span><span>行情数据仍保持只读，刷新视图后可重试绘制。</span></div>`;
   }
 }
 
@@ -1106,9 +1176,19 @@ function renderOverview(data) {
   const backtest = data.research?.backtest || {};
   const walk = data.research?.walk_forward || {};
   const audit = data.paper?.audit || {};
+  const paperMetrics = audit.metrics || {};
   const targets = Object.entries(data.signal?.target_weights || {});
   const ranking = data.signal?.ranking || [];
   const warnings = data.market?.warnings || [];
+  const fallbackUsed = warnings.some((item) => String(item).includes("Tencent network fallback"));
+  const reportWarnings = warnings.filter((item) => /\.json /.test(String(item)));
+  const operationalWarnings = warnings.filter((item) => (
+    String(item).includes("network fallback") || /\.json /.test(String(item))
+  ));
+  const methodologyWarnings = warnings.filter((item) => !operationalWarnings.includes(item));
+  const signalMatchesMarket = Boolean(data.signal?.date) && data.signal?.date === data.market?.date;
+  const grossExposure = targets.reduce((total, [, weight]) => total + (finite(weight) || 0), 0);
+  const researchEnd = data.research?.period?.[1] || "—";
   const actions = [
     actionButton("paper-run", "primary"),
     actionButton("refresh-data", "secondary"),
@@ -1117,11 +1197,44 @@ function renderOverview(data) {
     <div class="page-stack">
       ${pageIntro("收盘决策快照", `信号 ${data.signal?.date || "—"} · ${data.market?.universe?.active_count ?? 0} 支当日有效证券`, actions)}
 
-      <section class="metric-strip" aria-label="核心指标">
-        ${metric("模拟权益", formatMoney(data.paper?.equity), `${audit.sessions ?? 0} / ${audit.minimum_promotion_sessions ?? 60} 个前向交易日`)}
-        ${metric("历史年化收益", formatPercent(backtest.cagr), "含当前成本模型", tone(backtest.cagr))}
-        ${metric("历史最大回撤", formatPercent(backtest.max_drawdown), "回测观测值", tone(backtest.max_drawdown))}
-        ${metric("滚动样本外 Sharpe", formatNumber(walk.oos_sharpe), `${walk.positive_segments ?? 0} / ${walk.segments ?? 0} 段收益为正`, tone(walk.oos_sharpe))}
+      ${contextBand([
+        {
+          label: "行情快照",
+          value: data.market?.date || "不可用",
+          status: data.market?.available === false ? "不可用" : fallbackUsed ? "备用源补齐" : "已校验",
+          kind: data.market?.available === false ? "danger" : fallbackUsed ? "warning" : "success",
+          note: `配置源 ${marketProviderLabel(data.market?.provider)} · ${data.market?.universe?.active_count ?? 0} 支有效`,
+        },
+        {
+          label: "策略信号",
+          value: data.signal?.date || "不可用",
+          status: signalMatchesMarket ? "与行情同日" : "日期不一致",
+          kind: signalMatchesMarket ? "success" : "danger",
+          note: `${targets.length} 个目标 · 风险仓位 ${formatPercent(grossExposure)}`,
+        },
+        {
+          label: "历史研究",
+          value: `截至 ${researchEnd}`,
+          status: reportWarnings.length ? `${reportWarnings.length} 份待更新` : "报告当前",
+          kind: reportWarnings.length ? "warning" : "success",
+          note: "历史指标不参与权限解锁",
+        },
+        {
+          label: "账户权限",
+          value: "前向模拟",
+          status: "真实交易锁定",
+          kind: "danger",
+          note: `${audit.sessions ?? 0} / ${audit.minimum_promotion_sessions ?? 60} 个独立交易日`,
+        },
+      ], "决策日期与可信度")}
+
+      ${overviewQualityNotice(operationalWarnings, reportWarnings.length)}
+
+      <section class="metric-strip metric-strip-priority" aria-label="当前模拟账户指标">
+        ${metric("模拟权益", formatMoney(data.paper?.equity), `账本截至 ${audit.period?.[1] || data.market?.date || "—"}`)}
+        ${metric("前向累计收益", formatPercent(paperMetrics.total_return), `${audit.sessions ?? 0} 个独立交易日`, tone(paperMetrics.total_return))}
+        ${metric("前向最大回撤", formatPercent(paperMetrics.max_drawdown), "相对模拟账户高水位", tone(paperMetrics.max_drawdown))}
+        ${metric("证据进度", `${audit.sessions ?? 0} / ${audit.minimum_promotion_sessions ?? 60}`, `距沙箱复核尚需 ${audit.remaining_sessions ?? audit.minimum_promotion_sessions ?? 60} 日`, audit.eligible_for_broker_sandbox ? "tone-positive" : "tone-warning")}
       </section>
 
       <section class="split-layout">
@@ -1152,7 +1265,17 @@ function renderOverview(data) {
       </section>
 
       <section class="panel">
-        ${panelHeader("历史权益曲线", `${data.research?.period?.[0] || "—"} 至 ${data.research?.period?.[1] || "—"}`)}
+        ${panelHeader(
+          "历史权益曲线",
+          `${data.research?.period?.[0] || "—"} 至 ${researchEnd} · 与当前行情快照分开审阅`,
+          reportWarnings.length ? statusChip("报告待更新", "warning") : statusChip("报告当前", "success"),
+        )}
+        <section class="metric-strip metric-strip-secondary" aria-label="历史研究指标">
+          ${metric("历史年化收益", formatPercent(backtest.cagr), `报告截止 ${researchEnd}`, tone(backtest.cagr))}
+          ${metric("历史最大回撤", formatPercent(backtest.max_drawdown), "回测观测值", tone(backtest.max_drawdown))}
+          ${metric("样本外 Sharpe", formatNumber(walk.oos_sharpe), `${walk.positive_segments ?? 0} / ${walk.segments ?? 0} 段收益为正`, tone(walk.oos_sharpe))}
+          ${metric("研究报告", reportWarnings.length ? `${reportWarnings.length} 份待更新` : "全部当前", `行情快照 ${data.market?.date || "—"}`, reportWarnings.length ? "tone-warning" : "tone-positive")}
+        </section>
         ${chartMarkup(
           "overview-equity",
           data.equity_curve || [],
@@ -1169,8 +1292,23 @@ function renderOverview(data) {
         ${rankingTable(ranking)}
       </section>
 
-      ${warnings.length ? `<aside class="callout warning"><strong>研究口径提示</strong><ul>${warnings.map((item) => `<li>${escapeHtml(translateWarning(item))}</li>`).join("")}</ul></aside>` : ""}
+      ${methodologyWarnings.length ? `<aside class="callout warning"><strong>研究边界</strong><ul>${methodologyWarnings.map((item) => `<li>${escapeHtml(translateWarning(item))}</li>`).join("")}</ul></aside>` : ""}
     </div>`;
+}
+
+function overviewQualityNotice(warnings, reportCount) {
+  if (!warnings.length) return "";
+  const title = reportCount
+    ? `当前快照有 ${reportCount} 份研究报告需要更新`
+    : "当前快照存在需要复核的数据状态";
+  return `<aside class="callout warning quality-notice" role="status">
+    <div class="callout-heading">
+      <div><strong>${escapeHtml(title)}</strong><p>先区分当前行情、历史报告与权限证据，再决定是否运行模拟日。</p></div>
+      ${statusChip(`${warnings.length} 项待复核`, "warning")}
+    </div>
+    <ul>${warnings.map((item) => `<li>${escapeHtml(translateWarning(item))}</li>`).join("")}</ul>
+    <div class="action-row"><a class="button secondary" href="#research">查看研究证据</a></div>
+  </aside>`;
 }
 
 function rankingTable(ranking) {
@@ -1194,22 +1332,24 @@ function rankingTable(ranking) {
 
 function authorityRail(live, audit, researchGates) {
   const reconciliation = live.reconciliation || {};
-  const researchPassed = Boolean(researchGates.total) && researchGates.passed === researchGates.total;
+  const researchKnown = Boolean(researchGates.total);
+  const researchPassed = researchKnown && researchGates.passed === researchGates.total;
   const paperPassed = Boolean(audit.eligible_for_broker_sandbox);
   const sandboxPassed = Boolean(reconciliation.eligible);
   const liveReady = Boolean(live.live_ready);
   const steps = [
     {
       label: "历史研究",
-      note: researchPassed ? "稳健性门禁通过，但结果已参与开发" : "仍有研究门禁未通过",
+      note: !researchKnown ? "当前页面未返回研究门禁，请到研究页复核" : researchPassed ? "稳健性门禁通过，但结果已参与开发" : "仍有研究门禁未通过",
       complete: researchPassed,
-      current: !researchPassed,
+      current: researchKnown && !researchPassed,
+      unknown: !researchKnown,
     },
     {
       label: "前向模拟",
       note: `${audit.sessions ?? 0} / ${audit.minimum_promotion_sessions ?? 60} 个独立交易日`,
       complete: paperPassed,
-      current: researchPassed && !paperPassed,
+      current: (researchPassed || !researchKnown) && !paperPassed,
     },
     {
       label: "券商沙箱",
@@ -1225,12 +1365,12 @@ function authorityRail(live, audit, researchGates) {
       locked: !liveReady,
     },
   ];
-  return `<div class="authority-rail">${steps.map((step) => `
-    <div class="authority-step ${step.complete ? "complete" : ""} ${step.current ? "current" : ""}">
-      <span class="step-marker" aria-hidden="true">${step.complete ? "✓" : step.locked ? "×" : "·"}</span>
+  return `<ol class="authority-rail">${steps.map((step) => `
+    <li class="authority-step ${step.complete ? "complete" : ""} ${step.current ? "current" : ""}"${step.current ? ' aria-current="step"' : ""}>
+      <span class="step-marker" aria-hidden="true">${step.complete ? "✓" : step.locked ? "×" : step.unknown ? "?" : "·"}</span>
       <div><strong>${escapeHtml(step.label)}</strong><span>${escapeHtml(step.note)}</span></div>
-      ${step.complete ? statusChip("已通过", "success") : step.current ? statusChip("当前阶段", "warning") : statusChip(step.locked ? "已锁定" : "未开始", step.locked ? "danger" : "neutral")}
-    </div>`).join("")}</div>`;
+      ${step.complete ? statusChip("已通过", "success") : step.current ? statusChip("当前阶段", "warning") : step.unknown ? statusChip("待复核", "neutral") : statusChip(step.locked ? "已锁定" : "未开始", step.locked ? "danger" : "neutral")}
+    </li>`).join("")}</ol>`;
 }
 
 function translateWarning(value) {
@@ -1446,11 +1586,11 @@ function detailRow(label, value, kind = "neutral") {
 
 function checksList(checks, namespace = "") {
   const entries = Object.entries(checks || {});
-  return `<div class="check-list">${entries.length ? entries.map(([key, passed], index) => `
-    <div class="check-row">
+  return entries.length ? `<ul class="check-list">${entries.map(([key, passed], index) => `
+    <li class="check-row">
       <span>${escapeHtml(checkLabel(key, index, namespace))}</span>
       ${booleanChip(Boolean(passed))}
-    </div>`).join("") : `<div class="empty-state"><p>尚无门禁结果</p></div>`}</div>`;
+    </li>`).join("")}</ul>` : `<div class="empty-state compact-empty" role="status"><h3>尚无门禁结果</h3><p>完成对应验证或审计后，这里会显示逐项通过状态。</p></div>`;
 }
 
 function checkLabel(key, index, namespace) {
@@ -1823,6 +1963,7 @@ async function runAssistantAnalysis(form) {
   const button = form.querySelector("button[type='submit']");
   if (button) {
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
     button.textContent = "分析中";
   }
   try {
@@ -1909,9 +2050,9 @@ function renderStrategyLab(data) {
 
       <section class="strategy-authority-band" aria-label="策略权限边界">
         <div><span>当前基线</span><strong class="mono">${escapeHtml(shortFingerprint(data.baseline?.fingerprint))}</strong></div>
-        <div><span>实验室活动版本</span><strong>${hasActiveCandidate ? escapeHtml(activeCandidate ? strategyCandidateTitle(activeCandidate) : shortCandidateId(active.candidate_id)) : "尚未激活"}</strong></div>
-        <div><span>执行权限</span><strong>${safety.live_trading_enabled === false ? "仅限研究与独立模拟" : "权限状态待确认"}</strong></div>
-        ${statusChip("真实下单保持锁定", "warning")}
+        <div><span>选中候选</span><strong>${selected ? escapeHtml(strategyCandidateTitle(selected)) : "尚无候选"}</strong><span class="strategy-authority-status">${selected ? strategyStatusChip(selected.status) : statusChip("未创建", "neutral")}</span></div>
+        <div><span>活动模拟版本</span><strong>${hasActiveCandidate ? escapeHtml(activeCandidate ? strategyCandidateTitle(activeCandidate) : shortCandidateId(active.candidate_id)) : "尚未激活"}</strong><span class="strategy-authority-status">${hasActiveCandidate ? statusChip("模拟活动", "info") : statusChip("使用基线", "neutral")}</span></div>
+        <div><span>执行权限</span><strong>${safety.live_trading_enabled === false ? "仅限研究与独立模拟" : "权限状态待确认"}</strong><span class="strategy-authority-status">${statusChip("真实下单锁定", "danger")}</span></div>
       </section>
 
       ${strategyLabComposer(data)}
@@ -1950,20 +2091,21 @@ function strategyLabComposer(data) {
           <p>保存后参数不可原地修改；继续调整时创建下一个候选。</p>
         </div>
         <div class="segmented" role="tablist" aria-label="候选来源">
-          <button type="button" role="tab" data-strategy-mode="manual" aria-selected="${manual}">手动调参</button>
-          <button type="button" role="tab" data-strategy-mode="ai" aria-selected="${!manual}">本地 AI 建议</button>
+          <button id="strategy-tab-manual" type="button" role="tab" data-strategy-mode="manual" aria-controls="strategy-manual-form" aria-selected="${manual}" tabindex="${manual ? 0 : -1}">手动调参</button>
+          <button id="strategy-tab-ai" type="button" role="tab" data-strategy-mode="ai" aria-controls="strategy-proposal-form" aria-selected="${!manual}" tabindex="${manual ? -1 : 0}">本地 AI 建议</button>
         </div>
       </header>
-      ${manual ? strategyManualForm(data) : strategyProposalForm()}
+      ${strategyManualForm(data, !manual)}
+      ${strategyProposalForm(manual)}
     </section>`;
 }
 
-function strategyManualForm(data) {
+function strategyManualForm(data, hidden = false) {
   const schema = data.parameter_schema?.parameters || [];
   const strategy = schema.filter((item) => item.scope === "strategy");
   const risk = schema.filter((item) => item.scope === "risk");
   return `
-    <form id="strategy-manual-form" class="strategy-form">
+    <form id="strategy-manual-form" class="strategy-form" role="tabpanel" aria-labelledby="strategy-tab-manual"${hidden ? " hidden" : ""}>
       <div class="strategy-hypothesis-grid">
         <label class="field"><span>候选名称</span><input name="title" maxlength="80" required value="手动策略候选"></label>
         <label class="field strategy-hypothesis"><span>研究假设</span><textarea name="hypothesis" maxlength="1000" required>调整后的参数可能改善风险收益特征，需要使用同一市场快照验证。</textarea></label>
@@ -1984,9 +2126,9 @@ function strategyManualForm(data) {
     </form>`;
 }
 
-function strategyProposalForm() {
+function strategyProposalForm(hidden = false) {
   return `
-    <form id="strategy-proposal-form" class="strategy-form strategy-proposal-form">
+    <form id="strategy-proposal-form" class="strategy-form strategy-proposal-form" role="tabpanel" aria-labelledby="strategy-tab-ai"${hidden ? " hidden" : ""}>
       <div class="strategy-hypothesis-grid">
         <label class="field"><span>候选名称</span><input name="title" maxlength="80" required value="本地 AI 策略候选"></label>
         <label class="field strategy-hypothesis"><span>研究假设</span><textarea name="hypothesis" maxlength="1000" required>在不扩大交易权限的前提下，寻找更稳定的参数邻域。</textarea></label>
@@ -2202,7 +2344,7 @@ function strategyCandidateActions(candidate, states) {
 }
 
 function strategyLabEmptyCandidate() {
-  return `<section class="empty-state strategy-empty-state"><h2>创建第一个候选</h2><p>手动调参和本地 AI 建议具有相同权限：只能保存候选，不能直接改写活动策略。</p></section>`;
+  return `<section class="empty-state strategy-empty-state" role="status"><h2>创建第一个候选</h2><p>手动调参和本地 AI 建议具有相同权限：只能保存候选，不能直接改写活动策略。</p></section>`;
 }
 
 function strategyLabHistory(history) {
@@ -2295,6 +2437,7 @@ async function runStrategyLabMutation(path, payload, successMessage, button = nu
   let strategyLabReloaded = false;
   if (button) {
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
     button.dataset.originalLabel = button.textContent;
     button.textContent = path.endsWith("/validate") ? "正在验证" : "正在处理";
   }
@@ -2328,6 +2471,7 @@ async function runStrategyLabMutation(path, payload, successMessage, button = nu
     }
     if (button?.isConnected) {
       button.disabled = false;
+      button.setAttribute("aria-busy", "false");
       button.textContent = button.dataset.originalLabel || "重试";
     }
   }
@@ -2343,7 +2487,7 @@ function renderPortfolio(data) {
   if (!data.initialized) {
     return `<div class="page-stack">
       ${pageIntro("模拟组合", "账户状态、持仓与待执行目标共享同一份本地账本")}
-      <section class="empty-state">
+      <section class="empty-state" role="status">
         <h2>模拟账户尚未建立</h2>
         <p>建立账户后，系统会从首个完整交易日开始累计独立前向证据；已有账户不会被覆盖。</p>
         <div class="action-row">${actionButton("paper-init", "primary")}${actionButton("refresh-data", "secondary")}</div>
@@ -2411,26 +2555,74 @@ function pendingTable(rows) {
   </table></div>`;
 }
 
+function tradeSideLabel(value) {
+  return { BUY: "买入", SELL: "卖出" }[String(value || "").toUpperCase()] || value || "—";
+}
+
+function tradeRejectionReason(value) {
+  const text = String(value || "");
+  if (["No valid opening bar", "No opening bar"].includes(text)) return "缺少可执行的开盘价";
+  if (text.includes("required sell could not execute")) return "必要卖出未能执行，已阻止后续买入";
+  if (text.includes("suspended or has no executable volume")) return "证券停牌或缺少可执行成交量";
+  const status = text.match(/^Security status is (.+)$/);
+  if (status) return `证券交易状态：${status[1]}`;
+  const limit = text.match(/^Opening price is at the ([\d.]+%) (upper|lower) price limit$/);
+  if (limit) return `开盘价触及 ${limit[1]} ${limit[2] === "upper" ? "涨停" : "跌停"}限制`;
+  return text || "未记录拒绝原因";
+}
+
 function renderTrading(data) {
   const audit = data.paper_audit || {};
   const live = data.live || {};
+  const reconciliation = live.reconciliation || {};
   const tabs = `
     <div class="segmented" role="tablist" aria-label="执行记录">
       ${[
         ["paper", "模拟成交"],
         ["rejections", "拒单"],
         ["broker", "券商账本"],
-      ].map(([key, label]) => `<button type="button" role="tab" data-trading-tab="${key}" aria-selected="${state.tradingTab === key}">${label}</button>`).join("")}
+      ].map(([key, label]) => `<button id="trading-tab-${key}" type="button" role="tab" data-trading-tab="${key}" aria-controls="trading-ledger-panel" aria-selected="${state.tradingTab === key}" tabindex="${state.tradingTab === key ? 0 : -1}">${label}</button>`).join("")}
     </div>`;
   return `
     <div class="page-stack">
       ${pageIntro("交易与晋级", "订单、拒单、成交和权限检查均保留可追溯记录", [actionButton("paper-run", "primary"), actionButton("paper-audit", "secondary")].join(""))}
 
+      ${contextBand([
+        {
+          label: "当前阶段",
+          value: STATUS_LABELS[audit.status] || audit.status || "尚无审计",
+          status: audit.eligible_for_broker_sandbox ? "可申请沙箱复核" : "继续收集证据",
+          kind: audit.eligible_for_broker_sandbox ? "success" : "warning",
+          note: `${audit.sessions || 0} / ${audit.minimum_promotion_sessions || 60} 个独立交易日`,
+        },
+        {
+          label: "模拟账本",
+          value: audit.integrity_errors?.length ? "存在完整性错误" : "完整性已校验",
+          status: audit.integrity_errors?.length ? "需处理" : "通过",
+          kind: audit.integrity_errors?.length ? "danger" : "success",
+          note: audit.period?.length ? `${audit.period[0]} 至 ${audit.period[1]}` : "尚无审计区间",
+        },
+        {
+          label: "券商沙箱",
+          value: `${reconciliation.clean_sessions || 0} / ${reconciliation.minimum_sessions || 20} 次对账`,
+          status: reconciliation.eligible ? "已具备资格" : "未开始",
+          kind: reconciliation.eligible ? "success" : "neutral",
+          note: "只在前向模拟通过后开放复核",
+        },
+        {
+          label: "真实交易",
+          value: live.live_ready ? "门禁已通过" : "提交路径锁定",
+          status: live.live_ready ? "仍需人工授权" : "不可下单",
+          kind: live.live_ready ? "warning" : "danger",
+          note: "历史与模拟收益都不能单独解锁",
+        },
+      ], "交易权限状态")}
+
       <section class="split-layout">
         <article class="panel">
           ${panelHeader("前向模拟进度", audit.status ? STATUS_LABELS[audit.status] || audit.status : "尚无审计")}
           <div class="progress-block">
-            <progress max="${audit.minimum_promotion_sessions || 60}" value="${audit.sessions || 0}">${audit.sessions || 0}</progress>
+            <progress max="${audit.minimum_promotion_sessions || 60}" value="${audit.sessions || 0}" aria-label="前向模拟进度：${audit.sessions || 0} / ${audit.minimum_promotion_sessions || 60} 个交易日">${audit.sessions || 0}</progress>
             <span class="section-note">${audit.sessions || 0} / ${audit.minimum_promotion_sessions || 60} 个交易日，尚需 ${audit.remaining_sessions ?? audit.minimum_promotion_sessions ?? 60} 日</span>
           </div>
           ${checksList(audit.promotion_checks || {})}
@@ -2443,7 +2635,9 @@ function renderTrading(data) {
 
       <section class="panel">
         ${panelHeader("执行账本", "最近 200 条记录", tabs)}
-        ${tradingLedger(data)}
+        <div id="trading-ledger-panel" role="tabpanel" aria-labelledby="trading-tab-${escapeHtml(state.tradingTab)}">
+          ${tradingLedger(data)}
+        </div>
       </section>
 
       <section class="split-layout">
@@ -2455,9 +2649,9 @@ function renderTrading(data) {
           ${panelHeader("真实交易控制", "提交路径在所有门禁通过前保持不可用")}
           <div class="callout danger">
             <strong>真实下单已锁定</strong>
-            <p>当前阶段不会创建、预览或发送真实订单。历史收益和模拟收益都不能单独解除此锁。</p>
+            <p id="live-order-lock-reason">当前阶段不会创建、预览或发送真实订单。历史收益和模拟收益都不能单独解除此锁。</p>
           </div>
-          <div class="action-row"><button class="button primary" type="button" disabled>提交真实订单</button></div>
+          <div class="action-row"><button class="button primary" type="button" aria-describedby="live-order-lock-reason" disabled>提交真实订单</button></div>
         </article>
       </section>
     </div>`;
@@ -2468,7 +2662,7 @@ function tradingLedger(data) {
     const rows = data.paper_rejections || [];
     return `<div class="table-wrap"><table class="data-table">
       <thead><tr><th>日期</th><th>证券</th><th>方向</th><th>拒绝原因</th></tr></thead>
-      <tbody>${rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.side)}</td><td>${escapeHtml(row.reason)}</td></tr>`).join("") : emptyRow(4, "模拟账本中没有拒单记录")}</tbody>
+      <tbody>${rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(tradeSideLabel(row.side))}</td><td>${escapeHtml(tradeRejectionReason(row.reason))}</td></tr>`).join("") : emptyRow(4, "模拟账本中没有拒单记录")}</tbody>
     </table></div>`;
   }
   if (state.tradingTab === "broker") {
@@ -2476,7 +2670,7 @@ function tradingLedger(data) {
     return `<div class="table-wrap"><table class="data-table">
       <thead><tr><th>更新时间</th><th>客户端订单</th><th>券商订单</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th>状态</th></tr></thead>
       <tbody>${rows.length ? rows.map((row) => `<tr>
-        <td>${escapeHtml(row.updated_at)}</td><td class="mono">${escapeHtml(row.client_order_id)}</td><td class="mono">${escapeHtml(row.broker_order_id)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td>${statusChip(STATUS_LABELS[row.status] || row.status || "—", row.status === "FILLED" ? "success" : row.status === "REJECTED" ? "danger" : "neutral")}</td>
+        <td>${escapeHtml(row.updated_at)}</td><td class="mono">${escapeHtml(row.client_order_id)}</td><td class="mono">${escapeHtml(row.broker_order_id)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(tradeSideLabel(row.side))}</td><td class="numeric">${formatInteger(row.quantity)}</td><td>${statusChip(STATUS_LABELS[row.status] || row.status || "—", row.status === "FILLED" ? "success" : row.status === "REJECTED" ? "danger" : "neutral")}</td>
       </tr>`).join("") : emptyRow(7, "尚无券商订单；真实交易路径未配置")}</tbody>
     </table></div>`;
   }
@@ -2484,7 +2678,7 @@ function tradingLedger(data) {
   return `<div class="table-wrap"><table class="data-table">
     <thead><tr><th>日期</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th class="numeric">价格</th><th class="numeric">名义金额</th><th class="numeric">交易成本</th></tr></thead>
     <tbody>${rows.length ? rows.map((row) => `<tr>
-      <td>${escapeHtml(row.date)}</td><td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td><td>${escapeHtml(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 3)}</td><td class="numeric">${formatMoney(row.notional)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.stamp_duty) || 0) + (finite(row.transfer_fee) || 0) + (finite(row.slippage_cost) || 0))}</td>
+      <td>${escapeHtml(row.date)}</td><td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td><td>${escapeHtml(tradeSideLabel(row.side))}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 3)}</td><td class="numeric">${formatMoney(row.notional)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.stamp_duty) || 0) + (finite(row.transfer_fee) || 0) + (finite(row.slippage_cost) || 0))}</td>
     </tr>`).join("") : emptyRow(7, "尚无模拟成交；目标会在下一完整交易日处理")}</tbody>
   </table></div>`;
 }
@@ -2497,9 +2691,44 @@ function renderRisk(data) {
   const paperMetrics = audit.metrics || {};
   const bootstrapData = research.validation?.bootstrap || {};
   const riskConfig = research.configuration?.risk || {};
+  const reports = Object.values(research.reports || {});
+  const staleReports = reports.filter((report) => report.state !== "current").length;
+  const liveChecks = overview.live?.checks || {};
+  const livePassed = Object.values(liveChecks).filter(Boolean).length;
+  const liveTotal = Object.keys(liveChecks).length;
   return `
     <div class="page-stack">
       ${pageIntro("风险控制", "将已观察风险、前向门禁和真实交易权限分层审阅")}
+      ${contextBand([
+        {
+          label: "行情快照",
+          value: overview.market?.date || "不可用",
+          status: overview.market?.available === false ? "不可用" : "已加载",
+          kind: overview.market?.available === false ? "danger" : "success",
+          note: `${overview.market?.universe?.active_count ?? 0} 支当日有效证券`,
+        },
+        {
+          label: "前向证据",
+          value: `${audit.sessions || 0} / ${audit.minimum_promotion_sessions || 60} 日`,
+          status: audit.eligible_for_broker_sandbox ? "门禁通过" : "尚未通过",
+          kind: audit.eligible_for_broker_sandbox ? "success" : "warning",
+          note: `当前回撤 ${formatPercent(paperMetrics.max_drawdown)}`,
+        },
+        {
+          label: "研究可信度",
+          value: staleReports ? `${staleReports} 份报告待更新` : "报告当前",
+          status: staleReports ? "不可视为当前证据" : "可复核",
+          kind: staleReports ? "warning" : "success",
+          note: `历史区间截至 ${research.backtest?.metadata?.end || "—"}`,
+        },
+        {
+          label: "实盘门禁",
+          value: `${livePassed} / ${liveTotal} 项通过`,
+          status: overview.live?.live_ready ? "待人工授权" : "真实交易锁定",
+          kind: overview.live?.live_ready ? "warning" : "danger",
+          note: "额度只限制风险，不代表可交易",
+        },
+      ], "风险证据与权限状态")}
       <section class="metric-strip" aria-label="风险摘要">
         ${metric("历史最大回撤", formatPercent(historical.max_drawdown), "回测观测值", tone(historical.max_drawdown))}
         ${metric("前向最大回撤", formatPercent(paperMetrics.max_drawdown), `${audit.sessions || 0} 个交易日`, tone(paperMetrics.max_drawdown))}
@@ -2532,13 +2761,21 @@ function renderRisk(data) {
             ${detailRow("单日亏损止损线", formatPercent(riskConfig.max_daily_loss), "warning")}
             ${detailRow("触发后冷却期", `${formatInteger(riskConfig.cooldown_days)} 个交易日`, "warning")}
             ${detailRow("紧急停止文件", overview.live?.checks?.kill_switch_clear ? "未触发" : "已触发", overview.live?.checks?.kill_switch_clear ? "success" : "danger")}
-            ${detailRow("人工授权", overview.live?.authorization?.reason || "未配置", overview.live?.authorization?.valid ? "success" : "danger")}
+            ${detailRow("人工授权", authorizationReasonLabel(overview.live?.authorization?.reason), overview.live?.authorization?.valid ? "success" : "danger")}
           </div>
         </article>
       </section>
 
       <aside class="callout warning"><strong>风险不是一个分数</strong><p>回撤、尾部损失、参数敏感性、数据偏差、成交可实现性和账户权限分别审计。任何单项历史优势都不能替代真实券商沙箱对账。</p></aside>
     </div>`;
+}
+
+function authorizationReasonLabel(value) {
+  const text = String(value || "");
+  if (!text) return "未配置";
+  if (text.includes("missing or invalid")) return "未找到有效的限时人工授权";
+  if (text.includes("expired")) return "人工授权已过期";
+  return text;
 }
 
 function renderUniverse(data) {
@@ -2854,8 +3091,8 @@ function chartMarkup(id, points, series, summary) {
   state.charts.set(id, { points, series });
   return `
     <figure class="chart-frame">
-      <canvas id="${escapeHtml(id)}" role="img" aria-label="${escapeHtml(summary)}"></canvas>
-      <figcaption class="chart-caption">${escapeHtml(summary)}</figcaption>
+      <canvas id="${escapeHtml(id)}" role="img" tabindex="0" aria-label="${escapeHtml(summary)}" aria-describedby="${escapeHtml(id)}-summary"></canvas>
+      <figcaption id="${escapeHtml(id)}-summary" class="chart-caption">${escapeHtml(summary)}</figcaption>
     </figure>`;
 }
 
@@ -3118,8 +3355,12 @@ function updateJobsUi() {
   const active = state.jobs.filter((job) => ["queued", "running"].includes(job.status));
   jobIndicator.textContent = active.length ? `${active.length} 个任务运行中` : "无运行任务";
   jobIndicator.className = `status-chip ${active.length ? "warning" : "neutral"}`;
+  jobIndicator.setAttribute("aria-busy", String(Boolean(active.length)));
   const region = document.getElementById("jobs-table-region");
-  if (region) region.innerHTML = jobsTable(state.jobs);
+  if (region) {
+    region.innerHTML = jobsTable(state.jobs);
+    enhanceRenderedUi();
+  }
   updateJobButtons();
 }
 
@@ -3130,7 +3371,10 @@ function updateJobButtons() {
   for (const button of document.querySelectorAll("[data-job-action]")) {
     const busy = runningActions.has(button.dataset.jobAction);
     button.disabled = busy;
-    if (busy) button.textContent = `${JOB_LABELS[button.dataset.jobAction] || button.dataset.jobAction}进行中`;
+    button.setAttribute("aria-busy", String(busy));
+    button.textContent = busy
+      ? `${JOB_LABELS[button.dataset.jobAction] || button.dataset.jobAction}进行中`
+      : JOB_LABELS[button.dataset.jobAction] || button.dataset.jobAction;
   }
 }
 
@@ -3138,6 +3382,7 @@ function notify(message, error = false) {
   const region = document.getElementById("toast-region");
   const toast = document.createElement("div");
   toast.className = `toast${error ? " error" : ""}`;
+  toast.setAttribute("role", error ? "alert" : "status");
   toast.textContent = message;
   region.append(toast);
   window.setTimeout(() => toast.remove(), 4200);
@@ -3201,7 +3446,11 @@ document.addEventListener("click", (event) => {
     const payload = state.data.get("strategy-lab");
     if (payload) {
       renderRoute(payload);
-      main.focus({ preventScroll: true });
+      window.requestAnimationFrame(() => {
+        const selected = [...document.querySelectorAll("[data-strategy-candidate]")]
+          .find((item) => item.dataset.strategyCandidate === state.strategyCandidateId);
+        selected?.focus({ preventScroll: true });
+      });
     }
     return;
   }
@@ -3275,6 +3524,34 @@ document.addEventListener("click", (event) => {
   }
 });
 
+document.addEventListener("keydown", (event) => {
+  const tableRegion = event.target.closest(".table-wrap");
+  if (tableRegion && event.target === tableRegion && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    if (tableRegion.scrollWidth <= tableRegion.clientWidth) return;
+    event.preventDefault();
+    const maximum = tableRegion.scrollWidth - tableRegion.clientWidth;
+    if (event.key === "Home") tableRegion.scrollLeft = 0;
+    if (event.key === "End") tableRegion.scrollLeft = maximum;
+    if (event.key === "ArrowLeft") tableRegion.scrollLeft = Math.max(0, tableRegion.scrollLeft - 96);
+    if (event.key === "ArrowRight") tableRegion.scrollLeft = Math.min(maximum, tableRegion.scrollLeft + 96);
+    return;
+  }
+  const current = event.target.closest('[role="tab"]');
+  const tablist = current?.closest('[role="tablist"]');
+  if (!current || !tablist || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = [...tablist.querySelectorAll('[role="tab"]')].filter((item) => !item.disabled);
+  const index = tabs.indexOf(current);
+  if (index < 0 || !tabs.length) return;
+  event.preventDefault();
+  let nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : index;
+  if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+  if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+  const next = tabs[nextIndex];
+  const nextId = next.id;
+  next.click();
+  window.requestAnimationFrame(() => document.getElementById(nextId)?.focus({ preventScroll: true }));
+});
+
 document.addEventListener("change", (event) => {
   const marketOverlay = event.target.closest("[data-market-overlay]");
   if (marketOverlay && Object.prototype.hasOwnProperty.call(MARKET_OVERLAYS, marketOverlay.value)) {
@@ -3345,11 +3622,12 @@ document.addEventListener("submit", (event) => {
 document.getElementById("refresh-view").addEventListener("click", loadRoute);
 logoutButton.addEventListener("click", logout);
 
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", async () => {
   const next = validRoute(location.hash.slice(1)) || "overview";
   if (next === state.route) return;
   state.route = next;
-  loadRoute();
+  await loadRoute();
+  main.focus({ preventScroll: true });
 });
 
 window.addEventListener("resize", () => {
