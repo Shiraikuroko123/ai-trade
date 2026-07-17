@@ -262,6 +262,11 @@ reconciliation, changes a strategy, consumes an approval, or grants live
 authority. The current QMT plugin deliberately keeps its probes non-persistent
 and therefore does not populate these ledgers.
 
+The Trading API renders current orders and fills only from the validated
+lifecycle projection. It never sends raw order-event CSV rows to the browser;
+invalid fill schemas or fingerprints produce an empty fill projection and an
+explicit integrity error instead of displaying the rejected rows.
+
 ## Promotion Evidence
 
 An account reaches sandbox review only after the frozen paper epoch passes its independent-forward gate. Sandbox reconciliation compares expected cash and positions against the broker and appends one idempotent record per adapter, account, date, and configuration fingerprint.

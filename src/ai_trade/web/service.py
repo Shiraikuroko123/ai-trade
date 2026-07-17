@@ -259,6 +259,7 @@ class DashboardService:
             scope_path=self.config.broker_ledger_scope_file,
             expected_scope=self._broker_ledger_scope(),
         )
+        broker_fills = list(broker_lifecycle.pop("fills", []))
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
@@ -266,8 +267,7 @@ class DashboardService:
             "live": _public_live_readiness(self.config, paper_audit),
             "paper_trades": paper_trades,
             "paper_rejections": self._csv_rows(self.config.paper_rejections_file, 200),
-            "broker_orders": self._csv_rows(self.config.broker_orders_file, 200),
-            "broker_fills": self._csv_rows(self.config.broker_fills_file, 200),
+            "broker_fills": broker_fills[:200],
             "broker_lifecycle": broker_lifecycle,
             "pending_targets": dict((state or {}).get("pending_targets") or {}),
             "shadow_account": self._shadow_account(owner_id, state),

@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Trading no longer returns raw broker order CSV rows. Its order table comes
+  from the lifecycle reducer and its fill table now comes from a validated fill
+  projection; an invalid order/fill schema or fingerprint cannot be rendered as
+  broker evidence.
 - Overview and Trading browser payloads no longer expose the configured broker
   account ID or absolute kill-switch and batch-approval paths. Internal live
   gates retain exact account/path binding while the UI receives only status,

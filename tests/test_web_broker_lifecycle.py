@@ -84,8 +84,9 @@ class WebBrokerLifecycleTests(unittest.TestCase):
         self.assertEqual(lifecycle["scope"]["status"], "UNSCOPED")
         self.assertEqual(lifecycle["order_count"], 1)
         self.assertEqual(lifecycle["orders"][0]["status"], "FILLED")
-        self.assertEqual(len(payload["broker_orders"]), 2)
+        self.assertNotIn("broker_orders", payload)
         self.assertEqual(len(payload["broker_fills"]), 1)
+        self.assertEqual(payload["broker_fills"][0]["fill_id"], "fill-web-1")
         self.assertFalse(lifecycle["qualifying_evidence"])
         self.assertFalse(lifecycle["execution_enabled"])
         self.assertFalse(payload["live"]["live_ready"])
@@ -105,8 +106,27 @@ class WebBrokerLifecycleTests(unittest.TestCase):
             lifecycle["integrity_errors"][0]["code"], "order_ledger_invalid"
         )
         self.assertEqual(lifecycle["orders"], [])
+        self.assertNotIn("broker_orders", payload)
+        self.assertEqual(payload["broker_fills"], [])
         self.assertFalse(lifecycle["qualifying_evidence"])
         self.assertFalse(lifecycle["execution_enabled"])
+
+    def test_invalid_fill_rows_are_not_returned_to_the_browser(self):
+        self.config.broker_fills_file.parent.mkdir(parents=True, exist_ok=True)
+        self.config.broker_fills_file.write_text(
+            "fill_id,price\nforged,999\n",
+            encoding="utf-8",
+        )
+
+        payload = DashboardService(self.config).trading()
+
+        lifecycle = payload["broker_lifecycle"]
+        self.assertEqual(lifecycle["status"], "INTEGRITY_ERROR")
+        self.assertEqual(
+            lifecycle["integrity_errors"][0]["code"], "fill_ledger_invalid"
+        )
+        self.assertEqual(payload["broker_fills"], [])
+        self.assertNotIn("forged", json.dumps(payload))
 
     def test_browser_payload_omits_broker_account_and_control_paths(self):
         secret_account = "private-broker-account-123456"

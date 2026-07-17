@@ -343,6 +343,7 @@ class BrokerLifecycleTests(unittest.TestCase):
                 read_fills(fills)
             report = recover_order_lifecycle(root / "orders.csv", fills)
             self.assertEqual(report["status"], "INTEGRITY_ERROR")
+            self.assertEqual(report["fills"], [])
             self.assertEqual(
                 report["integrity_errors"][0]["code"],
                 "fill_ledger_invalid",
@@ -437,6 +438,14 @@ class BrokerLifecycleTests(unittest.TestCase):
             self.assertEqual(report["status"], "VERIFIED")
             self.assertEqual(report["terminal_order_count"], 1)
             self.assertEqual(report["fill_count"], 2)
+            self.assertEqual(
+                [value["fill_id"] for value in report["fills"]],
+                ["fill-2", "fill-1"],
+            )
+            self.assertEqual(
+                report["fills"][0]["filled_at"],
+                _fill("fill-2", 2, 50, 12.0).filled_at.isoformat(),
+            )
             self.assertEqual(report["orders"][0]["filled_quantity"], 100)
             self.assertEqual(report["orders"][0]["remaining_quantity"], 0)
             self.assertTrue(report["orders"][0]["integrity_ok"])

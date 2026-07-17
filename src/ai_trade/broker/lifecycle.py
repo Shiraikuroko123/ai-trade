@@ -377,6 +377,25 @@ def build_lifecycle_report(
         ),
         reverse=True,
     )
+    fill_rows = [
+        {
+            "fill_id": value.fill_id,
+            "broker_order_id": value.broker_order_id,
+            "client_order_id": value.client_order_id,
+            "symbol": value.symbol,
+            "side": value.side.value,
+            "quantity": value.quantity,
+            "price": value.price,
+            "commission": value.commission,
+            "tax": value.tax,
+            "filled_at": value.filled_at.isoformat(),
+        }
+        for value in unique_fills.values()
+    ]
+    fill_rows.sort(
+        key=lambda value: (str(value["filled_at"]), str(value["fill_id"])),
+        reverse=True,
+    )
     open_count = sum(not bool(value["terminal"]) for value in rows)
     if errors:
         status = "INTEGRITY_ERROR"
@@ -400,6 +419,7 @@ def build_lifecycle_report(
         ),
         "fill_count": len(unique_fills),
         "orders": rows,
+        "fills": fill_rows,
         "integrity_errors": errors,
         "recovery_warnings": warnings,
         "qualifying_evidence": False,
@@ -418,6 +438,7 @@ def lifecycle_error_report(code: str, message: str) -> dict[str, object]:
         "cancel_pending_count": 0,
         "fill_count": 0,
         "orders": [],
+        "fills": [],
         "integrity_errors": [_issue(code, "", message)],
         "recovery_warnings": [],
         "qualifying_evidence": False,
