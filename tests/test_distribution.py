@@ -67,6 +67,8 @@ class DistributionVerificationTests(unittest.TestCase):
             "live.py",
             "live_guard.py",
             "mandate.py",
+            "paper.py",
+            "paper_audit.py",
             "probe.py",
             "reconciliation.py",
             "runtime.py",
