@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -106,6 +107,35 @@ class WebBrokerLifecycleTests(unittest.TestCase):
         self.assertEqual(lifecycle["orders"], [])
         self.assertFalse(lifecycle["qualifying_evidence"])
         self.assertFalse(lifecycle["execution_enabled"])
+
+    def test_browser_payload_omits_broker_account_and_control_paths(self):
+        secret_account = "private-broker-account-123456"
+        raw = {
+            **self.config.raw,
+            "broker": {
+                **self.config.raw.get("broker", {}),
+                "mode": "sandbox",
+                "adapter": "qmt-readonly",
+                "account_id": secret_account,
+            },
+        }
+        config = replace(self.config, raw=raw)
+        service = DashboardService(config)
+
+        for surface, payload in (
+            ("overview", service.overview()),
+            ("trading", service.trading()),
+        ):
+            with self.subTest(surface=surface):
+                live = payload["live"]
+                rendered = json.dumps(payload, ensure_ascii=False)
+                self.assertTrue(live["checks"]["account_configured"])
+                self.assertNotIn("account_id", live)
+                self.assertNotIn("kill_switch_file", live)
+                self.assertNotIn("batch_approval_file", live)
+                self.assertNotIn(secret_account, rendered)
+                self.assertNotIn(str(config.live_kill_switch_file), rendered)
+                self.assertNotIn(str(config.live_batch_approval_file), rendered)
 
 
 if __name__ == "__main__":

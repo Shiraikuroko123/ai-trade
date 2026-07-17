@@ -327,7 +327,10 @@ cannot authorize a retry or a changed batch. Each resulting `PENDING_SUBMIT`
 event embeds the approval ID and exact batch fingerprint in a canonical message
 that is covered by the event's content fingerprint, providing a durable link
 between review and reservation. There is intentionally no live
-order UI or approval generator while no verified live adapter exists.
+order UI or approval generator while no verified live adapter exists. The
+Overview and Trading APIs expose the resulting checks and limits but remove the
+plaintext configured broker account and the absolute kill-switch and
+batch-approval paths. Exact identity/path matching remains server-side.
 
 ## Pre-Trade Validation
 

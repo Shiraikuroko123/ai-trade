@@ -101,7 +101,7 @@ class DashboardService:
             *market_summary["warnings"],
             *report_warnings,
         ]
-        live = evaluate_live_readiness(self.config, paper_audit)
+        live = _public_live_readiness(self.config, paper_audit)
         return {
             "generated_at": _now(),
             "version": __version__,
@@ -263,7 +263,7 @@ class DashboardService:
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
             "paper_audit": paper_audit,
-            "live": evaluate_live_readiness(self.config, paper_audit),
+            "live": _public_live_readiness(self.config, paper_audit),
             "paper_trades": paper_trades,
             "paper_rejections": self._csv_rows(self.config.paper_rejections_file, 200),
             "broker_orders": self._csv_rows(self.config.broker_orders_file, 200),
@@ -1298,3 +1298,13 @@ def _sample(rows: list[dict[str, Any]], maximum: int) -> list[dict[str, Any]]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _public_live_readiness(
+    config: AppConfig,
+    paper_audit: dict[str, Any],
+) -> dict[str, Any]:
+    readiness = evaluate_live_readiness(config, paper_audit)
+    for field in ("account_id", "kill_switch_file", "batch_approval_file"):
+        readiness.pop(field, None)
+    return readiness

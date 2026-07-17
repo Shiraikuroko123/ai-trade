@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Overview and Trading browser payloads no longer expose the configured broker
+  account ID or absolute kill-switch and batch-approval paths. Internal live
+  gates retain exact account/path binding while the UI receives only status,
+  capability, limit, fingerprint, and reconciliation projections.
 - Broker adapter/account identities and runtime account, position, order, fill,
   currency, and message text now share explicit length and canonical-text
   boundaries; leading/trailing whitespace, non-printing Unicode, control
