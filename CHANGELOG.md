@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Distribution verification now requires the strict JSON parser and broker
+  runtime-validation modules in both wheel and source artifacts, so packaging
+  regressions cannot silently omit these fail-closed boundaries.
 - Live authorization now rejects future approval timestamps and expiry windows
   that do not follow their approval time, preventing internally inconsistent
   authorization records from satisfying the live-readiness gate.

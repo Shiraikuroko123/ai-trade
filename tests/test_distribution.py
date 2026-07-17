@@ -29,6 +29,10 @@ class DistributionVerificationTests(unittest.TestCase):
         self.assertIn("ai_trade/cloud_usage.py", WHEEL_REQUIRED)
         self.assertIn("src/ai_trade/cloud_usage.py", SDIST_REQUIRED)
 
+    def test_strict_json_module_is_required_in_both_artifacts(self):
+        self.assertIn("ai_trade/json_utils.py", WHEEL_REQUIRED)
+        self.assertIn("src/ai_trade/json_utils.py", SDIST_REQUIRED)
+
     def test_assistant_release_surface_is_required_in_both_artifacts(self):
         for module in (
             "__init__.py",
@@ -65,6 +69,8 @@ class DistributionVerificationTests(unittest.TestCase):
             "mandate.py",
             "probe.py",
             "reconciliation.py",
+            "runtime.py",
+            "scope.py",
             "shadow.py",
         ):
             with self.subTest(module=module):
