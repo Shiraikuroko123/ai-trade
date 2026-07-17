@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from ..json_utils import loads_unique_json
 from .base import BrokerAccount, BrokerPosition
 from .ledger import atomic_append_csv, ledger_lock
 from .runtime import validated_broker_account, validated_broker_positions
@@ -375,9 +376,9 @@ def _validate_reconciliation_row(
     if issue_count < 0 or raw_issue_count.strip() != raw_issue_count:
         raise ValueError("issue_count must be a non-negative integer")
     try:
-        raw_issues = json.loads(str(row["issues"]))
-    except json.JSONDecodeError as exc:
-        raise ValueError("issues must be valid JSON") from exc
+        raw_issues = loads_unique_json(str(row["issues"]))
+    except ValueError as exc:
+        raise ValueError("issues must be unambiguous valid JSON") from exc
     issue_payload = _canonical_issues(raw_issues)
     if len(issue_payload) != issue_count:
         raise ValueError("issue_count does not match issues")
@@ -504,9 +505,11 @@ def _parse_positions(value: object, label: str) -> dict[str, int]:
     if not isinstance(value, str):
         raise ValueError(f"Reconciliation {label} must be JSON")
     try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Reconciliation {label} must be valid JSON") from exc
+        parsed = loads_unique_json(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"Reconciliation {label} must be unambiguous valid JSON"
+        ) from exc
     return _canonical_positions(parsed, label)
 
 

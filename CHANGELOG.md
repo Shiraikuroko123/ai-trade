@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Position and issue JSON embedded in formal reconciliation CSV rows now rejects
+  duplicate object keys, preventing ambiguous nested evidence from qualifying
+  even when a last-key-wins parser would reproduce the stored content hash.
 - Distribution verification now requires the strict JSON parser and broker
   runtime-validation modules in both wheel and source artifacts, so packaging
   regressions cannot silently omit these fail-closed boundaries.

@@ -352,6 +352,58 @@ class BrokerReconciliationTests(unittest.TestCase):
                 any("content validation" in error for error in audit["errors"])
             )
 
+    def test_duplicate_nested_json_keys_invalidate_the_whole_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            append_reconciliation(path, **_arguments())
+            rows = _read_rows(path)
+            rows[0]["expected_positions"] = '{"510300":0,"510300":100}'
+            _write_rows(path, rows)
+
+            audit = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                1,
+                "active-config",
+            )
+
+            self.assertFalse(audit["eligible"])
+            self.assertEqual(audit["clean_sessions"], 0)
+            self.assertTrue(any("invalid" in error for error in audit["errors"]))
+
+    def test_duplicate_issue_object_keys_invalidate_the_whole_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            append_reconciliation(
+                path,
+                **_arguments(
+                    broker_cash=900.0,
+                    issues=[ReconciliationIssue("cash", "CNY", 1000.0, 900.0)],
+                ),
+            )
+            rows = _read_rows(path)
+            ambiguous = rows[0]["issues"].replace(
+                '"actual":900.0',
+                '"actual":0,"actual":900.0',
+                1,
+            )
+            self.assertNotEqual(ambiguous, rows[0]["issues"])
+            rows[0]["issues"] = ambiguous
+            _write_rows(path, rows)
+
+            audit = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                1,
+                "active-config",
+            )
+
+            self.assertFalse(audit["eligible"])
+            self.assertEqual(audit["clean_sessions"], 0)
+            self.assertTrue(any("invalid" in error for error in audit["errors"]))
+
     def test_invalid_issue_schema_in_another_account_invalidates_the_ledger(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "reconciliation.csv"
