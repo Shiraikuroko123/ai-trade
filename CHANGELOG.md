@@ -4,6 +4,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Hardened broker-ledger durability with serialized in-process writers,
+  atomic single-ledger publication, injected-failure recovery tests, and an
+  independent transition-matrix contract. Order intents now use China-session
+  midnight, preventing pre-UTC-midnight broker responses from sorting before
+  their local reservation.
 - Added a restart-safe broker order lifecycle reducer with legal transition and
   immutable-identity checks, partial-fill aggregation, cancellation-race
   handling, event-time recovery for late observations, cross-ledger fill

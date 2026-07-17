@@ -5,10 +5,13 @@ import hashlib
 import json
 import math
 import os
+import shutil
+import threading
 from contextlib import ExitStack, contextmanager
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 from .base import (
     BrokerFill,
@@ -58,6 +61,8 @@ INTEGER_LEDGER_FIELDS = frozenset({"quantity", "filled_quantity"})
 FLOAT_LEDGER_FIELDS = frozenset(
     {"limit_price", "average_fill_price", "price", "commission", "tax"}
 )
+_LEDGER_THREAD_LOCK = threading.RLock()
+CHINA_STANDARD_TIME = timezone(timedelta(hours=8))
 
 
 def append_order_events(path: Path, orders: list[BrokerOrderSnapshot]) -> None:
@@ -94,7 +99,7 @@ def reserve_order_intents(
         or max_daily_orders < 1
     ):
         raise ValueError("max_daily_orders must be a positive integer")
-    timestamp = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
+    timestamp = datetime.combine(on_date, time.min, tzinfo=CHINA_STANDARD_TIME)
     snapshots = [
         BrokerOrderSnapshot(
             client_order_id=order.client_order_id,
@@ -345,18 +350,49 @@ def _append_rows(
     if not pending:
         return
 
+    selected = []
+    for row in rows:
+        row_key = str(row[key])
+        if row_key in pending:
+            selected.append(row)
+            pending.pop(row_key)
+    _atomic_append_csv(path, fieldnames, selected)
+
+
+def _atomic_append_csv(
+    path: Path,
+    fieldnames: list[str],
+    rows: list[dict[str, object]],
+) -> None:
     exists = path.exists()
-    with path.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if not exists:
-            writer.writeheader()
-        for row in rows:
-            row_key = str(row[key])
-            if row_key in pending:
-                writer.writerow(row)
-                pending.pop(row_key)
-        handle.flush()
-        os.fsync(handle.fileno())
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    needs_separator = False
+    try:
+        with temporary.open("xb") as target:
+            if exists:
+                with path.open("rb") as source:
+                    source.seek(0, os.SEEK_END)
+                    size = source.tell()
+                    if size:
+                        source.seek(-1, os.SEEK_END)
+                        needs_separator = source.read(1) not in {b"\r", b"\n"}
+                        source.seek(0)
+                        shutil.copyfileobj(source, target, length=1024 * 1024)
+            target.flush()
+
+        with temporary.open("a", encoding="utf-8", newline="") as handle:
+            if needs_separator:
+                handle.write("\r\n")
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            if not exists:
+                writer.writeheader()
+            writer.writerows(rows)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _read_rows(path: Path, key: str) -> list[dict[str, str]]:
@@ -534,34 +570,45 @@ def _legacy_order_event_id(order: BrokerOrderSnapshot) -> str:
 @contextmanager
 def ledger_lock(path: Path) -> Iterator[None]:
     """Fail closed when another process is changing a broker ledger."""
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as handle:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise RuntimeError(f"Broker ledger is locked: {lock_path}") from exc
-        try:
-            yield
-        finally:
+    with _LEDGER_THREAD_LOCK:
+        lock_path = path.with_suffix(path.suffix + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"0")
+                handle.flush()
             handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
+            try:
+                if os.name == "nt":
+                    import msvcrt
 
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise RuntimeError(f"Broker ledger is locked: {lock_path}") from exc
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

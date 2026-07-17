@@ -161,6 +161,15 @@ Exact retries are idempotent. If a process stops between those two durable
 writes, the next poll can repeat the same observation and repair the missing
 fill side without duplicating the already written order event.
 
+Writers are serialized inside one process before taking the operating-system
+lock. Each individual CSV update is assembled in a same-directory temporary
+file, flushed, and atomically published, so a row-write or replace failure
+preserves the prior complete ledger. The order and fill files remain two
+separate commits; an interruption between them is repaired by the exact retry
+described above. Local submission intents use midnight in China Standard Time,
+not UTC midnight, so early-morning broker responses retain the correct event
+order for the China trading session.
+
 New order events use a `v2_`-prefixed SHA-256 fingerprint over the canonical
 event payload. The fingerprint is recomputed on every read so an accidental
 field rewrite fails closed. Existing 24-hex-character legacy event IDs remain
