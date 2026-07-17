@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Live authorization, one-time batch approval, and broker ledger-scope JSON
+  files now use a bounded strict UTF-8 parser. Oversized files, invalid encoding,
+  and duplicate object keys fail closed instead of creating ambiguous controls.
 - Trading no longer returns raw broker order CSV rows. Its order table comes
   from the lifecycle reducer and its fill table now comes from a validated fill
   projection; an invalid order/fill schema or fingerprint cannot be rendered as

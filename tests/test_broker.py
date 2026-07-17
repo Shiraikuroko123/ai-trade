@@ -33,6 +33,7 @@ from ai_trade.broker.live import LiveOrderRouter
 from ai_trade.broker.live_guard import (
     LIVE_CONFIRMATION,
     _live_configuration_fingerprint,
+    _load_authorization,
     assert_live_submission_allowed,
     evaluate_live_readiness,
 )
@@ -357,6 +358,19 @@ class BrokerTests(unittest.TestCase):
                 changed_limits = evaluate_live_readiness(config, audit)
             self.assertTrue(ready["live_ready"])
             self.assertFalse(changed_limits["checks"]["authorization_valid"])
+
+    def test_live_authorization_loader_rejects_ambiguous_or_unbounded_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "authorization.json"
+            cases = {
+                "duplicate key": b'{"approved":true,"approved":false}',
+                "invalid utf8": b"\xff\xfe",
+                "oversized": b" " * (64 * 1024 + 1),
+            }
+            for label, content in cases.items():
+                with self.subTest(label=label):
+                    path.write_bytes(content)
+                    self.assertIsNone(_load_authorization(path))
 
     def test_live_readiness_rejects_stale_paper_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:

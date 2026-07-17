@@ -209,6 +209,11 @@ compares paths against the configuration root, so an alias such as
 `state/a/../broker_orders.csv` or an equivalent absolute path cannot bypass the
 isolation check.
 
+The JSON control files for authorization, one-time batch approval, and ledger
+scope are limited to 64 KiB, decoded strictly as UTF-8, and reject duplicate
+object keys at every nesting level. A malformed control remains non-authoritative
+and is never interpreted using a parser's last-key-wins behavior.
+
 `append_broker_observation` can initialize the manifest only when both lifecycle
 ledgers are absent. Individual scoped order, intent, and fill writes require an
 already matching manifest. The live router consumes the exact batch approval,

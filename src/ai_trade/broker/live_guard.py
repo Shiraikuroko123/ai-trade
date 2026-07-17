@@ -13,6 +13,7 @@ from ..config import (
     DEFAULT_BROKER_MAX_ORDER_NOTIONAL,
 )
 from ..data.market import MarketData
+from ..json_utils import load_unique_json
 from .base import (
     BrokerAccessLevel,
     BrokerEnvironment,
@@ -26,6 +27,7 @@ from .reconciliation import audit_reconciliations
 
 
 LIVE_CONFIRMATION = "I_ACCEPT_LIVE_TRADING_RISK"
+MAX_AUTHORIZATION_FILE_BYTES = 64 * 1024
 
 
 def require_live_confirmation() -> None:
@@ -146,8 +148,8 @@ def _load_authorization(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        value = load_unique_json(path, max_bytes=MAX_AUTHORIZATION_FILE_BYTES)
+    except (OSError, UnicodeError, ValueError):
         return None
     return value if isinstance(value, dict) else None
 

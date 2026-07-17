@@ -20,6 +20,8 @@ The market-chart API is authenticated and read-only. It accepts only configured 
 
 Future live submission requires every independent gate: current paper-account configuration, forward promotion eligibility, an installed adapter with a complete verified live capability declaration, consecutive clean sandbox reconciliations bound to the active account and configuration, a clear kill switch, a matching unexpired schema-versioned authorization and bounded mandate, explicit live mode, and the exact process-level risk confirmation. Each exact batch also needs a human-attributed approval with a maximum 15-minute lifetime; it is consumed before broker I/O and retained as a local audit record. Pre-trade checks enforce the mandate symbol/side allowlists, active universe, lot and tick sizes, daily price limits, broker-available cash/positions, single-order and daily limits, and atomic daily order-count reservations.
 
+Authorization, batch-approval, and broker ledger-scope controls are bounded UTF-8 JSON. Duplicate object keys, invalid encoding, oversized files, unknown fields, stale fingerprints, and malformed values fail closed; do not hand-edit these files with tools that silently preserve duplicate fields.
+
 Never commit or paste broker passwords, fund passwords, beta password files, exported beta-user bundles, API secrets, session cookies, private keys, or recovery phrases. Portable beta-user bundles contain offline password verifiers: distribute them privately and rotate affected passwords if a bundle leaks. The project never requires a crypto-wallet signature, token purchase, or deposit to unlock features.
 
 ## AI Assistant Boundary

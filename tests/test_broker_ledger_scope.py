@@ -21,7 +21,7 @@ from ai_trade.broker.ledger import (
     initialize_broker_ledger_scope,
     recover_order_lifecycle,
 )
-from ai_trade.broker.scope import create_broker_ledger_scope
+from ai_trade.broker.scope import create_broker_ledger_scope, read_scope_manifest
 
 
 START = datetime(2026, 7, 18, 1, 0, tzinfo=timezone.utc)
@@ -115,6 +115,20 @@ class BrokerLedgerScopeTests(unittest.TestCase):
             self.assertNotIn("private-account-123456", json.dumps(report))
             self.assertFalse(report["qualifying_evidence"])
             self.assertFalse(report["execution_enabled"])
+
+    def test_scope_manifest_rejects_ambiguous_or_unbounded_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "scope.json"
+            cases = {
+                "duplicate key": b'{"schema_version":1,"schema_version":1}',
+                "invalid utf8": b"\xff\xfe",
+                "oversized": b" " * (64 * 1024 + 1),
+            }
+            for label, content in cases.items():
+                with self.subTest(label=label):
+                    path.write_bytes(content)
+                    with self.assertRaisesRegex(RuntimeError, "cannot be read"):
+                        read_scope_manifest(path)
 
     def test_unscoped_legacy_ledgers_remain_readable_but_cannot_be_extended(self):
         with tempfile.TemporaryDirectory() as temporary:

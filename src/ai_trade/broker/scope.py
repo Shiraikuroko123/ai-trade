@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from ..json_utils import load_unique_json
 from .base import BrokerEnvironment
 
 
 BROKER_LEDGER_SCOPE_SCHEMA_VERSION = 1
+MAX_SCOPE_MANIFEST_BYTES = 64 * 1024
 _SCOPE_FIELDS = {
     "schema_version",
     "scope_id",
@@ -164,8 +166,8 @@ def require_scope_manifest(path: Path, expected: BrokerLedgerScope) -> None:
 
 def read_scope_manifest(path: Path) -> BrokerLedgerScope:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = load_unique_json(path, max_bytes=MAX_SCOPE_MANIFEST_BYTES)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise RuntimeError("Broker ledger scope manifest cannot be read") from exc
     if not isinstance(value, dict) or set(value) != _SCOPE_FIELDS:
         raise RuntimeError("Broker ledger scope manifest schema is invalid")

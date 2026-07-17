@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
+from ..json_utils import load_unique_json
 from .base import BrokerOrderRequest, OrderSide
 from .ledger import ledger_lock
 
@@ -21,6 +22,7 @@ AUTHORIZATION_SCHEMA_VERSION = 2
 MANDATE_SCHEMA_VERSION = 1
 BATCH_APPROVAL_SCHEMA_VERSION = 1
 MAX_BATCH_APPROVAL_LIFETIME = timedelta(minutes=15)
+MAX_BATCH_APPROVAL_FILE_BYTES = 64 * 1024
 
 _SYMBOL = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
@@ -264,10 +266,11 @@ def consume_batch_approval(
         raise PermissionError("A one-time broker batch approval file is required")
     with ledger_lock(path):
         try:
-            if path.stat().st_size > 64 * 1024:
-                raise ValueError("Batch approval file exceeds 64 KiB")
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            value = load_unique_json(
+                path,
+                max_bytes=MAX_BATCH_APPROVAL_FILE_BYTES,
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
             raise PermissionError("Batch approval file is invalid") from exc
         _validate_batch_approval(
             value,

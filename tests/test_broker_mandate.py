@@ -215,6 +215,27 @@ class BrokerMandateTests(unittest.TestCase):
                 )
             self.assertTrue(path.exists())
 
+    def test_batch_approval_rejects_ambiguous_or_unbounded_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "live_batch_approval.json"
+            cases = {
+                "duplicate key": b'{"approved":true,"approved":false}',
+                "invalid utf8": b"\xff\xfe",
+                "oversized": b" " * (64 * 1024 + 1),
+            }
+            for label, content in cases.items():
+                with self.subTest(label=label):
+                    path.write_bytes(content)
+                    with self.assertRaisesRegex(PermissionError, "invalid"):
+                        consume_batch_approval(
+                            path,
+                            adapter="mock",
+                            account_id="account",
+                            config_fingerprint=FINGERPRINT,
+                            batch_fingerprint=BATCH_FINGERPRINT,
+                        )
+                    self.assertTrue(path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
