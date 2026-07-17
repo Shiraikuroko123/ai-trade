@@ -13,8 +13,11 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
 
+from .json_utils import load_unique_json, loads_unique_json
 
 PREFERENCES_SCHEMA_VERSION = 1
+MAX_PREFERENCES_BYTES = 64 * 1024
+MAX_INVENTORY_JSON_BYTES = 4 * 1024 * 1024
 DEFAULT_STORAGE_LIMIT_BYTES = 10_000_000_000
 DEFAULT_CLASS_A_LIMIT = 1_000_000
 DEFAULT_CLASS_B_LIMIT = 10_000_000
@@ -71,8 +74,8 @@ def load_cloud_preferences(
     if not path.is_file():
         raise CloudPreferencesError("Cloud preferences storage is not a regular file")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = load_unique_json(path, max_bytes=MAX_PREFERENCES_BYTES)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise CloudPreferencesError("Cloud preferences are unreadable or invalid") from exc
     if not isinstance(payload, dict) or payload.get("schema_version") != PREFERENCES_SCHEMA_VERSION:
         raise CloudPreferencesError("Cloud preferences use an unsupported schema")
@@ -263,8 +266,13 @@ class CloudUsageStore:
                 "snapshots": [],
             }
         try:
-            snapshots = json.loads(row[3])
-        except json.JSONDecodeError as exc:
+            raw_snapshots = row[3]
+            if not isinstance(raw_snapshots, str) or len(
+                raw_snapshots.encode("utf-8")
+            ) > MAX_INVENTORY_JSON_BYTES:
+                raise ValueError("inventory snapshot cache is too large")
+            snapshots = loads_unique_json(raw_snapshots)
+        except (UnicodeError, ValueError, TypeError) as exc:
             raise CloudPreferencesError("Cloud inventory cache is invalid") from exc
         return {
             "scanned_at": row[0],

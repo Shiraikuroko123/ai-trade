@@ -8,8 +8,10 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from ..json_utils import load_unique_json
 
 _ANALYSIS_ID = re.compile(r"[0-9a-f]{32}\Z")
+MAX_ANALYSIS_RECORD_BYTES = 5 * 1024 * 1024
 
 
 class AssistantRecordStore:
@@ -31,7 +33,7 @@ class AssistantRecordStore:
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-        if len(content) > 5 * 1024 * 1024:
+        if len(content) > MAX_ANALYSIS_RECORD_BYTES:
             raise ValueError("Assistant analysis record exceeds the 5 MiB storage limit")
 
         with self._lock:
@@ -76,10 +78,13 @@ class AssistantRecordStore:
             )
             for path in paths:
                 try:
-                    if path.stat().st_size > 5 * 1024 * 1024:
+                    if path.stat().st_size > MAX_ANALYSIS_RECORD_BYTES:
                         continue
-                    value = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    value = load_unique_json(
+                        path,
+                        max_bytes=MAX_ANALYSIS_RECORD_BYTES,
+                    )
+                except (OSError, UnicodeError, ValueError):
                     continue
                 if not isinstance(value, dict) or value.get("schema_version") != 1:
                     continue

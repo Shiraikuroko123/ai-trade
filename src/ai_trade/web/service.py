@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import json
 import math
 import threading
 from collections import deque
@@ -27,6 +26,7 @@ from ..config import AppConfig
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..diagnostics import diagnose
+from ..json_utils import load_unique_json
 from ..strategy_lab import StrategyLabConflictError, StrategyLabEngine
 from ..strategy import MomentumTrendStrategy
 
@@ -37,6 +37,7 @@ _MARKET_CHART_MIN_LIMIT = 60
 _MARKET_CHART_MAX_LIMIT = 1500
 _MARKET_CHART_MAX_TRADE_MARKERS = 500
 _MARKET_CHART_MAX_EXCLUDED_DATES = 20
+MAX_DASHBOARD_REPORT_BYTES = 8 * 1024 * 1024
 
 
 class DashboardService:
@@ -1158,8 +1159,8 @@ class DashboardService:
         if not path.exists():
             return None
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            value = load_unique_json(path, max_bytes=MAX_DASHBOARD_REPORT_BYTES)
+        except (OSError, UnicodeError, ValueError):
             return None
         return value if isinstance(value, dict) else None
 

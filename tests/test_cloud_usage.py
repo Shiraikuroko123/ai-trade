@@ -17,7 +17,9 @@ from ai_trade.cloud import (
     tracked_r2_store,
 )
 from ai_trade.cloud_usage import (
+    CloudPreferencesError,
     CloudUsageStore,
+    MAX_PREFERENCES_BYTES,
     billing_period,
     cloud_preferences_path,
     load_cloud_preferences,
@@ -54,6 +56,21 @@ class CloudUsageTests(unittest.TestCase):
             self.assertEqual(saved.storage_limit_bytes, 25_500_000_000)
             self.assertEqual(load_cloud_preferences(path), saved)
             self.assertNotIn("credential", path.read_text(encoding="utf-8").lower())
+
+    def test_preferences_reject_ambiguous_or_oversized_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "state/cloud_preferences.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                '{"schema_version":1,"schema_version":1}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(CloudPreferencesError, "unreadable"):
+                load_cloud_preferences(path)
+
+            path.write_bytes(b" " * (MAX_PREFERENCES_BYTES + 1))
+            with self.assertRaisesRegex(CloudPreferencesError, "unreadable"):
+                load_cloud_preferences(path)
 
     def test_preferences_reject_hybrid_without_cloud_and_preserve_file(self):
         with tempfile.TemporaryDirectory() as temporary:

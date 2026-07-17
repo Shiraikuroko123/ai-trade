@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import http.client
-import json
 import logging
 import math
 import os
@@ -21,7 +20,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config import AppConfig
-from ..json_utils import load_unique_json
+from ..json_utils import load_unique_json, loads_unique_json
 from ..models import Bar, Instrument
 from . import tencent
 from .cache_snapshot import (
@@ -36,6 +35,7 @@ EASTMONEY_UT = "fa5fd1943c7b386f172d6893dbfba10b"
 CHINA_TIMEZONE = timezone(timedelta(hours=8))
 REQUIRED_COLUMNS = {"date", "open", "close", "high", "low", "volume", "amount"}
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 LEGACY_START_TOLERANCE_DAYS = 10
 REQUEST_HEADERS = {
     "Accept": "application/json, text/plain, */*",
@@ -362,7 +362,12 @@ def download_instrument(
         )
         try:
             with _open_request(request, timeout, selected_proxy_mode) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ValueError(
+                        f"Eastmoney response exceeds {MAX_RESPONSE_BYTES} bytes"
+                    )
+                payload = loads_unique_json(raw.decode("utf-8"))
             rows = _completed_rows(
                 payload, instrument, market_close, cutoff=request_cutoff
             )

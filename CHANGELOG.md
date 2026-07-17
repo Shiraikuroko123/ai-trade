@@ -12,6 +12,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   duplicate-key-rejecting JSON in the reader, chart, and Eastmoney/Tencent
   fallback paths. Ambiguous or oversized snapshot metadata cannot select or
   recover an active data set.
+- Cloud preferences and inventory, assistant history, dashboard reports, cloud
+  snapshot manifests, and model responses now use bounded duplicate-key-
+  rejecting JSON at their local or remote input boundaries. Eastmoney responses
+  are size-limited before decoding, keeping refresh and cloud restore failures
+  explicit instead of partially accepting ambiguous metadata.
 - Paper account state now uses bounded duplicate-key-rejecting JSON and validates
   an exact versioned schema, canonical identity and dates, finite balances,
   positions, targets, and counters before simulation, audit, or rendering.

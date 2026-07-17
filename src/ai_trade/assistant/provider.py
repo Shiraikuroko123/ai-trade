@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .features import ALLOWED_CONCLUSIONS
+from ..json_utils import loads_unique_json
 
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -174,7 +175,7 @@ class OpenAICompatibleProvider:
         if len(content) > self.settings.max_response_bytes:
             raise AssistantProviderError("model_response_too_large")
         try:
-            response_value = json.loads(content.decode("utf-8"))
+            response_value = loads_unique_json(content.decode("utf-8"))
             message = response_value["choices"][0]["message"]
             raw = message["content"]
             if not isinstance(raw, str) or len(raw) > self.settings.max_response_bytes:
@@ -186,7 +187,7 @@ class OpenAICompatibleProvider:
                 "completion_tokens": _safe_token_count(raw_usage.get("completion_tokens")),
                 "total_tokens": _safe_token_count(raw_usage.get("total_tokens")),
             }
-        except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        except (KeyError, IndexError, TypeError, ValueError, UnicodeError):
             raise AssistantProviderError("invalid_model_response") from None
         return value, usage, raw
 

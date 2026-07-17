@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from ai_trade.assistant import AssistantEngine
 from ai_trade.assistant.features import ALLOWED_CONCLUSIONS
+from ai_trade.assistant.store import MAX_ANALYSIS_RECORD_BYTES, AssistantRecordStore
 from ai_trade.assistant.provider import (
     AssistantProviderError,
     DEFAULT_MAX_RESPONSE_BYTES,
@@ -84,6 +85,19 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertNotIn("api_key", disk.lower())
             self.assertNotIn("reasoning_content", disk.lower())
             self.assertEqual(json.loads(disk)["analysis_id"], result["analysis_id"])
+
+    def test_history_skips_ambiguous_or_oversized_records(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = AssistantRecordStore(Path(temporary))
+            directory = store._user_directory("alice")
+            directory.mkdir(parents=True)
+            path = directory / ("a" * 32 + ".json")
+
+            path.write_text('{"schema_version":1,"schema_version":1}', encoding="utf-8")
+            self.assertEqual(store.history("alice"), [])
+
+            path.write_bytes(b" " * (MAX_ANALYSIS_RECORD_BYTES + 1))
+            self.assertEqual(store.history("alice"), [])
 
     def test_history_is_user_isolated_and_comparison_uses_previous_record(self):
         with tempfile.TemporaryDirectory() as temporary:

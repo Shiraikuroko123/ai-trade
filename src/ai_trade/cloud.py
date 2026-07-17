@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .config import AppConfig
+from .json_utils import load_unique_json, loads_unique_json
 from .cloud_usage import (
     CloudPreferencesError,
     CloudUsageStore,
@@ -520,8 +521,8 @@ class R2ObjectStore:
         if len(content) != size or len(content) > 64 * 1024:
             raise CloudIntegrityError("Cloud latest pointer content is invalid")
         try:
-            value = json.loads(content.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            value = loads_unique_json(content.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
             raise CloudIntegrityError("Cloud latest pointer is invalid JSON") from exc
         if not isinstance(value, dict):
             raise CloudIntegrityError("Cloud latest pointer has an invalid structure")
@@ -844,8 +845,11 @@ def _validate_source_snapshot(
     config: AppConfig, payloads: dict[str, bytes]
 ) -> dict[str, Any]:
     try:
-        manifest = json.loads(payloads["manifest.json"].decode("utf-8"))
-    except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raw_manifest = payloads["manifest.json"]
+        if len(raw_manifest) > MAX_MANIFEST_BYTES:
+            raise ValueError("market manifest exceeds the permitted size")
+        manifest = loads_unique_json(raw_manifest.decode("utf-8"))
+    except (KeyError, TypeError, UnicodeDecodeError, ValueError) as exc:
         raise CloudIntegrityError("Market manifest is incomplete or invalid") from exc
     _validate_market_manifest(
         config,
@@ -1128,8 +1132,11 @@ def _validate_restored_source_snapshot(
     config: AppConfig, cache: Path
 ) -> dict[str, Any]:
     try:
-        manifest = json.loads((cache / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        manifest = load_unique_json(
+            cache / "manifest.json",
+            max_bytes=MAX_MANIFEST_BYTES,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise CloudIntegrityError("Restored market manifest is invalid") from exc
     _validate_market_manifest(
         config, manifest, lambda symbol: _file_sha256(cache / f"{symbol}.csv")
@@ -1215,8 +1222,8 @@ def _extract_verified_snapshot(
         if len(raw_manifest) != manifest_member.file_size:
             raise CloudIntegrityError("Cloud snapshot manifest size is invalid")
         try:
-            manifest = json.loads(raw_manifest.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            manifest = loads_unique_json(raw_manifest.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
             raise CloudIntegrityError(
                 "Cloud snapshot manifest is invalid JSON"
             ) from exc
