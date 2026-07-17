@@ -115,6 +115,11 @@
     "max_order_notional": 50000.0,
     "max_daily_notional": 100000.0
   },
+  "shadow_account": {
+    "fills_file": "state/shadow_fills.csv",
+    "imports_file": "state/shadow_imports.csv",
+    "max_import_bytes": 1000000
+  },
   "reports_dir": "reports",
   "logs_dir": "logs"
 }

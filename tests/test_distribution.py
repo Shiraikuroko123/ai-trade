@@ -64,6 +64,7 @@ class DistributionVerificationTests(unittest.TestCase):
             "mandate.py",
             "probe.py",
             "reconciliation.py",
+            "shadow.py",
         ):
             with self.subTest(module=module):
                 self.assertIn(f"ai_trade/broker/{module}", WHEEL_REQUIRED)

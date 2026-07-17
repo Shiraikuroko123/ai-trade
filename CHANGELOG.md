@@ -4,6 +4,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added a per-user shadow-account CSV review with an exact canonical schema,
+  immutable row fingerprints, idempotent file imports, overlap/conflict
+  detection, and behavior, price, and trade-allocation comparisons against the
+  current paper ledger. Source files are not retained and results never count as
+  broker reconciliation or trading authority.
 - Added post-activation strategy lifecycle governance with immutable rolling
   decay evidence, activation-reference and parent-baseline comparisons,
   human-only suspension/resumption/retirement, exact state-bound requests, and

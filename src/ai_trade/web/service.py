@@ -16,6 +16,7 @@ from ..assistant import AssistantEngine
 from ..broker.live_guard import evaluate_live_readiness
 from ..broker.paper import paper_status
 from ..broker.paper_audit import audit_paper
+from ..broker.shadow import import_shadow_csv, shadow_account_status
 from ..config import AppConfig
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
@@ -231,7 +232,7 @@ class DashboardService:
             "equity_curve": self._paper_equity_curve(480),
         }
 
-    def trading(self) -> dict[str, Any]:
+    def trading(self, *, owner_id: str = "local-owner") -> dict[str, Any]:
         state = self._paper_state()
         market_issue = None
         try:
@@ -245,16 +246,41 @@ class DashboardService:
             )
         else:
             paper_audit = self._paper_audit(market)
+        paper_trades = self._csv_rows(self.config.paper_trades_file, 200)
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
             "paper_audit": paper_audit,
             "live": evaluate_live_readiness(self.config, paper_audit),
-            "paper_trades": self._csv_rows(self.config.paper_trades_file, 200),
+            "paper_trades": paper_trades,
             "paper_rejections": self._csv_rows(self.config.paper_rejections_file, 200),
             "broker_orders": self._csv_rows(self.config.broker_orders_file, 200),
             "broker_fills": self._csv_rows(self.config.broker_fills_file, 200),
             "pending_targets": dict((state or {}).get("pending_targets") or {}),
+            "shadow_account": self._shadow_account(owner_id, state),
+        }
+
+    def import_shadow_account(
+        self,
+        *,
+        owner_id: str,
+        source_label: str,
+        account_alias: str,
+        csv_content: bytes,
+    ) -> dict[str, Any]:
+        result = import_shadow_csv(
+            self.config.shadow_fills_file,
+            self.config.shadow_imports_file,
+            owner_id=owner_id,
+            source_label=source_label,
+            account_alias=account_alias,
+            content=csv_content,
+            max_bytes=self.config.shadow_max_import_bytes,
+        )
+        return {
+            "generated_at": _now(),
+            "import_result": result,
+            "shadow_account": self._shadow_account(owner_id, self._paper_state()),
         }
 
     def universe(self, on_date: date | None = None) -> dict[str, Any]:
@@ -721,6 +747,24 @@ class DashboardService:
             return paper_status(self.config)
         except (FileNotFoundError, RuntimeError, ValueError):
             return None
+
+    def _shadow_account(
+        self, owner_id: str, state: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        account_id = str((state or {}).get("account_id") or "")
+        expected = [
+            row
+            for row in self._csv_rows(self.config.paper_trades_file)
+            if not account_id or row.get("account_id") == account_id
+        ]
+        status = shadow_account_status(
+            self.config.shadow_fills_file,
+            self.config.shadow_imports_file,
+            owner_id=owner_id,
+            expected_trades=expected,
+        )
+        status["max_import_bytes"] = self.config.shadow_max_import_bytes
+        return status
 
     def _paper_audit(self, market: MarketData) -> dict[str, Any]:
         try:

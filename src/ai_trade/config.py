@@ -98,6 +98,28 @@ class AppConfig:
         )
 
     @property
+    def shadow_fills_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("shadow_account", {}).get(
+                "fills_file", "state/shadow_fills.csv"
+            )
+        )
+
+    @property
+    def shadow_imports_file(self) -> Path:
+        return self.resolve(
+            self.raw.get("shadow_account", {}).get(
+                "imports_file", "state/shadow_imports.csv"
+            )
+        )
+
+    @property
+    def shadow_max_import_bytes(self) -> int:
+        return int(
+            self.raw.get("shadow_account", {}).get("max_import_bytes", 1_000_000)
+        )
+
+    @property
     def live_authorization_file(self) -> Path:
         return self.resolve(
             self.raw.get("broker", {}).get(
@@ -298,6 +320,7 @@ def _validate(
         raise ValueError("paper.minimum_promotion_sessions must be at least 20")
     _validate_auth(raw.get("auth", {}))
     _validate_broker(raw.get("broker", {}))
+    _validate_shadow_account(raw.get("shadow_account", {}))
 
 
 def _validate_data_transport(data: dict[str, Any]) -> None:
@@ -479,3 +502,25 @@ def _validate_broker(value: dict[str, Any]) -> None:
         if previous is not None:
             raise ValueError(f"broker.{name} must differ from broker.{previous}")
         configured_paths[normalized] = name
+
+
+def _validate_shadow_account(value: dict[str, Any]) -> None:
+    raw_maximum = value.get("max_import_bytes", 1_000_000)
+    if isinstance(raw_maximum, bool) or not isinstance(raw_maximum, int):
+        raise ValueError("shadow_account.max_import_bytes must be an integer")
+    if not 1_024 <= raw_maximum <= 5_000_000:
+        raise ValueError(
+            "shadow_account.max_import_bytes must be between 1024 and 5000000"
+        )
+    configured: set[str] = set()
+    for name, default in (
+        ("fills_file", "state/shadow_fills.csv"),
+        ("imports_file", "state/shadow_imports.csv"),
+    ):
+        raw_path = value.get(name, default)
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError(f"shadow_account.{name} must be a non-empty path")
+        normalized = str(Path(raw_path)).casefold()
+        if normalized in configured:
+            raise ValueError("shadow account ledger paths must be different")
+        configured.add(normalized)

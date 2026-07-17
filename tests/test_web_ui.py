@@ -84,6 +84,18 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn('metric-strip-priority risk-metric-strip', self.javascript)
         self.assertIn("现金缓冲", self.javascript)
 
+    def test_shadow_review_is_a_read_only_auditable_workflow(self):
+        self.assertIn('["shadow", "影子复盘"]', self.javascript)
+        self.assertIn('id="shadow-import-form"', self.javascript)
+        self.assertIn('type="file" accept=".csv,text/csv"', self.javascript)
+        self.assertIn("canonical_columns", self.javascript)
+        self.assertIn("影子账户只比较导入成交与当前本地模拟账本", self.javascript)
+        self.assertIn("不读取券商、不提交或撤销订单", self.javascript)
+        self.assertIn("state.shadowImportBusy", self.javascript)
+        self.assertIn("arrayBufferToBase64(await file.arrayBuffer())", self.javascript)
+        self.assertIn(".shadow-review-table table", self.css)
+        self.assertIn("min-width: 920px", self.css)
+
     def test_mobile_navigation_and_dense_surfaces_reflow_without_page_overflow(self):
         mobile_start = self.css.index("@media (max-width: 820px)")
         narrow_start = self.css.index("@media (max-width: 560px)")

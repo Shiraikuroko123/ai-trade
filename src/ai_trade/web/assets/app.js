@@ -95,6 +95,23 @@ const STATUS_LABELS = {
   eligible_for_broker_sandbox_review: "可进入券商沙箱复核",
 };
 
+const SHADOW_VERDICT_LABELS = {
+  INSUFFICIENT_DATA: "证据不足",
+  CONSISTENT_WITH_MODEL: "与模拟执行一致",
+  REVIEW_REQUIRED: "需要人工复核",
+  INTEGRITY_ERROR: "账本完整性错误",
+};
+
+const SHADOW_REASON_LABELS = {
+  paper_comparison_unavailable: "当前导入窗口缺少模拟成交基准",
+  direction_mismatch: "实际方向与模拟方向相反",
+  unexpected_fill: "存在模拟账本未预期的成交",
+  missed_model_fill: "存在模拟成交但影子账户未成交",
+  quantity_deviation_above_5pct: "成交数量偏差超过 5%",
+  adverse_price_deviation_above_25bps: "不利价格偏差超过 25 bp",
+  trade_allocation_deviation_above_10pct: "成交分配偏差超过 10%",
+};
+
 const state = {
   token: "",
   user: null,
@@ -108,6 +125,7 @@ const state = {
   jobStates: new Map(),
   cloudBackupWarning: null,
   tradingTab: "paper",
+  shadowImportBusy: false,
   universeDate: "",
   assistantResult: null,
   assistantBusy: false,
@@ -2787,6 +2805,7 @@ function renderTrading(data) {
         ["paper", "模拟成交"],
         ["rejections", "拒单"],
         ["broker", "券商账本"],
+        ["shadow", "影子复盘"],
       ].map(([key, label]) => `<button id="trading-tab-${key}" type="button" role="tab" data-trading-tab="${key}" aria-controls="trading-ledger-panel" aria-selected="${state.tradingTab === key}" tabindex="${state.tradingTab === key ? 0 : -1}">${label}</button>`).join("")}
     </div>`;
   return `
@@ -2840,7 +2859,7 @@ function renderTrading(data) {
       </section>
 
       <section class="panel">
-        ${panelHeader("执行账本", "最近 200 条记录", tabs)}
+        ${panelHeader("执行账本", state.tradingTab === "shadow" ? "只读导入与偏差复盘" : "最近 200 条记录", tabs)}
         <div id="trading-ledger-panel" role="tabpanel" aria-labelledby="trading-tab-${escapeHtml(state.tradingTab)}">
           ${tradingLedger(data)}
         </div>
@@ -2864,6 +2883,9 @@ function renderTrading(data) {
 }
 
 function tradingLedger(data) {
+  if (state.tradingTab === "shadow") {
+    return shadowAccountMarkup(data.shadow_account || {});
+  }
   if (state.tradingTab === "rejections") {
     const rows = data.paper_rejections || [];
     return `<div class="table-wrap"><table class="data-table">
@@ -2887,6 +2909,85 @@ function tradingLedger(data) {
       <td>${escapeHtml(row.date)}</td><td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 3)}</td><td class="numeric">${formatMoney(row.notional)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.stamp_duty) || 0) + (finite(row.transfer_fee) || 0) + (finite(row.slippage_cost) || 0))}</td>
     </tr>`).join("") : emptyRow(7, "尚无模拟成交；目标会在下一完整交易日处理")}</tbody>
   </table></div>`;
+}
+
+function shadowAccountMarkup(shadow) {
+  const review = shadow.review || {};
+  const errors = shadow.integrity_errors || [];
+  const groups = review.groups || [];
+  const imports = shadow.imports || [];
+  const recentFills = shadow.recent_fills || [];
+  const verdict = shadow.status || review.verdict || "INSUFFICIENT_DATA";
+  const verdictKind = verdict === "CONSISTENT_WITH_MODEL"
+    ? "success"
+    : verdict === "INTEGRITY_ERROR"
+      ? "danger"
+      : verdict === "REVIEW_REQUIRED"
+        ? "warning"
+        : "neutral";
+  const adverseBps = review.weighted_adverse_price_bps === null
+    || review.weighted_adverse_price_bps === undefined
+    ? null
+    : finite(review.weighted_adverse_price_bps);
+  const reasons = review.review_reasons || [];
+  const maximumMb = Math.max(0.01, (finite(shadow.max_import_bytes) || 1000000) / 1000000);
+  return `
+    <div class="shadow-account-view">
+      <dl class="shadow-metric-band" aria-label="影子账户复盘摘要">
+        <div><dt>复盘结论</dt><dd>${statusChip(SHADOW_VERDICT_LABELS[verdict] || verdict, verdictKind)}<span>${escapeHtml(review.account_alias || "尚未导入账户")}</span></dd></div>
+        <div><dt>行为覆盖</dt><dd><strong class="numeric">${review.match_rate === null || review.match_rate === undefined ? "—" : formatPercent(review.match_rate)}</strong><span>${formatInteger(review.matched_groups || 0)} / ${formatInteger(review.expected_groups || 0)} 组模拟成交</span></dd></div>
+        <div><dt>不利价格偏差</dt><dd><strong class="numeric ${adverseBps !== null && adverseBps > 25 ? "negative" : ""}">${adverseBps === null ? "—" : `${adverseBps > 0 ? "+" : ""}${formatNumber(adverseBps, 2)} bp`}</strong><span>相对本地模拟成交价，正值更差</span></dd></div>
+        <div><dt>成交分配偏差</dt><dd><strong class="numeric">${review.trade_allocation_deviation === null || review.trade_allocation_deviation === undefined ? "—" : formatPercent(review.trade_allocation_deviation)}</strong><span>按导入窗口内各证券成交额比较</span></dd></div>
+      </dl>
+
+      ${errors.length ? `<div class="callout danger shadow-integrity-alert" role="alert"><strong>影子账本完整性检查失败</strong><ul>${errors.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><p>停止使用当前复盘结论；账本不会自动修复或覆盖。</p></div>` : ""}
+
+      <section class="shadow-import-section" aria-labelledby="shadow-import-title">
+        <div class="shadow-section-heading">
+          <div><h3 id="shadow-import-title">导入券商成交 CSV</h3><p>使用账户别名，不填写真实账号；原始文件校验后即释放，仅保留标准化成交和 SHA-256。</p></div>
+          <button class="button secondary" type="button" data-shadow-template>下载空白模板</button>
+        </div>
+        <form id="shadow-import-form" class="shadow-import-form" aria-describedby="shadow-import-help">
+          <label class="field"><span>来源标签</span><input name="source_label" value="broker-export" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._ -]{0,63}" autocomplete="off" spellcheck="false" required></label>
+          <label class="field"><span>账户别名</span><input name="account_alias" maxlength="64" placeholder="例如：模拟账户 A" autocomplete="off" required></label>
+          <label class="field shadow-file-field"><span>标准成交文件</span><input name="csv_file" type="file" accept=".csv,text/csv" required></label>
+          <button class="button primary" type="submit" ${state.shadowImportBusy ? "disabled aria-busy=\"true\"" : ""}>${state.shadowImportBusy ? "正在校验" : "导入并复盘"}</button>
+        </form>
+        <p id="shadow-import-help" class="shadow-import-help">表头必须严格等于 ${escapeHtml((shadow.canonical_columns || []).join(","))}；单次不超过 ${formatNumber(maximumMb, 2)} MB、${formatInteger(shadow.max_rows_per_import || 5000)} 行，时间必须包含时区。</p>
+      </section>
+
+      <aside class="callout info shadow-boundary"><strong>只读证据边界</strong><p>影子账户只比较导入成交与当前本地模拟账本，不读取券商、不提交或撤销订单，也不参与沙箱或实盘权限晋级。</p></aside>
+
+      <section class="shadow-review-section" aria-labelledby="shadow-review-title">
+        <div class="shadow-section-heading">
+          <div><h3 id="shadow-review-title">行为与执行偏差</h3><p>${review.period?.[0] ? `${escapeHtml(review.period[0])} 至 ${escapeHtml(review.period[1])}` : "导入成交后形成可审计窗口"}</p></div>
+          ${statusChip(SHADOW_VERDICT_LABELS[review.verdict] || "证据不足", verdictKind)}
+        </div>
+        ${reasons.length ? `<ul class="shadow-reason-list">${reasons.map((reason) => `<li>${escapeHtml(SHADOW_REASON_LABELS[reason] || reason)}</li>`).join("")}</ul>` : review.verdict === "CONSISTENT_WITH_MODEL" ? `<p class="shadow-review-note">在当前导入窗口内，方向、数量、价格和成交分配未越过复盘阈值；这不是收益或实盘资格证明。</p>` : `<p class="shadow-review-note">尚无可与当前模拟成交一一比较的重叠记录。</p>`}
+        <div class="table-wrap shadow-review-table"><table class="data-table">
+          <thead><tr><th>日期</th><th>证券</th><th>方向</th><th class="numeric">实际 / 模拟数量</th><th class="numeric">实际 / 模拟价格</th><th class="numeric">不利偏差</th><th>结果</th></tr></thead>
+          <tbody>${groups.length ? groups.map((row) => `<tr>
+            <td>${escapeHtml(row.date)}</td><td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.actual_quantity)} / ${formatInteger(row.expected_quantity)}</td><td class="numeric">${row.actual_price === null ? "—" : formatNumber(row.actual_price, 4)} / ${row.expected_price === null ? "—" : formatNumber(row.expected_price, 4)}</td><td class="numeric">${row.adverse_price_bps === null ? "—" : `${row.adverse_price_bps > 0 ? "+" : ""}${formatNumber(row.adverse_price_bps, 2)} bp`}</td><td>${statusChip(row.outcome === "MATCHED" ? "已匹配" : row.outcome === "UNEXPECTED" ? "未预期成交" : "模拟成交缺失", row.outcome === "MATCHED" ? "success" : "warning")}</td>
+          </tr>`).join("") : emptyRow(7, "尚无可比较的影子成交组")}</tbody>
+        </table></div>
+      </section>
+
+      <section class="shadow-ledger-section" aria-labelledby="shadow-fill-title">
+        <div class="shadow-section-heading"><div><h3 id="shadow-fill-title">标准化影子成交</h3><p>${formatInteger(shadow.fill_count || 0)} 条不可变记录，页面显示最近 ${formatInteger(recentFills.length)} 条</p></div></div>
+        <div class="table-wrap shadow-fill-table"><table class="data-table">
+          <thead><tr><th>成交时间</th><th>账户别名</th><th>来源 / 成交号</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th class="numeric">价格</th><th class="numeric">费用</th></tr></thead>
+          <tbody>${recentFills.length ? recentFills.map((row) => `<tr><td>${escapeHtml(formatDate(row.filled_at, true))}</td><td>${escapeHtml(row.account_alias)}</td><td><span>${escapeHtml(row.source_label)}</span><code>${escapeHtml(row.source_fill_id)}</code></td><td>${escapeHtml(row.symbol)}</td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 4)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.tax) || 0))}</td></tr>`).join("") : emptyRow(8, "尚未导入标准成交文件")}</tbody>
+        </table></div>
+      </section>
+
+      <details class="shadow-import-history">
+        <summary>导入审计记录 · ${formatInteger(shadow.import_count || 0)} 次</summary>
+        <div class="table-wrap"><table class="data-table">
+          <thead><tr><th>导入时间</th><th>来源</th><th>账户别名</th><th class="numeric">接收 / 重复</th><th>文件 SHA-256</th></tr></thead>
+          <tbody>${imports.length ? imports.map((row) => `<tr><td>${escapeHtml(formatDate(row.imported_at, true))}</td><td>${escapeHtml(row.source_label)}</td><td>${escapeHtml(row.account_alias)}</td><td class="numeric">${formatInteger(row.accepted_count)} / ${formatInteger(row.duplicate_count)}</td><td><code class="shadow-hash">${escapeHtml(row.source_sha256)}</code></td></tr>`).join("") : emptyRow(5, "尚无导入审计记录")}</tbody>
+        </table></div>
+      </details>
+    </div>`;
 }
 
 function renderRisk(data) {
@@ -3459,6 +3560,88 @@ async function saveStoragePreferences(form) {
   }
 }
 
+function downloadShadowTemplate() {
+  const shadow = state.data.get("trading")?.shadow_account || {};
+  const columns = shadow.canonical_columns || [
+    "fill_id", "order_id", "symbol", "side", "quantity", "price",
+    "commission", "tax", "filled_at",
+  ];
+  const blob = new Blob([`${columns.join(",")}\r\n`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "ai-trade-shadow-fills-template.csv";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  notify("影子成交空白模板已生成");
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunks = [];
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32768)));
+  }
+  return btoa(chunks.join(""));
+}
+
+async function importShadowAccount(form) {
+  if (state.shadowImportBusy) return;
+  const values = new FormData(form);
+  const file = values.get("csv_file");
+  const maximum = finite(state.data.get("trading")?.shadow_account?.max_import_bytes) || 1000000;
+  if (!(file instanceof File) || !file.size) {
+    notify("请选择非空的 CSV 成交文件", true);
+    return;
+  }
+  if (file.size > maximum) {
+    notify(`CSV 文件超过 ${formatNumber(maximum / 1000000, 2)} MB 上限`, true);
+    return;
+  }
+  state.shadowImportBusy = true;
+  form.setAttribute("aria-busy", "true");
+  const controls = [...form.querySelectorAll("input, button")];
+  controls.forEach((control) => { control.disabled = true; });
+  const button = form.querySelector('button[type="submit"]');
+  if (button) button.textContent = "正在校验";
+  try {
+    const csvBase64 = arrayBufferToBase64(await file.arrayBuffer());
+    const payload = await api("/api/shadow-account/import", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify({
+        source_label: String(values.get("source_label") || ""),
+        account_alias: String(values.get("account_alias") || ""),
+        csv_base64: csvBase64,
+      }),
+    });
+    const trading = state.data.get("trading") || {};
+    state.data.set("trading", {
+      ...trading,
+      generated_at: payload.generated_at,
+      shadow_account: payload.shadow_account,
+    });
+    if (state.route === "trading") renderRoute(state.data.get("trading"));
+    const result = payload.import_result || {};
+    notify(
+      result.already_imported
+        ? "该文件已导入，账本未重复写入"
+        : `影子成交已校验：接收 ${formatInteger(result.accepted_count)} 条，识别重复 ${formatInteger(result.duplicate_count)} 条`,
+    );
+  } catch (error) {
+    notify(friendlyError(error.message), true);
+    if (form.isConnected) {
+      form.setAttribute("aria-busy", "false");
+      controls.forEach((control) => { control.disabled = false; });
+      if (button) button.textContent = "导入并复盘";
+    }
+  } finally {
+    state.shadowImportBusy = false;
+  }
+}
+
 async function startJob(action) {
   try {
     const job = await api("/api/jobs", {
@@ -3613,6 +3796,11 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const shadowTemplate = event.target.closest("[data-shadow-template]");
+  if (shadowTemplate) {
+    downloadShadowTemplate();
+    return;
+  }
   const marketPeriod = event.target.closest("[data-market-period]");
   if (marketPeriod) {
     const period = marketPeriod.dataset.marketPeriod;
@@ -3838,6 +4026,9 @@ document.addEventListener("submit", (event) => {
       labels[action] || "策略生命周期已更新",
       event.target.querySelector("button[type='submit']"),
     );
+  } else if (event.target.id === "shadow-import-form") {
+    event.preventDefault();
+    importShadowAccount(event.target);
   } else if (event.target.id === "strategy-approval-form") {
     event.preventDefault();
     const values = new FormData(event.target);

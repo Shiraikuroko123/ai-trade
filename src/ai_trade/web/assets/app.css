@@ -1949,6 +1949,197 @@ progress {
   padding: 0.45rem 0.65rem;
 }
 
+.shadow-account-view {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.shadow-account-view > *,
+.shadow-section-heading > div,
+.shadow-import-form > .field {
+  min-width: 0;
+}
+
+.shadow-metric-band {
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.shadow-metric-band > div {
+  min-width: 0;
+  padding: 0.8rem 1rem;
+}
+
+.shadow-metric-band > div:not(:last-child) {
+  border-inline-end: 1px solid var(--rule);
+}
+
+.shadow-metric-band dt {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.shadow-metric-band dd {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.35rem 0 0;
+  min-width: 0;
+}
+
+.shadow-metric-band dd > strong {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.shadow-metric-band dd > span:not(.status-chip) {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.shadow-integrity-alert,
+.shadow-boundary {
+  border-inline: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+.shadow-integrity-alert {
+  border-top: 0;
+}
+
+.shadow-import-section,
+.shadow-review-section,
+.shadow-ledger-section {
+  border-bottom: 1px solid var(--rule);
+  padding: 1rem;
+}
+
+.shadow-section-heading {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.shadow-section-heading h3 {
+  font-size: 0.88rem;
+  margin-bottom: 0.15rem;
+}
+
+.shadow-section-heading p,
+.shadow-import-help,
+.shadow-review-note {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  margin: 0;
+}
+
+.shadow-import-form {
+  align-items: end;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(150px, 0.55fr) minmax(180px, 0.7fr) minmax(260px, 1.4fr) auto;
+  margin-top: 0.85rem;
+}
+
+.shadow-import-form input {
+  min-width: 0;
+  width: 100%;
+}
+
+.shadow-file-field input[type="file"] {
+  cursor: pointer;
+  overflow: hidden;
+  padding-block: 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shadow-import-help {
+  margin-top: 0.65rem;
+  overflow-wrap: anywhere;
+}
+
+.shadow-reason-list {
+  color: var(--warning);
+  display: grid;
+  font-size: 0.75rem;
+  gap: 0.25rem;
+  margin: 0.75rem 0 0;
+  padding-inline-start: 1.15rem;
+}
+
+.shadow-review-note {
+  margin-top: 0.75rem;
+}
+
+.shadow-review-table,
+.shadow-fill-table,
+.shadow-import-history .table-wrap {
+  margin-top: 0.8rem;
+  width: 100%;
+}
+
+.shadow-review-table table {
+  min-width: 920px;
+}
+
+.shadow-fill-table table {
+  min-width: 980px;
+}
+
+.shadow-fill-table td code,
+.shadow-fill-table td span {
+  display: block;
+}
+
+.shadow-fill-table td code {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  margin-top: 0.1rem;
+}
+
+.shadow-import-history {
+  border-bottom: 1px solid var(--rule);
+}
+
+.shadow-import-history summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 650;
+  min-height: 44px;
+  padding: 0.7rem 1rem;
+}
+
+.shadow-import-history[open] summary {
+  border-bottom: 1px solid var(--rule);
+}
+
+.shadow-import-history .table-wrap {
+  margin: 0;
+}
+
+.shadow-import-history table {
+  min-width: 840px;
+}
+
+.shadow-hash {
+  display: inline-block;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
 .path-list {
   display: grid;
   gap: 0;
@@ -2685,6 +2876,26 @@ progress {
   .toast-region {
     bottom: 5.25rem;
   }
+
+  .shadow-metric-band {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shadow-metric-band > div:nth-child(2) {
+    border-inline-end: 0;
+  }
+
+  .shadow-metric-band > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .shadow-import-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shadow-file-field {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 560px) {
@@ -2794,6 +3005,31 @@ progress {
   .panel-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .shadow-metric-band,
+  .shadow-import-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shadow-metric-band > div {
+    border-bottom: 1px solid var(--rule);
+    border-inline-end: 0 !important;
+    min-height: 82px;
+  }
+
+  .shadow-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shadow-section-heading .button,
+  .shadow-import-form .button {
+    width: 100%;
+  }
+
+  .shadow-file-field {
+    grid-column: auto;
   }
 
   .chart-frame canvas {

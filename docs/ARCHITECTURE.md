@@ -164,6 +164,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/paper_audit.py`: independent-forward ledger checks and promotion gates.
 - `broker/base.py`: broker environments, account/position/order/fill contracts, and plugin discovery.
 - `broker/reconciliation.py`: account and position comparison plus append-only sandbox evidence.
+- `broker/shadow.py`: strict canonical CSV normalization, per-user immutable fill/import fingerprints, duplicate/conflict detection, and non-qualifying behavior/price/allocation review.
 - `broker/ledger.py`: idempotent order intents, broker order events, and fills.
 - `broker/mandate.py`: strict authorization scopes, exact batch fingerprints, and one-time human approval consumption with retained local audit records.
 - `broker/live_guard.py`: paper, configuration, adapter capability, reconciliation, kill-switch, mandate, authorization, and process-confirmation gates.
@@ -175,7 +176,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 
 No broker adapter ships inside the core wheel. Adapter factories and immutable capability declarations use separate entry-point groups; the core rejects missing metadata, undeclared operations, environment mismatches, and runtime/declaration drift before broker I/O. The source repository includes an optional, independently installed QMT read-only observation plugin. It rejects live construction and all submission/cancellation calls, cannot verify paper versus live from QMT, and its diagnostic comparison writes no qualifying reconciliation evidence. The live route exists so its safety contract can be tested before a live-capable broker implementation is introduced; with the default configuration it cannot submit an order.
 
-Provider fallback, cloud backup, and broker routing are separate trust boundaries. A successful data refresh or R2 backup does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision.
+Provider fallback, cloud backup, shadow CSV review, and broker routing are separate trust boundaries. A successful data refresh, R2 backup, or shadow comparison does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision. Shadow review has no broker object and cannot call submission or cancellation methods.
 
 The security-master schema removes a fixed instrument-count assumption, but the default master remains a curated ETF universe. A professional stock universe additionally requires licensed or independently verified point-in-time constituent and corporate-action data; the architecture does not treat a current constituent list as historical truth.
 

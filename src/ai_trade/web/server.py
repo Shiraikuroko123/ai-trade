@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import math
@@ -17,6 +19,7 @@ from ipaddress import ip_address
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .. import __version__
+from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
 from ..strategy_lab import StrategyLabConflictError
 from .auth import (
@@ -224,7 +227,11 @@ def _handler_factory(
                 elif parsed.path == "/api/portfolio":
                     self._json(service.portfolio())
                 elif parsed.path == "/api/trading":
-                    self._json(service.trading())
+                    if parsed.query:
+                        raise ValueError("Trading status does not accept query parameters")
+                    self._json(
+                        service.trading(owner_id=_assistant_user_id(context))
+                    )
                 elif parsed.path == "/api/universe":
                     query = parse_qs(parsed.query)
                     raw_date = query.get("date", [None])[0]
@@ -342,6 +349,30 @@ def _handler_factory(
                             mode=mode,
                             user_id=_assistant_user_id(context),
                         )
+                    )
+                elif parsed.path == "/api/shadow-account/import":
+                    if parsed.query:
+                        raise ValueError(
+                            "Shadow account import does not accept query parameters"
+                        )
+                    source_label, account_alias, csv_content = (
+                        _parse_shadow_import_payload(
+                            self._read_json(
+                                maximum_bytes=(
+                                    service.config.shadow_max_import_bytes * 2
+                                    + 16_384
+                                )
+                            )
+                        )
+                    )
+                    self._json(
+                        service.import_shadow_account(
+                            owner_id=_assistant_user_id(context),
+                            source_label=source_label,
+                            account_alias=account_alias,
+                            csv_content=csv_content,
+                        ),
+                        HTTPStatus.CREATED,
                     )
                 elif parsed.path == "/api/strategy-lab/candidates":
                     changes, title, hypothesis, reason = (
@@ -479,6 +510,8 @@ def _handler_factory(
             except FileExistsError as exc:
                 self._json_error(HTTPStatus.CONFLICT, str(exc))
             except StrategyLabConflictError as exc:
+                self._json_error(HTTPStatus.CONFLICT, str(exc))
+            except ShadowAccountConflictError as exc:
                 self._json_error(HTTPStatus.CONFLICT, str(exc))
             except RuntimeError as exc:
                 self._json_error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
@@ -679,15 +712,17 @@ def _handler_factory(
                 return False
             return port is None or port == self.server.server_port
 
-        def _read_json(self) -> dict[str, object]:
+        def _read_json(self, maximum_bytes: int = 8192) -> dict[str, object]:
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json")
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError as exc:
                 raise ValueError("Content-Length is invalid") from exc
-            if length <= 0 or length > 8192:
-                raise ValueError("JSON request body must be between 1 and 8192 bytes")
+            if length <= 0 or length > maximum_bytes:
+                raise ValueError(
+                    f"JSON request body must be between 1 and {maximum_bytes} bytes"
+                )
             try:
                 value = json.loads(self.rfile.read(length).decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -836,6 +871,28 @@ def _strategy_lab_actor(context: tuple[str, Session | None] | None) -> str:
     if context is None or context[1] is None:
         return "local-owner"
     return context[1].username
+
+
+def _parse_shadow_import_payload(
+    payload: dict[str, object],
+) -> tuple[str, str, bytes]:
+    _reject_unknown_fields(
+        payload,
+        {"source_label", "account_alias", "csv_base64"},
+        "shadow account import",
+    )
+    source_label = _bounded_text(payload.get("source_label"), "source_label", 64)
+    account_alias = _bounded_text(payload.get("account_alias"), "account_alias", 64)
+    encoded = payload.get("csv_base64")
+    if not isinstance(encoded, str) or not encoded or not encoded.isascii():
+        raise ValueError("csv_base64 must contain a non-empty Base64 value")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("csv_base64 is not valid Base64") from exc
+    if not content:
+        raise ValueError("csv_base64 must decode to a non-empty CSV file")
+    return source_label, account_alias, content
 
 
 def _parse_assistant_analyze_payload(

@@ -117,6 +117,39 @@ command. `broker-compare` compares account cash and positions with the local
 paper account, reports differences, and explicitly records no promotion
 evidence.
 
+## Shadow Account CSV Review
+
+The Trading view accepts a canonical, read-only fill export independently of any
+installed broker plugin. This is the fastest way to compare manually exported
+broker fills with the current local paper ledger without granting broker access.
+The UTF-8 header is exact and versioned by its ordered columns:
+
+```csv
+fill_id,order_id,symbol,side,quantity,price,commission,tax,filled_at
+```
+
+Sides are uppercase `BUY` or `SELL`; symbols are six digits; quantities are
+positive integers; numeric values must be finite; and `filled_at` is an ISO-8601
+timestamp with an explicit offset. The UI supplies a source label and a local
+account alias. Users must not enter a real account identifier in that alias.
+
+The importer validates the entire file before writing, caps one file at 1 MB and
+5,000 rows by default, and never retains the source file. It appends normalized
+fills to `state/shadow_fills.csv` and import provenance to
+`state/shadow_imports.csv`. Stable fill identities detect overlap between
+exports; exact files are idempotent; a changed payload for an existing source
+fill ID rejects the whole batch. Every normalized fill and import row carries a
+recomputed SHA-256 content fingerprint. Both ledgers are user-scoped local state
+and are excluded from Git, R2, reports, and release artifacts.
+
+Review groups actual and paper fills by date, symbol, and side. It reports
+behavior coverage, sign-aware price deviation relative to the modeled paper
+fill, and total-variation distance between actual and modeled trade-notional
+allocations. This is not cash/position reconciliation: an export does not prove
+opening holdings, account identity, broker environment, or fee completeness.
+Shadow results never append qualifying reconciliation evidence and cannot
+promote a strategy, authorize a broker, or submit/cancel an order.
+
 ## Promotion Evidence
 
 An account reaches sandbox review only after the frozen paper epoch passes its independent-forward gate. Sandbox reconciliation compares expected cash and positions against the broker and appends one idempotent record per adapter, account, date, and configuration fingerprint.
