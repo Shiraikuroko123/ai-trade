@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#ffffff">
   <title>AI Trade | 投资工作台</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="app.css?v=0.12.0-ui5">
+  <link rel="stylesheet" href="app.css?v=0.12.0-ui6">
 </head>
 <body>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -66,13 +66,28 @@
         </div>
       </header>
 
+      <section id="market-pulse" class="market-pulse" aria-labelledby="market-pulse-title" aria-busy="true">
+        <div class="market-pulse-heading">
+          <strong id="market-pulse-title">市场脉冲</strong>
+          <span>收盘快照</span>
+        </div>
+        <dl id="market-pulse-track" class="market-pulse-track" tabindex="0" aria-describedby="market-pulse-help">
+          <div class="market-pulse-placeholder"><dt>行情</dt><dd>正在校验</dd></div>
+          <div class="market-pulse-placeholder"><dt>策略</dt><dd>正在校验</dd></div>
+          <div class="market-pulse-placeholder"><dt>组合</dt><dd>正在校验</dd></div>
+          <div class="market-pulse-placeholder"><dt>风险权限</dt><dd>正在校验</dd></div>
+          <div class="market-pulse-placeholder"><dt>运行</dt><dd>正在连接</dd></div>
+        </dl>
+      </section>
+
       <main id="main-content" tabindex="-1" aria-busy="true"></main>
     </section>
   </div>
 
   <p id="table-scroll-help" class="sr-only">宽表可横向滚动；聚焦表格区域后可使用方向键查看隐藏列。</p>
+  <p id="market-pulse-help" class="sr-only">市场脉冲带显示最近完整收盘快照、策略、组合、风险权限和本机任务状态；聚焦后可使用左右方向键连续查看。</p>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script src="vendor/klinecharts.min.js?v=10.0.0" defer></script>
-  <script src="app.js?v=0.12.0-ui5" defer></script>
+  <script src="app.js?v=0.12.0-ui6" defer></script>
 </body>
 </html>

@@ -133,6 +133,8 @@ const connectionLabel = document.getElementById("connection-label");
 const jobIndicator = document.getElementById("job-indicator");
 const signedInUser = document.getElementById("signed-in-user");
 const logoutButton = document.getElementById("logout");
+const marketPulse = document.getElementById("market-pulse");
+const marketPulseTrack = document.getElementById("market-pulse-track");
 
 const moneyFormatter = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -244,6 +246,113 @@ function contextBand(items, label) {
     </dl>`;
 }
 
+function pulseItem(label, value, stateLabel, kind = "neutral") {
+  return `
+    <div class="market-pulse-item" data-tone="${escapeHtml(kind)}">
+      <dt>${escapeHtml(label)}</dt>
+      <dd><strong>${escapeHtml(value)}</strong><span>${escapeHtml(stateLabel)}</span></dd>
+    </div>`;
+}
+
+function pulseOverview(payload) {
+  if (state.route === "overview") return payload || {};
+  if (state.route === "risk") return payload?.overview || {};
+  return state.data.get("overview") || {};
+}
+
+function pulsePortfolio(payload) {
+  if (state.route === "portfolio") return payload || {};
+  return state.data.get("portfolio") || {};
+}
+
+function pulseTrading(payload) {
+  if (state.route === "trading") return payload || {};
+  return state.data.get("trading") || {};
+}
+
+function updateMarketPulse(payload = null, failure = "") {
+  if (!marketPulse || !marketPulseTrack) return;
+  const overview = pulseOverview(payload);
+  const portfolio = pulsePortfolio(payload);
+  const trading = pulseTrading(payload);
+  const routeChart = state.route === "market" ? payload?.chart || {} : {};
+  const diagnostics = routeChart.diagnostics || {};
+  const market = overview.market || {};
+  const marketWarnings = Array.isArray(market.warnings) ? market.warnings : [];
+  const fallbackUsed = marketWarnings.some((item) => String(item).includes("network fallback"));
+  const marketDateValue = routeChart.data_date || market.date || "不可用";
+  const marketMissing = routeChart.available === false || diagnostics.missing || market.available === false;
+  const marketStale = Boolean(diagnostics.stale);
+  const marketState = marketMissing
+    ? "数据缺失"
+    : marketStale
+      ? "快照滞后"
+      : fallbackUsed
+        ? "备用源"
+        : "完整收盘";
+  const marketKind = marketMissing ? "danger" : marketStale || fallbackUsed ? "warning" : "success";
+
+  const signal = overview.signal || {};
+  const targetCount = Object.keys(signal.target_weights || {}).length;
+  const signalDate = signal.date || "尚无信号";
+  const signalAligned = Boolean(signal.date && marketDateValue !== "不可用" && signal.date === marketDateValue);
+  const signalState = signal.date
+    ? `${signalAligned ? "同日" : "日期异常"} · ${targetCount} 目标`
+    : "保持现金";
+  const signalKind = !signal.date ? "neutral" : signalAligned ? "success" : "warning";
+
+  const audit = overview.paper?.audit || trading.paper_audit || {};
+  const equity = finite(portfolio.equity) ?? finite(overview.paper?.equity);
+  const drawdown = finite(portfolio.drawdown) ?? finite(audit.metrics?.max_drawdown);
+  const accountDate = portfolio.date || audit.period?.[1] || marketDateValue;
+  const accountValue = equity === null ? "账户未加载" : `¥${integerFormatter.format(equity)}`;
+  const accountState = equity === null
+    ? "等待账本"
+    : `${String(accountDate || "日期未知").slice(5)} · 回撤 ${formatPercent(drawdown)}`;
+  const accountKind = drawdown !== null && drawdown < 0 ? "warning" : "neutral";
+
+  const live = overview.live || trading.live || {};
+  const sessions = audit.sessions ?? 0;
+  const minimumSessions = audit.minimum_promotion_sessions ?? 60;
+  const liveReady = Boolean(live.live_ready);
+  const riskValue = audit.status || overview.paper
+    ? `${sessions} / ${minimumSessions} 日`
+    : "门禁未加载";
+  const riskState = liveReady ? "待限时人工授权" : "真实交易锁定";
+  const riskKind = liveReady ? "warning" : "danger";
+
+  const activeJob = state.jobs.find((job) => ["queued", "running"].includes(job.status));
+  const jobValue = activeJob ? JOB_LABELS[activeJob.action] || activeJob.action : "本机就绪";
+  const jobState = activeJob
+    ? `${STATUS_LABELS[activeJob.status] || activeJob.status} · ${jobDuration(activeJob)}`
+    : "无任务";
+
+  const items = failure
+    ? [
+        pulseItem("连接", "本机服务不可用", "本页数据未更新", "danger"),
+        pulseItem("行情", marketDateValue, marketState, marketKind),
+        pulseItem("策略", signalDate, signalState, signalKind),
+        pulseItem("组合", accountValue, accountState, accountKind),
+        pulseItem("风险权限", riskValue, riskState, riskKind),
+      ]
+    : [
+        pulseItem("行情", marketDateValue, marketState, marketKind),
+        pulseItem("策略", signalDate, signalState, signalKind),
+        pulseItem("组合", accountValue, accountState, accountKind),
+        pulseItem("风险权限", riskValue, riskState, riskKind),
+        pulseItem("运行", jobValue, jobState, activeJob ? "warning" : "neutral"),
+      ];
+  marketPulseTrack.innerHTML = items.join("");
+  marketPulse.classList.remove("is-updating");
+  marketPulse.setAttribute("aria-busy", "false");
+}
+
+function setMarketPulseBusy() {
+  if (!marketPulse) return;
+  marketPulse.classList.add("is-updating");
+  marketPulse.setAttribute("aria-busy", "true");
+}
+
 function pageIntro(title, description, actions = "") {
   return `
     <section class="page-intro">
@@ -267,7 +376,7 @@ function panelHeader(title, note = "", actions = "") {
 }
 
 function emptyRow(colspan, message) {
-  return `<tr><td class="empty-row" colspan="${colspan}">${escapeHtml(message)}</td></tr>`;
+  return `<tr><td class="empty-row" colspan="${colspan}"><strong>暂无记录</strong><span>${escapeHtml(message)}</span></td></tr>`;
 }
 
 function instrumentName(symbol, fallback) {
@@ -282,9 +391,11 @@ function actionButton(action, style = "secondary") {
 function skeletonPage() {
   return `
     <div class="skeleton-stack" role="status" aria-label="正在加载">
-      <div class="skeleton-line"></div>
-      <div class="skeleton-block"></div>
-      <div class="skeleton-block"></div>
+      <div class="skeleton-heading"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+      <div class="skeleton-metrics" aria-hidden="true">
+        <div class="skeleton-metric"></div><div class="skeleton-metric"></div><div class="skeleton-metric"></div><div class="skeleton-metric"></div>
+      </div>
+      <div class="skeleton-workspace" aria-hidden="true"><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
       <span class="sr-only">正在加载当前视图</span>
     </div>`;
 }
@@ -311,6 +422,7 @@ function friendlyError(message) {
 
 function renderError(error) {
   const message = friendlyError(error?.message || error);
+  updateMarketPulse(state.data.get(state.route) || null, message);
   main.innerHTML = `
     <section class="error-state" role="alert">
       <h2>当前视图无法完成加载</h2>
@@ -329,6 +441,7 @@ function renderFileProtocolNotice() {
   marketDate.textContent = "未连接工作台服务";
   jobIndicator.textContent = "服务未启动";
   jobIndicator.className = "status-chip danger";
+  updateMarketPulse(null, "服务未启动");
   main.setAttribute("aria-busy", "false");
   main.innerHTML = `
     <div class="page-stack">
@@ -438,6 +551,7 @@ async function loadRoute() {
     && !signal.aborted
   );
   setRouteChrome(requestedRoute);
+  setMarketPulseBusy();
   main.setAttribute("aria-busy", "true");
   main.innerHTML = skeletonPage();
   try {
@@ -517,6 +631,7 @@ function renderRoute(payload) {
   main.innerHTML = renderers[state.route](payload);
   enhanceRenderedUi();
   updateRouteDate(payload);
+  updateMarketPulse(payload);
   updateJobButtons();
   requestAnimationFrame(() => {
     drawCharts();
@@ -1301,14 +1416,18 @@ function overviewQualityNotice(warnings, reportCount) {
   const title = reportCount
     ? `当前快照有 ${reportCount} 份研究报告需要更新`
     : "当前快照存在需要复核的数据状态";
-  return `<aside class="callout warning quality-notice" role="status">
-    <div class="callout-heading">
-      <div><strong>${escapeHtml(title)}</strong><p>先区分当前行情、历史报告与权限证据，再决定是否运行模拟日。</p></div>
-      ${statusChip(`${warnings.length} 项待复核`, "warning")}
+  return `<details class="exception-panel warning">
+    <summary>
+      <span class="exception-severity">数据待复核</span>
+      <strong>${escapeHtml(title)}</strong>
+      <span class="exception-count">${warnings.length} 项</span>
+    </summary>
+    <div class="exception-body">
+      <p>先区分当前行情、历史报告与权限证据，再决定是否运行模拟日。</p>
+      <ul>${warnings.map((item) => `<li>${escapeHtml(translateWarning(item))}</li>`).join("")}</ul>
+      <div class="action-row"><a class="button secondary" href="#research">查看研究证据</a></div>
     </div>
-    <ul>${warnings.map((item) => `<li>${escapeHtml(translateWarning(item))}</li>`).join("")}</ul>
-    <div class="action-row"><a class="button secondary" href="#research">查看研究证据</a></div>
-  </aside>`;
+  </details>`;
 }
 
 function rankingTable(ranking) {
@@ -2497,9 +2616,9 @@ function renderPortfolio(data) {
   return `
     <div class="page-stack">
       ${pageIntro("模拟组合", `账户 ${String(data.account_id || "").slice(0, 8)} · 状态日期 ${data.date || "—"}`, actionButton("paper-run", "primary"))}
-      <section class="metric-strip" aria-label="组合摘要">
+      <section class="metric-strip metric-strip-priority portfolio-risk-strip" aria-label="组合摘要">
         ${metric("账户权益", formatMoney(data.equity), "唯一模拟记账口径")}
-        ${metric("可用现金", formatMoney(data.cash), `现金权重 ${formatPercent(data.cash_weight)}`)}
+        ${metric("现金缓冲", formatPercent(data.cash_weight), `${formatMoney(data.cash)} 可用`)}
         ${metric("当前回撤", formatPercent(data.drawdown), "相对账户高水位", tone(data.drawdown))}
         ${metric("风险冷却", `${formatInteger(data.cooldown_remaining)} 日`, data.cooldown_remaining ? "暂停新增风险仓位" : "未触发冷却", data.cooldown_remaining ? "tone-warning" : "tone-positive")}
       </section>
@@ -2557,6 +2676,13 @@ function pendingTable(rows) {
 
 function tradeSideLabel(value) {
   return { BUY: "买入", SELL: "卖出" }[String(value || "").toUpperCase()] || value || "—";
+}
+
+function tradeSideMarkup(value) {
+  const normalized = String(value || "").toUpperCase();
+  const label = tradeSideLabel(value);
+  if (!["BUY", "SELL"].includes(normalized)) return escapeHtml(label);
+  return `<span class="trade-side" data-side="${normalized.toLowerCase()}"><span class="trade-side-code" aria-hidden="true">${normalized}</span><span>${escapeHtml(label)}</span></span>`;
 }
 
 function tradeRejectionReason(value) {
@@ -2662,7 +2788,7 @@ function tradingLedger(data) {
     const rows = data.paper_rejections || [];
     return `<div class="table-wrap"><table class="data-table">
       <thead><tr><th>日期</th><th>证券</th><th>方向</th><th>拒绝原因</th></tr></thead>
-      <tbody>${rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(tradeSideLabel(row.side))}</td><td>${escapeHtml(tradeRejectionReason(row.reason))}</td></tr>`).join("") : emptyRow(4, "模拟账本中没有拒单记录")}</tbody>
+      <tbody>${rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.symbol)}</td><td>${tradeSideMarkup(row.side)}</td><td>${escapeHtml(tradeRejectionReason(row.reason))}</td></tr>`).join("") : emptyRow(4, "模拟账本中没有拒单记录")}</tbody>
     </table></div>`;
   }
   if (state.tradingTab === "broker") {
@@ -2670,7 +2796,7 @@ function tradingLedger(data) {
     return `<div class="table-wrap"><table class="data-table">
       <thead><tr><th>更新时间</th><th>客户端订单</th><th>券商订单</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th>状态</th></tr></thead>
       <tbody>${rows.length ? rows.map((row) => `<tr>
-        <td>${escapeHtml(row.updated_at)}</td><td class="mono">${escapeHtml(row.client_order_id)}</td><td class="mono">${escapeHtml(row.broker_order_id)}</td><td>${escapeHtml(row.symbol)}</td><td>${escapeHtml(tradeSideLabel(row.side))}</td><td class="numeric">${formatInteger(row.quantity)}</td><td>${statusChip(STATUS_LABELS[row.status] || row.status || "—", row.status === "FILLED" ? "success" : row.status === "REJECTED" ? "danger" : "neutral")}</td>
+        <td>${escapeHtml(row.updated_at)}</td><td class="mono">${escapeHtml(row.client_order_id)}</td><td class="mono">${escapeHtml(row.broker_order_id)}</td><td>${escapeHtml(row.symbol)}</td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td>${statusChip(STATUS_LABELS[row.status] || row.status || "—", row.status === "FILLED" ? "success" : row.status === "REJECTED" ? "danger" : "neutral")}</td>
       </tr>`).join("") : emptyRow(7, "尚无券商订单；真实交易路径未配置")}</tbody>
     </table></div>`;
   }
@@ -2678,7 +2804,7 @@ function tradingLedger(data) {
   return `<div class="table-wrap"><table class="data-table">
     <thead><tr><th>日期</th><th>证券</th><th>方向</th><th class="numeric">数量</th><th class="numeric">价格</th><th class="numeric">名义金额</th><th class="numeric">交易成本</th></tr></thead>
     <tbody>${rows.length ? rows.map((row) => `<tr>
-      <td>${escapeHtml(row.date)}</td><td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td><td>${escapeHtml(tradeSideLabel(row.side))}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 3)}</td><td class="numeric">${formatMoney(row.notional)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.stamp_duty) || 0) + (finite(row.transfer_fee) || 0) + (finite(row.slippage_cost) || 0))}</td>
+      <td>${escapeHtml(row.date)}</td><td class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(instrumentName(row.symbol))}</span></td><td>${tradeSideMarkup(row.side)}</td><td class="numeric">${formatInteger(row.quantity)}</td><td class="numeric">${formatNumber(row.price, 3)}</td><td class="numeric">${formatMoney(row.notional)}</td><td class="numeric">${formatMoney((finite(row.commission) || 0) + (finite(row.stamp_duty) || 0) + (finite(row.transfer_fee) || 0) + (finite(row.slippage_cost) || 0))}</td>
     </tr>`).join("") : emptyRow(7, "尚无模拟成交；目标会在下一完整交易日处理")}</tbody>
   </table></div>`;
 }
@@ -2729,9 +2855,9 @@ function renderRisk(data) {
           note: "额度只限制风险，不代表可交易",
         },
       ], "风险证据与权限状态")}
-      <section class="metric-strip" aria-label="风险摘要">
-        ${metric("历史最大回撤", formatPercent(historical.max_drawdown), "回测观测值", tone(historical.max_drawdown))}
+      <section class="metric-strip metric-strip-priority risk-metric-strip" aria-label="风险摘要">
         ${metric("前向最大回撤", formatPercent(paperMetrics.max_drawdown), `${audit.sessions || 0} 个交易日`, tone(paperMetrics.max_drawdown))}
+        ${metric("历史最大回撤", formatPercent(historical.max_drawdown), "回测观测值", tone(historical.max_drawdown))}
         ${metric("历史 95% 预期损失", formatPercent(historical.expected_shortfall_95), "单日尾部均值", tone(historical.expected_shortfall_95))}
         ${metric("Bootstrap 尾部回撤", formatPercent(bootstrapData.max_drawdown_5pct_worst), "较差 5% 路径", tone(bootstrapData.max_drawdown_5pct_worst))}
       </section>
@@ -3361,6 +3487,7 @@ function updateJobsUi() {
     region.innerHTML = jobsTable(state.jobs);
     enhanceRenderedUi();
   }
+  updateMarketPulse(state.data.get(state.route) || null);
   updateJobButtons();
 }
 
@@ -3525,6 +3652,18 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  const pulseRegion = event.target.closest(".market-pulse-track");
+  if (pulseRegion && event.target === pulseRegion && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    if (pulseRegion.scrollWidth <= pulseRegion.clientWidth) return;
+    event.preventDefault();
+    const maximum = pulseRegion.scrollWidth - pulseRegion.clientWidth;
+    const step = Math.max(150, Math.round(pulseRegion.clientWidth * 0.6));
+    if (event.key === "Home") pulseRegion.scrollLeft = 0;
+    if (event.key === "End") pulseRegion.scrollLeft = maximum;
+    if (event.key === "ArrowLeft") pulseRegion.scrollLeft = Math.max(0, pulseRegion.scrollLeft - step);
+    if (event.key === "ArrowRight") pulseRegion.scrollLeft = Math.min(maximum, pulseRegion.scrollLeft + step);
+    return;
+  }
   const tableRegion = event.target.closest(".table-wrap");
   if (tableRegion && event.target === tableRegion && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
     if (tableRegion.scrollWidth <= tableRegion.clientWidth) return;
@@ -3627,6 +3766,7 @@ window.addEventListener("hashchange", async () => {
   if (next === state.route) return;
   state.route = next;
   await loadRoute();
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   main.focus({ preventScroll: true });
 });
 

@@ -65,6 +65,37 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("历史指标不参与权限解锁", self.javascript)
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
+    def test_market_pulse_is_compact_auditable_and_keyboard_scannable(self):
+        self.assertIn('id="market-pulse"', self.html)
+        self.assertIn('id="market-pulse-track"', self.html)
+        self.assertIn('aria-describedby="market-pulse-help"', self.html)
+        self.assertIn("function updateMarketPulse", self.javascript)
+        self.assertIn('event.target.closest(".market-pulse-track")', self.javascript)
+        self.assertIn("pulseRegion.scrollLeft + step", self.javascript)
+        self.assertIn("真实交易锁定", self.javascript)
+        self.assertIn(".market-pulse-track:focus-visible", self.css)
+        self.assertIn('window.scrollTo({ top: 0, left: 0, behavior: "auto" })', self.javascript)
+
+    def test_risk_and_order_semantics_do_not_depend_on_color(self):
+        self.assertIn('class="trade-side-code" aria-hidden="true"', self.javascript)
+        self.assertIn("BUY", self.javascript)
+        self.assertIn("SELL", self.javascript)
+        self.assertIn('metric-strip-priority portfolio-risk-strip', self.javascript)
+        self.assertIn('metric-strip-priority risk-metric-strip', self.javascript)
+        self.assertIn("现金缓冲", self.javascript)
+
+    def test_mobile_navigation_and_dense_surfaces_reflow_without_page_overflow(self):
+        mobile_start = self.css.index("@media (max-width: 820px)")
+        narrow_start = self.css.index("@media (max-width: 560px)")
+        reduced_motion_start = self.css.index("@media (prefers-reduced-motion: reduce)")
+        mobile_css = self.css[mobile_start:narrow_start]
+        self.assertIn("bottom: 0", mobile_css)
+        self.assertIn("overflow-x: auto", mobile_css)
+        self.assertIn("grid-template-columns: minmax(0, 1fr)", mobile_css)
+        narrow_css = self.css[narrow_start:reduced_motion_start]
+        self.assertIn(".market-pulse-track", narrow_css)
+        self.assertIn(".topbar-tools #job-indicator", narrow_css)
+
     def test_selected_strategy_state_uses_a_full_boundary(self):
         selected_rule = re.search(
             r'\.strategy-candidate-item\[aria-pressed="true"\]\s*\{([^}]+)\}',
