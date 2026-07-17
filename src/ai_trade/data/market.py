@@ -4,13 +4,16 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
-import json
 
 from ..config import AppConfig
+from ..json_utils import load_unique_json
 from ..models import Bar, Instrument
 from ..security import TradingStatus
 from .cache_snapshot import non_mutating_snapshot, readable_snapshot
 from .eastmoney import completed_session_cutoff, load_cached_bars
+
+
+MAX_MARKET_MANIFEST_BYTES = 2 * 1024 * 1024
 
 
 @dataclass
@@ -149,8 +152,7 @@ class MarketData:
         if not path.exists():
             return None
         try:
-            raw_manifest = path.read_bytes()
-            manifest = json.loads(raw_manifest.decode("utf-8"))
+            manifest = load_unique_json(path, max_bytes=MAX_MARKET_MANIFEST_BYTES)
             if not isinstance(manifest, dict):
                 raise RuntimeError(
                     f"Invalid cache manifest: {path}: top-level JSON must be an object"
@@ -167,7 +169,7 @@ class MarketData:
                     raise RuntimeError(
                         f"Cache hash mismatch for {symbol}; refresh the complete data snapshot"
                     )
-            self.manifest_sha256 = sha256(raw_manifest).hexdigest()
-        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            self.manifest_sha256 = sha256(path.read_bytes()).hexdigest()
+        except (KeyError, TypeError, ValueError, UnicodeError, OSError) as exc:
             raise RuntimeError(f"Invalid cache manifest: {path}: {exc}") from exc
         return manifest

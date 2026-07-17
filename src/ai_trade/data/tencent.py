@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import AppConfig
+from ..json_utils import load_unique_json
 from ..models import Bar, Instrument
 
 ENDPOINT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
@@ -569,7 +570,10 @@ def _recent_cached_bars(
             or manifest_path.stat().st_size > MAX_MANIFEST_BYTES
         ):
             return []
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = load_unique_json(
+            manifest_path,
+            max_bytes=MAX_MANIFEST_BYTES,
+        )
         if not isinstance(manifest, dict):
             return []
         if manifest.get("provider") != config.raw["data"].get("provider"):

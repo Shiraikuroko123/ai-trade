@@ -13,6 +13,8 @@ from ai_trade.config import load_config
 from ai_trade.data import cache_snapshot
 from ai_trade.data.cache_snapshot import (
     CacheSnapshotRecoveryError,
+    MAX_MANIFEST_BYTES,
+    MAX_TRANSACTION_RECORD_BYTES,
     install_snapshot,
     recover_pending_snapshot,
 )
@@ -289,6 +291,42 @@ class CacheSnapshotTransactionTests(unittest.TestCase):
             ):
                 recover_pending_snapshot(cache)
             self.assertTrue((cache / cache_snapshot.MARKER_NAME).exists())
+
+    def test_snapshot_metadata_rejects_ambiguous_or_oversized_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "cache"
+            cache.mkdir()
+            marker = cache / cache_snapshot.MARKER_NAME
+            marker.write_text(
+                '{"schema_version":1,"schema_version":1}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                CacheSnapshotRecoveryError, "marker is unreadable"
+            ):
+                recover_pending_snapshot(cache)
+
+            marker.write_bytes(b" " * (MAX_TRANSACTION_RECORD_BYTES + 1))
+            with self.assertRaisesRegex(
+                CacheSnapshotRecoveryError, "marker is unreadable"
+            ):
+                recover_pending_snapshot(cache)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "cache"
+            cache.mkdir()
+            manifest = cache / "manifest.json"
+            manifest.write_text('{"files":{},"files":{}}', encoding="utf-8")
+            with self.assertRaisesRegex(
+                cache_snapshot.CacheSnapshotError, "manifest is unreadable"
+            ):
+                cache_snapshot._read_manifest(manifest)
+
+            manifest.write_bytes(b" " * (MAX_MANIFEST_BYTES + 1))
+            with self.assertRaisesRegex(
+                cache_snapshot.CacheSnapshotError, "manifest is unreadable"
+            ):
+                cache_snapshot._read_manifest(manifest)
 
 
 class CacheSnapshotIntegrationTests(unittest.TestCase):

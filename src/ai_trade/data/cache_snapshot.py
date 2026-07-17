@@ -13,6 +13,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from ..json_utils import load_unique_json
 
 MARKER_NAME = ".cache-transaction.json"
 TRANSACTIONS_DIR_NAME = ".cache-transactions"
@@ -20,6 +21,8 @@ TRANSACTION_JOURNAL_NAME = "transaction.json"
 TRANSACTION_LOCK_NAME = ".cache-transaction.lock"
 REFRESH_LOCK_NAME = ".cache-refresh.lock"
 SCHEMA_VERSION = 1
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_TRANSACTION_RECORD_BYTES = 512 * 1024
 
 _TRANSACTION_ID = re.compile(r"^[0-9a-f]{32}$")
 _STATES = {"backing_up", "prepared", "installing", "committed"}
@@ -413,8 +416,11 @@ def _new_marker(
 def _read_and_validate_marker(cache_dir: Path) -> dict[str, Any]:
     marker_path = cache_dir / MARKER_NAME
     try:
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        marker = load_unique_json(
+            marker_path,
+            max_bytes=MAX_TRANSACTION_RECORD_BYTES,
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
         raise CacheSnapshotRecoveryError(
             f"Cache transaction marker is unreadable: {marker_path}"
         ) from exc
@@ -431,8 +437,11 @@ def _read_and_validate_transaction_journal(
             "unavailable; backups were retained"
         )
     try:
-        marker = json.loads(journal_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        marker = load_unique_json(
+            journal_path,
+            max_bytes=MAX_TRANSACTION_RECORD_BYTES,
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
         raise CacheSnapshotRecoveryError(
             "Cache transaction marker is missing and the transaction journal is "
             "unreadable; backups were retained"
@@ -574,8 +583,8 @@ def _update_transaction_state(
 
 def _read_manifest(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = load_unique_json(path, max_bytes=MAX_MANIFEST_BYTES)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise CacheSnapshotError(
             f"Installed cache manifest is unreadable: {path}"
         ) from exc

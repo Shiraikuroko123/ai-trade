@@ -8,6 +8,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   transition records now use bounded duplicate-key-rejecting JSON with explicit
   top-level field allowlists. Atomic writes enforce the same limits before
   publication, so malformed or oversized research evidence fails closed.
+- Market cache manifests and cache-transaction markers now use bounded,
+  duplicate-key-rejecting JSON in the reader, chart, and Eastmoney/Tencent
+  fallback paths. Ambiguous or oversized snapshot metadata cannot select or
+  recover an active data set.
 - Paper account state now uses bounded duplicate-key-rejecting JSON and validates
   an exact versioned schema, canonical identity and dates, finite balances,
   positions, targets, and counters before simulation, audit, or rendering.

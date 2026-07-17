@@ -21,6 +21,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config import AppConfig
+from ..json_utils import load_unique_json
 from ..models import Bar, Instrument
 from . import tencent
 from .cache_snapshot import (
@@ -597,7 +598,10 @@ def _validate_local_cache_provenance(
             raise RuntimeError("Local fallback cache manifest is missing")
         if manifest_path.stat().st_size > MAX_MANIFEST_BYTES:
             raise RuntimeError("Local fallback cache manifest is too large")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = load_unique_json(
+            manifest_path,
+            max_bytes=MAX_MANIFEST_BYTES,
+        )
     except (OSError, UnicodeError, ValueError) as exc:
         raise RuntimeError("Local fallback cache manifest is invalid") from exc
 

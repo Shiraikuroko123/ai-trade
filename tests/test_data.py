@@ -20,7 +20,7 @@ from ai_trade.data.eastmoney import (
     download_universe,
     load_cached_bars,
 )
-from ai_trade.data.market import MarketData
+from ai_trade.data.market import MAX_MARKET_MANIFEST_BYTES, MarketData
 from ai_trade.data.tencent import (
     DIRECT_OPENER as TENCENT_DIRECT_OPENER,
     download_instrument as download_tencent_instrument,
@@ -148,6 +148,26 @@ class DataTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(RuntimeError, "provider"):
+                MarketData(load_config(config))
+
+    def test_market_data_rejects_ambiguous_or_oversized_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = _write_config(root)
+            cache = root / "data/cache"
+            _write_bars(cache / "510300.csv")
+            _write_bars(cache / "510500.csv")
+            manifest = cache / "manifest.json"
+
+            manifest.write_text(
+                '{"provider":"eastmoney","provider":"tencent"}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key"):
+                MarketData(load_config(config))
+
+            manifest.write_bytes(b" " * (MAX_MARKET_MANIFEST_BYTES + 1))
+            with self.assertRaisesRegex(RuntimeError, "exceeds"):
                 MarketData(load_config(config))
 
     def test_download_retries_disconnect_with_browser_request_and_jitter(self):
