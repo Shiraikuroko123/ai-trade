@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Read-only broker probes now share strict runtime validation with live routing
+  and additionally reject malformed or duplicate order/fill collections and
+  truthy non-boolean fee-completeness flags before rendering observations.
 - Broker discovery now rejects duplicate entry-point names, malformed typed
   capability declarations, and factory identity or environment drift at the
   registry boundary.

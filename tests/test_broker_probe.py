@@ -180,6 +180,82 @@ class BrokerProbeTests(unittest.TestCase):
             probe_configured_broker(_config())
         self.assertTrue(broker.closed)
 
+    def test_probe_rejects_malformed_runtime_observations(self):
+        def invalid_health(broker):
+            broker.health = lambda: BrokerHealth(
+                "connected",
+                False,
+                "invalid",
+                datetime.now(timezone.utc),
+            )
+
+        def invalid_account(broker):
+            broker.account = lambda: BrokerAccount(
+                "broker-account", "CNY", True, 1.0, 1.0
+            )
+
+        def invalid_positions(broker):
+            broker.positions = lambda: tuple()
+
+        def invalid_orders(broker):
+            broker.open_orders = lambda: [object()]
+
+        def invalid_fills(broker):
+            broker.fills = lambda since=None: [object()]
+
+        def invalid_fee_flag(broker):
+            broker.fill_commission_complete = "false"
+
+        cases = (
+            (invalid_health, "invalid health snapshot"),
+            (invalid_account, "invalid account snapshot"),
+            (invalid_positions, "invalid position collection"),
+            (invalid_orders, "invalid order snapshot"),
+            (invalid_fills, "invalid fill snapshot"),
+            (invalid_fee_flag, "invalid fill commission completeness flag"),
+        )
+        for mutate, message in cases:
+            broker = ReadOnlyBroker()
+            mutate(broker)
+            with (
+                self.subTest(message=message),
+                patch(
+                    "ai_trade.broker.probe.BrokerRegistry.capabilities",
+                    return_value=broker.capabilities,
+                ),
+                patch(
+                    "ai_trade.broker.probe.BrokerRegistry.create",
+                    return_value=broker,
+                ),
+                self.assertRaisesRegex(RuntimeError, message),
+            ):
+                probe_configured_broker(_config())
+            self.assertTrue(broker.closed)
+
+    def test_probe_rejects_duplicate_open_order_and_fill_ids(self):
+        for method, message in (
+            ("open_orders", "duplicate open client order IDs"),
+            ("fills", "duplicate fill IDs"),
+        ):
+            broker = ReadOnlyBroker()
+            original = getattr(broker, method)
+            values = original()
+            setattr(broker, method, lambda *_, values=values: values * 2)
+            with (
+                self.subTest(method=method),
+                patch(
+                    "ai_trade.broker.probe.BrokerRegistry.capabilities",
+                    return_value=broker.capabilities,
+                ),
+                patch(
+                    "ai_trade.broker.probe.BrokerRegistry.create",
+                    return_value=broker,
+                ),
+                self.assertRaisesRegex(RuntimeError, message),
+            ):
+                probe_configured_broker(_config())
+            self.assertTrue(broker.closed)
+
     def test_probe_rejects_non_sandbox_mode_before_discovery(self):
         with (
             patch("ai_trade.broker.probe.BrokerRegistry.create") as create,

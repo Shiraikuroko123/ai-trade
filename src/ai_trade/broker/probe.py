@@ -20,6 +20,14 @@ from .base import (
 )
 from .paper import paper_status
 from .reconciliation import ReconciliationIssue, reconcile_account
+from .runtime import (
+    validated_broker_account,
+    validated_broker_fills,
+    validated_broker_flag,
+    validated_broker_health,
+    validated_broker_orders,
+    validated_broker_positions,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,8 @@ class _BrokerObservation:
     positions: list[BrokerPosition]
     open_orders: list[BrokerOrderSnapshot]
     fills: list[BrokerFill]
+    fill_commission_complete: bool
+    fill_tax_complete: bool
 
 
 def available_broker_adapters() -> dict[str, object]:
@@ -61,10 +71,8 @@ def probe_configured_broker(config: AppConfig) -> dict[str, object]:
             ],
             "fills": [_serialize(value) for value in observation.fills],
             "fee_observation": {
-                "commission_complete": bool(
-                    getattr(broker, "fill_commission_complete", False)
-                ),
-                "tax_complete": bool(getattr(broker, "fill_tax_complete", False)),
+                "commission_complete": observation.fill_commission_complete,
+                "tax_complete": observation.fill_tax_complete,
                 "warning": (
                     "Missing broker fee fields are observational gaps; this probe "
                     "does not treat zero as proof that no fee was charged."
@@ -147,19 +155,27 @@ def _collect_observation(config: AppConfig) -> _BrokerObservation:
         if broker.environment != BrokerEnvironment.SANDBOX:
             raise RuntimeError("Broker probe returned the wrong environment")
         broker.capabilities.require(required_operations, BrokerEnvironment.SANDBOX)
-        health = broker.health()
+        health = validated_broker_health(broker.health())
         if not health.connected:
             raise RuntimeError(health.message or "Broker connection is unavailable")
-        account = broker.account()
+        account = validated_broker_account(broker.account())
         if account.account_id != configured_account:
             raise RuntimeError("Broker account does not match the configured account")
         return _BrokerObservation(
             broker=broker,
             health=health,
             account=account,
-            positions=broker.positions(),
-            open_orders=broker.open_orders(),
-            fills=broker.fills(),
+            positions=validated_broker_positions(broker.positions()),
+            open_orders=validated_broker_orders(broker.open_orders()),
+            fills=validated_broker_fills(broker.fills()),
+            fill_commission_complete=validated_broker_flag(
+                getattr(broker, "fill_commission_complete", False),
+                "fill commission completeness",
+            ),
+            fill_tax_complete=validated_broker_flag(
+                getattr(broker, "fill_tax_complete", False),
+                "fill tax completeness",
+            ),
         )
     except Exception:
         _close(broker)

@@ -59,6 +59,12 @@ Its authority is deliberately narrow:
   present, separately reported tax is unavailable, and zero must not be read as
   proof that the broker charged no fee.
 
+Probe output is validated before serialization: account, position, and health
+objects use the same strict runtime boundary as live preflight; open orders and
+fills must be valid core model lists with unique IDs; and fee-completeness
+attributes must be actual booleans. A malformed adapter observation closes the
+connection and returns no partial result.
+
 Install from a source checkout after `scripts/bootstrap.ps1`:
 
 ```powershell
