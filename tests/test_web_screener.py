@@ -208,6 +208,15 @@ class DashboardScreenTests(unittest.TestCase):
         self.assertTrue(all(item["history_ready"] for item in result["instruments"]))
         self.assertIn("momentum", result["instruments"][0])
         self.assertIn("annual_volatility", result["instruments"][0])
+        self.assertEqual(result["screen"]["schema_version"], 2)
+        self.assertIn("metric_definitions", result["screen"])
+        self.assertIn("data_quality", result["screen"])
+        self.assertEqual(
+            result["screen"]["source_summary"]["providers"][0]["provider"],
+            "eastmoney",
+        )
+        self.assertEqual(result["screen"]["data_quality"]["complete_percent"], 100.0)
+        self.assertEqual(result["screen"]["completed_session_cutoff"], selected.isoformat())
 
     def test_screen_fails_closed_when_market_cache_is_unavailable(self):
         config = load_config(REPOSITORY_ROOT / "config" / "default.json")
@@ -218,6 +227,9 @@ class DashboardScreenTests(unittest.TestCase):
         self.assertIsNone(result["screen"]["empty_reason"])
         self.assertTrue(result["instruments"])
         self.assertTrue(all(item["data_status"] == "missing" for item in result["instruments"]))
+        self.assertEqual(result["screen"]["source_summary"]["unknown_count"], len(result["instruments"]))
+        self.assertEqual(result["screen"]["data_quality"]["complete_percent"], 0.0)
+        self.assertTrue(any("source provider" in warning for warning in result["screen"]["warnings"]))
 
     def test_http_route_passes_the_bounded_screen_contract(self):
         service = SimpleNamespace(

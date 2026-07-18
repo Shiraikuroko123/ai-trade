@@ -1,6 +1,6 @@
 # Paper Trading Operations
 
-This document describes the `v0.12.0` first-public-release paper-account baseline. Paper execution remains isolated from the read-only market chart, AI assistant, strategy-lab candidate editing, cloud backup, and the unavailable live-broker route.
+This document describes the `v0.12.1` paper-account baseline. Paper execution remains isolated from the read-only market chart, AI assistant, strategy-lab candidate editing, cloud backup, and the unavailable live-broker route.
 
 ## Daily Flow
 

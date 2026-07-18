@@ -7,7 +7,7 @@
 
 [架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-`v0.12.0` 是 AI Trade 的首个公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+`v0.12.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
 系统已经贯通以下流程：
 
@@ -31,13 +31,13 @@
 
 ## 快速开始
 
-推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.12.0) 安装首个公开发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
+推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.12.1) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
 
 ```powershell
-New-Item -ItemType Directory -Force .\AI-Trade-v0.12.0 | Out-Null
-Set-Location .\AI-Trade-v0.12.0
+New-Item -ItemType Directory -Force .\AI-Trade-v0.12.1 | Out-Null
+Set-Location .\AI-Trade-v0.12.1
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.12.0/ai_trade-0.12.0-py3-none-any.whl"
+.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.12.1/ai_trade-0.12.1-py3-none-any.whl"
 .\.venv\Scripts\ai-trade.exe init --directory .\workspace
 Set-Location .\workspace
 ..\.venv\Scripts\ai-trade.exe download --force
@@ -206,7 +206,7 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 ## 证券池批量筛选
 
-左侧 **数据** 视图提供按截面日期、资产类别、板块、趋势、流动性、波动和数据覆盖筛选全部配置证券的只读研究表。每行显示动量、年化波动、20 日平均成交额、历史长度、数据日期和来源状态，并分别绑定条件指纹与行情快照 ID。筛选不会改变策略、模拟账户或交易权限；完整参数和接口边界见 [证券池批量筛选](docs/UNIVERSE_SCREENING.md)。
+左侧 **数据** 视图提供按截面日期、资产类别、板块、趋势、流动性、波动和数据覆盖筛选全部配置证券的只读研究表。每行显示动量、年化波动、20 日平均成交额、历史长度、覆盖百分比、完成截止日和来源提供方；首屏同时披露完整率、历史达标率、来源分布、回退来源和最大日期滞后。接口带有 schema 版本、指标公式、条件指纹与行情快照 ID，便于复核同一份证据。筛选不会改变策略、模拟账户或交易权限；完整参数和接口边界见 [证券池批量筛选](docs/UNIVERSE_SCREENING.md)。
 
 ## 可选 AI K 线助理
 

@@ -1,6 +1,6 @@
 # Contributing
 
-AI Trade `v0.12.0` is the first public release baseline. The project prioritizes timing correctness, reproducibility, provenance, and loss controls over higher backtest returns or a larger feature count.
+AI Trade `v0.12.1` is the current public release baseline. The project prioritizes timing correctness, reproducibility, provenance, and loss controls over higher backtest returns or a larger feature count.
 
 ## Development Setup
 

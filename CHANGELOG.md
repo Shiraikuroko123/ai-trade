@@ -1,6 +1,25 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.12.0` is the first public release; earlier development tags and release notes were consolidated into this baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.12.1` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+
+## 0.12.1 - 2026-07-18
+
+- Promoted the universe screen contract to schema version 2 with explicit metric
+  definitions, completed-session cutoff, source-provider distributions, fallback
+  disclosure, coverage summaries, and lag summaries.
+- Published the screen read timestamp after all derived metrics finish, keeping
+  page-read time distinct from the market data date.
+- Added source-provider, coverage-percent, and cutoff columns to the Data view,
+  plus quality summaries and an expandable formula/measurement section.
+- Added bounded result-count control, actionable unavailable/empty states, and
+  live warning announcements for stale, missing, insufficient, or fallback data.
+- Routed K-line and market-direction colors through the shared CSS semantic token
+  bridge so chart, table, and status colors remain auditable and theme-consistent.
+- Rechecked the dense table, mobile reflow, keyboard scrolling, and chart text
+  summaries without changing trading, backtest, risk, or broker execution logic.
+- Removed the page-level minimum width so the workstation remains readable at
+  200% zoom; wide evidence tables and the market pulse retain their own
+  intentional internal scrolling.
 
 ## Unreleased
 

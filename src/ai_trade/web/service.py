@@ -5,7 +5,7 @@ import json
 import math
 import statistics
 import threading
-from collections import deque
+from collections import Counter, deque
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timezone
 from hashlib import sha256
@@ -41,6 +41,43 @@ _MARKET_CHART_MAX_LIMIT = 1500
 _MARKET_CHART_MAX_TRADE_MARKERS = 500
 _MARKET_CHART_MAX_EXCLUDED_DATES = 20
 MAX_DASHBOARD_REPORT_BYTES = 8 * 1024 * 1024
+SCREEN_SCHEMA_VERSION = 2
+
+# Keep the definitions next to the calculations so the API can disclose the
+# exact research vocabulary used by the table.  These are descriptive only;
+# they do not change strategy or execution behavior.
+SCREEN_METRIC_DEFINITIONS: dict[str, dict[str, str]] = {
+    "momentum": {
+        "label": "动量",
+        "formula": "close[t-skip] / close[t-skip-lookback] - 1",
+        "unit": "ratio",
+        "window": "strategy.lookback_days, strategy.skip_days",
+    },
+    "annual_volatility": {
+        "label": "年化波动",
+        "formula": "stdev(daily_returns) * sqrt(252)",
+        "unit": "ratio",
+        "window": "strategy.volatility_days",
+    },
+    "average_amount": {
+        "label": "20 日平均成交额",
+        "formula": "mean(amount over the latest 20 completed bars)",
+        "unit": "CNY",
+        "window": "20 completed bars",
+    },
+    "trend": {
+        "label": "趋势",
+        "formula": "latest close compared with trend SMA",
+        "unit": "categorical",
+        "window": "strategy.trend_sma_days",
+    },
+    "coverage": {
+        "label": "历史覆盖",
+        "formula": "available bars / minimum required bars, capped at 100%",
+        "unit": "percent",
+        "window": "minimum research history",
+    },
+}
 
 
 class DashboardService:
@@ -530,24 +567,52 @@ class DashboardService:
                 else "no_instruments_match_filters"
             )
         snapshot_id = _screen_snapshot_id(self, selected_date, market)
-        return {
+        generated_at = _now()
+        quality_summary = _screen_quality_summary(
+            rows, _screen_required_history(self.config)
+        )
+        source_summary = _screen_source_summary(rows)
+        returned_source_summary = _screen_source_summary(screened)
+        screen_payload = {
+            "schema_version": SCREEN_SCHEMA_VERSION,
+            "status": status,
+            "filters": selected_filters.as_dict(),
+            "counts": counts,
+            "quality_counts": quality_counts,
+            "data_quality": quality_summary,
+            "source_summary": source_summary,
+            "returned_source_summary": returned_source_summary,
+            "metric_definitions": SCREEN_METRIC_DEFINITIONS,
+            "minimum_history_bars": _screen_required_history(self.config),
+            "snapshot_id": snapshot_id,
+            "filter_fingerprint": _screen_filter_fingerprint(
+                selected_filters
+            ),
+            "data_date": selected_date.isoformat(),
+            "completed_session_cutoff": (
+                market.completed_through.isoformat()
+                if market is not None
+                and getattr(market, "completed_through", None) is not None
+                else None
+            ),
+            "latest_common_session": (
+                market.latest_common_session.isoformat()
+                if market is not None
+                and getattr(market, "latest_common_session", None) is not None
+                else None
+            ),
+            "empty_reason": empty_reason,
+            "warnings": _screen_warnings(rows, snapshot),
+        }
+        result = {
             **snapshot,
             "instruments": screened,
-            "screen": {
-                "status": status,
-                "filters": selected_filters.as_dict(),
-                "counts": counts,
-                "quality_counts": quality_counts,
-                "minimum_history_bars": _screen_required_history(self.config),
-                "snapshot_id": snapshot_id,
-                "filter_fingerprint": _screen_filter_fingerprint(
-                    selected_filters
-                ),
-                "data_date": selected_date.isoformat(),
-                "empty_reason": empty_reason,
-                "warnings": _screen_warnings(rows, snapshot),
-            },
+            "screen": screen_payload,
         }
+        # ``universe()`` records its own read timestamp.  The screen has extra
+        # metric work, so publish a timestamp after that work has completed.
+        result["generated_at"] = generated_at
+        return result
 
     def _screen_metrics(
         self,
@@ -1591,7 +1656,124 @@ def _screen_warnings(
         warnings.append(f"{missing} instruments have no validated bars")
     if insufficient:
         warnings.append(f"{insufficient} instruments lack the minimum research history")
+    fallback = sum(1 for row in rows if _screen_is_fallback_source(row))
+    if fallback:
+        warnings.append(
+            f"{fallback} instruments use a network or validated local fallback source"
+        )
+    unknown_source = sum(
+        1
+        for row in rows
+        if not (_bounded_manifest_text(row.get("source_provider"))
+                or _bounded_manifest_text(row.get("source")))
+    )
+    if unknown_source:
+        warnings.append(f"{unknown_source} instruments have no source provider metadata")
     return warnings
+
+
+def _screen_is_fallback_source(row: dict[str, Any]) -> bool:
+    source = " ".join(
+        value.lower()
+        for value in (
+            _bounded_manifest_text(row.get("source_provider")),
+            _bounded_manifest_text(row.get("source")),
+        )
+        if value
+    )
+    return "fallback" in source or "validated_local" in source
+
+
+def _screen_source_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: Counter[str] = Counter()
+    fallback_by_provider: Counter[str] = Counter()
+    fallback_count = 0
+    for row in rows:
+        provider = _bounded_manifest_text(row.get("source_provider"))
+        source = _bounded_manifest_text(row.get("source"))
+        key = provider or source or "unknown"
+        counts[key] += 1
+        is_fallback = _screen_is_fallback_source(row)
+        fallback_count += int(is_fallback)
+        fallback_by_provider[key] += int(is_fallback)
+    total = len(rows)
+    providers = [
+        {
+            "provider": provider,
+            "count": count,
+            "percent": round(count / total * 100.0, 1) if total else 0.0,
+            "fallback": bool(fallback_by_provider.get(provider)),
+        }
+        for provider, count in sorted(
+            counts.items(), key=lambda item: (-item[1], item[0])
+        )
+    ]
+    return {
+        "instrument_count": total,
+        "fallback_count": fallback_count,
+        "unknown_count": counts.get("unknown", 0),
+        "providers": providers,
+    }
+
+
+def _screen_quality_summary(
+    rows: list[dict[str, Any]], minimum_history: int
+) -> dict[str, Any]:
+    total = len(rows)
+    status_counts = Counter(
+        str(row.get("data_status") or "unknown")
+        for row in rows
+    )
+    coverage_values = [
+        value
+        for row in rows
+        if (value := _finite_float(row.get("coverage_percent"))) is not None
+    ]
+    lag_values = [
+        value
+        for row in rows
+        if (value := _finite_float(row.get("data_lag_days"))) is not None
+    ]
+    dates = sorted(
+        {
+            str(row.get("latest_bar_date"))
+            for row in rows
+            if row.get("latest_bar_date")
+        }
+    )
+
+    def percentage(count: int) -> float:
+        return round(count / total * 100.0, 1) if total else 0.0
+
+    def summary(values: list[float]) -> dict[str, float | None]:
+        if not values:
+            return {"minimum": None, "median": None, "maximum": None}
+        return {
+            "minimum": round(min(values), 1),
+            "median": round(statistics.median(values), 1),
+            "maximum": round(max(values), 1),
+        }
+
+    return {
+        "row_count": total,
+        "minimum_history_bars": minimum_history,
+        "status_counts": {
+            key: status_counts.get(key, 0)
+            for key in ("complete", "stale", "insufficient_history", "missing")
+        },
+        "complete_percent": percentage(status_counts.get("complete", 0)),
+        "history_ready_percent": round(
+            sum(bool(row.get("history_ready")) for row in rows)
+            / total
+            * 100.0,
+            1,
+        )
+        if total
+        else 0.0,
+        "coverage_percent": summary(coverage_values),
+        "lag_days": summary(lag_values),
+        "latest_bar_dates": dates,
+    }
 
 
 def _aggregate_market_chart_bars(

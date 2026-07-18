@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Read-only QMT/xtquant observation adapter for AI Trade"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["ai-trade>=0.12.0,<0.14"]
+dependencies = ["ai-trade>=0.12.1,<0.14"]
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "Shiraikuroko123"}]

@@ -2,7 +2,7 @@
 
 ## Supported Version
 
-Only `v0.12.0`, the latest release on `main`, is supported. Earlier prerelease tags and GitHub Release objects are not supported distribution channels.
+Only `v0.12.1`, the latest release on `main`, is supported. Earlier prerelease tags and GitHub Release objects are not supported distribution channels.
 
 ## Reporting a Vulnerability
 

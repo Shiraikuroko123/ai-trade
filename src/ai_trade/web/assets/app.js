@@ -398,7 +398,9 @@ function updateMarketPulse(payload = null, failure = "") {
   const market = overview.market || {};
   const marketFreshness = market.freshness || {};
   const marketWarnings = Array.isArray(market.warnings) ? market.warnings : [];
-  const fallbackUsed = marketWarnings.some((item) => String(item).includes("network fallback"));
+  const universeFallbackCount = finite(routeUniverse.screen?.source_summary?.fallback_count) || 0;
+  const fallbackUsed = marketWarnings.some((item) => String(item).includes("network fallback"))
+    || universeFallbackCount > 0;
   const marketEvidenceLoaded = Object.keys(market).length > 0
     || Object.prototype.hasOwnProperty.call(routeChart, "available")
     || Object.prototype.hasOwnProperty.call(routeUniverse, "market_available");
@@ -419,6 +421,7 @@ function updateMarketPulse(payload = null, failure = "") {
     diagnostics.stale === true
     || marketFreshness.current === false
     || routeUniverse.screen?.status === "partial"
+    || finite(routeUniverse.screen?.data_quality?.lag_days?.maximum) > 0
   );
   const marketState = !marketEvidenceLoaded
     ? "状态未加载"
@@ -802,7 +805,7 @@ function renderRoute(payload) {
     portfolio: renderPortfolio,
     trading: renderTrading,
     risk: renderRisk,
-    universe: renderUniverse,
+    universe: renderUniverseEnhanced,
     storage: renderStorage,
     system: renderSystem,
   };
@@ -883,6 +886,42 @@ function enhanceRenderedUi() {
     }
     tableIndex += 1;
   }
+  bindUniverseFilterForm();
+}
+
+function applyUniverseFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.universeDate = String(values.get("date") || "");
+  state.universeFilters = {
+    asset_class: String(values.get("asset_class") || ""),
+    sector: String(values.get("sector") || "").trim(),
+    trend: String(values.get("trend") || "any"),
+    coverage: String(values.get("coverage") || "all"),
+    min_average_amount: String(values.get("min_average_amount") || "").trim(),
+    max_annual_volatility: String(values.get("max_annual_volatility") || "").trim(),
+    active_only: form.querySelector("[name='active_only']")?.checked === true,
+    sort: String(values.get("sort") || "momentum"),
+    direction: String(values.get("direction") || "desc"),
+    limit: String(values.get("limit") || "200"),
+  };
+  const submit = form.querySelector("[data-universe-submit]");
+  if (submit) {
+    submit.disabled = true;
+    submit.setAttribute("aria-busy", "true");
+  }
+  loadRoute();
+}
+
+function bindUniverseFilterForm() {
+  const form = document.getElementById("universe-date-form");
+  if (!form || form.dataset.bound === "true") return;
+  form.dataset.bound = "true";
+  form.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing || event.target.matches("textarea")) return;
+    event.preventDefault();
+    applyUniverseFilterForm(form);
+  });
 }
 
 function marketProviderLabel(value) {
@@ -1260,6 +1299,29 @@ function ensureMarketIndicators(library) {
   });
 }
 
+function themeColor(token) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  return value || "transparent";
+}
+
+function marketChartColors() {
+  return {
+    grid: themeColor("--chart-grid"),
+    gridSoft: themeColor("--chart-grid-soft"),
+    axis: themeColor("--chart-axis"),
+    crosshair: themeColor("--chart-crosshair"),
+    separator: themeColor("--chart-separator"),
+    separatorActive: themeColor("--chart-separator-active"),
+    up: themeColor("--chart-candle-up"),
+    down: themeColor("--chart-candle-down"),
+    flat: themeColor("--chart-candle-flat"),
+    series1: themeColor("--chart-series-1"),
+    series2: themeColor("--chart-series-2"),
+    series3: themeColor("--chart-series-3"),
+    series4: themeColor("--chart-series-4"),
+  };
+}
+
 function addMarketTradeMarkers(chart, markers) {
   if (!Array.isArray(markers)) return;
   for (const marker of markers.slice(-120)) {
@@ -1268,7 +1330,7 @@ function addMarketTradeMarkers(chart, markers) {
     const quantity = finite(marker.quantity);
     if (!Number.isFinite(timestamp) || price === null || quantity === null) continue;
     const buying = marker.side === "BUY";
-    const color = buying ? "#a8322d" : "#197149";
+    const color = buying ? themeColor("--market-up") : themeColor("--market-down");
     chart.createOverlay({
       name: "simpleAnnotation",
       paneId: "candle_pane",
@@ -1303,6 +1365,7 @@ function initMarketChart(data) {
   container.replaceChildren();
   try {
     ensureMarketIndicators(library);
+    const colors = marketChartColors();
     const compactChart = container.clientWidth < 480;
     const chart = library.init(container, {
       locale: "zh-CN",
@@ -1310,31 +1373,31 @@ function initMarketChart(data) {
       styles: {
         grid: {
           show: true,
-          horizontal: { show: true, color: "#e7eaec", size: 1, style: "dashed", dashedValue: [3, 3] },
-          vertical: { show: true, color: "#eff1f2", size: 1, style: "dashed", dashedValue: [3, 3] },
+          horizontal: { show: true, color: colors.grid, size: 1, style: "dashed", dashedValue: [3, 3] },
+          vertical: { show: true, color: colors.gridSoft, size: 1, style: "dashed", dashedValue: [3, 3] },
         },
         candle: {
           type: "candle_solid",
           bar: {
             compareRule: "previous_close",
-            upColor: "#b83a34",
-            downColor: "#21835a",
-            noChangeColor: "#6b7280",
-            upBorderColor: "#b83a34",
-            downBorderColor: "#21835a",
-            noChangeBorderColor: "#6b7280",
-            upWickColor: "#b83a34",
-            downWickColor: "#21835a",
-            noChangeWickColor: "#6b7280",
+            upColor: colors.up,
+            downColor: colors.down,
+            noChangeColor: colors.flat,
+            upBorderColor: colors.up,
+            downBorderColor: colors.down,
+            noChangeBorderColor: colors.flat,
+            upWickColor: colors.up,
+            downWickColor: colors.down,
+            noChangeWickColor: colors.flat,
           },
           priceMark: {
-            high: { color: "#475569" },
-            low: { color: "#475569" },
+            high: { color: colors.axis },
+            low: { color: colors.axis },
             last: {
               compareRule: "previous_close",
-              upColor: "#b83a34",
-              downColor: "#21835a",
-              noChangeColor: "#6b7280",
+              upColor: colors.up,
+              downColor: colors.down,
+              noChangeColor: colors.flat,
             },
           },
           tooltip: { showRule: compactChart ? "follow_cross" : "always" },
@@ -1342,37 +1405,37 @@ function initMarketChart(data) {
         indicator: {
           ohlc: {
             compareRule: "previous_close",
-            upColor: "#b83a34",
-            downColor: "#21835a",
-            noChangeColor: "#6b7280",
+            upColor: colors.up,
+            downColor: colors.down,
+            noChangeColor: colors.flat,
           },
           lines: [
-            { color: "#267a86" },
-            { color: "#b57c18" },
-            { color: "#6f5aa8" },
-            { color: "#64748b" },
+            { color: colors.series1 },
+            { color: colors.series2 },
+            { color: colors.series3 },
+            { color: colors.series4 },
           ],
           bars: [{
-            upColor: "#b83a34",
-            downColor: "#21835a",
-            noChangeColor: "#6b7280",
+            upColor: colors.up,
+            downColor: colors.down,
+            noChangeColor: colors.flat,
           }],
           tooltip: { showRule: compactChart ? "follow_cross" : "always" },
         },
         xAxis: {
-          axisLine: { color: "#d9dee2" },
-          tickLine: { color: "#d9dee2" },
-          tickText: { color: "#66717d", family: "Cascadia Mono, Consolas, monospace" },
+          axisLine: { color: colors.separator },
+          tickLine: { color: colors.separator },
+          tickText: { color: colors.axis, family: "Cascadia Mono, Consolas, monospace" },
         },
         yAxis: {
-          axisLine: { color: "#d9dee2" },
-          tickLine: { color: "#d9dee2" },
-          tickText: { color: "#66717d", family: "Cascadia Mono, Consolas, monospace" },
+          axisLine: { color: colors.separator },
+          tickLine: { color: colors.separator },
+          tickText: { color: colors.axis, family: "Cascadia Mono, Consolas, monospace" },
         },
-        separator: { color: "#d9dee2", activeBackgroundColor: "#f1f4f5" },
+        separator: { color: colors.separator, activeBackgroundColor: colors.separatorActive },
         crosshair: {
-          horizontal: { line: { color: "#697782" } },
-          vertical: { line: { color: "#697782" } },
+          horizontal: { line: { color: colors.crosshair } },
+          vertical: { line: { color: colors.crosshair } },
         },
       },
     });
@@ -3523,7 +3586,7 @@ function renderUniverse(data) {
       <div class="field"><label for="universe-sort">排序指标</label><select id="universe-sort" name="sort"><option value="momentum"${filters.sort === "momentum" ? " selected" : ""}>动量</option><option value="average_amount"${filters.sort === "average_amount" ? " selected" : ""}>成交额</option><option value="annual_volatility"${filters.sort === "annual_volatility" ? " selected" : ""}>年化波动</option><option value="latest_close"${filters.sort === "latest_close" ? " selected" : ""}>最新收盘</option><option value="coverage"${filters.sort === "coverage" ? " selected" : ""}>数据覆盖</option><option value="symbol"${filters.sort === "symbol" ? " selected" : ""}>代码</option></select></div>
       <div class="field"><label for="universe-direction">顺序</label><select id="universe-direction" name="direction"><option value="desc"${filters.direction !== "asc" ? " selected" : ""}>从高到低</option><option value="asc"${filters.direction === "asc" ? " selected" : ""}>从低到高</option></select></div>
       <label class="check-field" for="universe-active-only"><input id="universe-active-only" name="active_only" type="checkbox"${filters.active_only ? " checked" : ""}><span>仅显示当日有效</span></label>
-      <div class="filter-actions"><button class="button primary" type="submit">应用筛选</button><button class="button secondary" type="button" data-universe-reset>清除条件</button></div>
+      <div class="filter-actions"><button class="button primary" type="button" data-universe-submit>应用筛选</button><button class="button secondary" type="button" data-universe-reset>清除条件</button></div>
     </form>
     <p id="universe-filter-help" class="section-note">指标只来自同一份已校验的收盘快照；空值表示历史不足或数据不可用，不会用零填充。</p>`;
   const status = screenStatusLabel(screen.status, data.market_available);
@@ -3576,6 +3639,100 @@ function renderUniverse(data) {
     </div>`;
 }
 
+function renderUniverseEnhanced(data) {
+  const instruments = Array.isArray(data.instruments) ? data.instruments : [];
+  const screen = data.screen || {};
+  const filters = screen.filters || state.universeFilters || {};
+  const counts = screen.counts || {};
+  const quality = screen.data_quality || {};
+  const sourceSummary = screen.source_summary || {};
+  const returnedSourceSummary = screen.returned_source_summary || {};
+  const primarySource = returnedSourceSummary.providers?.[0] || sourceSummary.providers?.[0];
+  const sourceValue = primarySource
+    ? `${screenSourceLabel(primarySource.provider)} ${formatInteger(primarySource.count)} / ${formatInteger(returnedSourceSummary.instrument_count ?? sourceSummary.instrument_count ?? 0)}`
+    : "未提供";
+  const maxLag = finite(quality.lag_days?.maximum);
+  const coverageMedian = finite(quality.coverage_percent?.median);
+  const fallbackUsed = Number(sourceSummary.fallback_count || 0) > 0;
+  const assetClasses = [...new Set([
+    "equity",
+    "fixed_income",
+    "commodity",
+    ...instruments.map((item) => item.asset_class).filter(Boolean),
+  ])].sort();
+  const sectors = [...new Set(instruments.map((item) => item.sector).filter(Boolean))].sort();
+  const option = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  const filter = `
+    <form class="filter-form universe-filter-form" id="universe-date-form" aria-describedby="universe-filter-help">
+      <div class="field"><label for="universe-date">截面日期</label><input id="universe-date" name="date" type="date" value="${escapeHtml(data.date || "")}"></div>
+      <div class="field"><label for="universe-asset-class">资产类别</label><select id="universe-asset-class" name="asset_class">${option("", "全部", !filters.asset_class)}${assetClasses.map((value) => option(value, assetClassLabel(value), filters.asset_class === value)).join("")}</select></div>
+      <div class="field"><label for="universe-sector">板块/分组</label><input id="universe-sector" name="sector" list="universe-sector-options" value="${escapeHtml(filters.sector || "")}" placeholder="例如 china_large_cap"><datalist id="universe-sector-options">${sectors.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}</datalist></div>
+      <div class="field"><label for="universe-trend">趋势</label><select id="universe-trend" name="trend">${option("any", "全部", filters.trend === "any")}${option("up", "上行", filters.trend === "up")}${option("mixed", "混合", filters.trend === "mixed")}${option("down", "下行", filters.trend === "down")}${option("not_down", "排除下行", filters.trend === "not_down")}</select></div>
+      <div class="field"><label for="universe-coverage">数据要求</label><select id="universe-coverage" name="coverage">${option("all", "全部", filters.coverage === "all")}${option("ready", "历史长度达标", filters.coverage === "ready")}${option("complete", "当日完整", filters.coverage === "complete")}</select></div>
+      <div class="field"><label for="universe-min-amount">最低 20 日成交额</label><input id="universe-min-amount" name="min_average_amount" type="number" min="0" step="100000" inputmode="decimal" value="${escapeHtml(filters.min_average_amount ?? "")}" placeholder="不限制"></div>
+      <div class="field"><label for="universe-max-volatility">最高年化波动</label><input id="universe-max-volatility" name="max_annual_volatility" type="number" min="0" max="10" step="0.01" inputmode="decimal" value="${escapeHtml(filters.max_annual_volatility ?? "")}" placeholder="例如 0.35"></div>
+      <div class="field"><label for="universe-sort">排序指标</label><select id="universe-sort" name="sort">${option("momentum", "动量", filters.sort === "momentum")}${option("average_amount", "成交额", filters.sort === "average_amount")}${option("annual_volatility", "年化波动", filters.sort === "annual_volatility")}${option("latest_close", "最新收盘", filters.sort === "latest_close")}${option("coverage", "数据覆盖", filters.sort === "coverage")}${option("symbol", "代码", filters.sort === "symbol")}</select></div>
+      <div class="field"><label for="universe-direction">顺序</label><select id="universe-direction" name="direction">${option("desc", "从高到低", filters.direction !== "asc")}${option("asc", "从低到高", filters.direction === "asc")}</select></div>
+      <div class="field"><label for="universe-limit">最多返回</label><input id="universe-limit" name="limit" type="number" min="1" max="500" step="1" inputmode="numeric" value="${escapeHtml(filters.limit ?? "200")}"></div>
+      <label class="check-field" for="universe-active-only"><input id="universe-active-only" name="active_only" type="checkbox"${filters.active_only ? " checked" : ""}><span>仅显示当日有效</span></label>
+       <div class="filter-actions"><button class="button primary" type="button" data-universe-submit>应用筛选</button><button class="button secondary" type="button" data-universe-reset>清除条件</button></div>
+    </form>
+    <p id="universe-filter-help" class="section-note">指标只来自同一份已校验的收盘快照；空值表示历史不足或数据不可用，不会用零填充。最多返回 500 条。</p>`;
+  const status = screenStatusLabel(screen.status, data.market_available);
+  const statusKind = screen.status === "ok" ? "success" : screen.status === "partial" || screen.status === "empty" ? "warning" : "danger";
+  const qualityStatus = Array.isArray(screen.warnings) && screen.warnings.length ? "tone-warning" : "tone-info";
+  const warningMarkup = Array.isArray(screen.warnings) && screen.warnings.length
+    ? `<aside class="callout warning" role="status" aria-live="polite"><strong>数据边界</strong><ul>${screen.warnings.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul></aside>`
+    : "";
+  const emptyMarkup = screen.empty_reason
+    ? `<aside class="callout warning" role="status" aria-live="polite"><strong>${screen.empty_reason === "market_data_unavailable" ? "行情快照不可用" : "没有证券符合当前条件"}</strong><p>${screen.empty_reason === "market_data_unavailable" ? "先刷新已完成收盘数据，再重新运行筛选；本次响应没有用零值代替缺失指标。" : "放宽资产、趋势、覆盖或数值条件；筛选不会改变投资池或策略配置。"}</p></aside>`
+    : "";
+  const rows = instruments.length
+    ? instruments.map((item) => `<tr>
+        <td class="symbol-cell"><strong>${escapeHtml(item.symbol)}</strong><span>${escapeHtml(instrumentName(item.symbol, item.name))}</span></td>
+        <td><span>${escapeHtml(assetClassLabel(item.asset_class))}</span><span class="table-subtext">${escapeHtml(item.sector || "—")}</span></td>
+        <td class="numeric">${formatNumber(item.latest_close, 3)}</td>
+        <td class="numeric ${tone(item.momentum)}">${formatPercent(item.momentum, true)}</td>
+        <td class="numeric">${formatPercent(item.annual_volatility)}</td>
+        <td class="numeric">${item.average_amount == null ? "—" : formatMoney(item.average_amount)}</td>
+        <td>${statusChip(trendLabel(item.trend), trendKind(item.trend))}</td>
+        <td>${statusChip(item.history_ready ? `达标 ${formatInteger(item.history_bars)} 日` : `${formatInteger(item.history_bars)} / ${formatInteger(screen.minimum_history_bars)} 日`, item.history_ready ? "success" : "warning")}</td>
+        <td>${statusChip(screenDataStatusLabel(item.data_status), screenDataStatusKind(item.data_status))}</td>
+        <td>${booleanChip(Boolean(item.active), "有效", eligibilityLabel(item.eligibility_reasons))}</td>
+        <td class="coverage-cell"><strong class="mono">${item.coverage_percent == null ? "—" : `${formatNumber(item.coverage_percent, 1)}%`}</strong><span class="table-subtext">${escapeHtml(item.latest_bar_date || item.coverage?.last || "—")}${item.data_lag_days ? ` · 滞后 ${formatInteger(item.data_lag_days)} 日` : ""}</span></td>
+        <td>${statusChip(screenSourceLabel(item.source_provider || item.source), screenSourceKind(item.source_provider || item.source))}<span class="table-subtext mono">${escapeHtml(item.source || "—")}</span></td>
+      </tr>`).join("")
+    : emptyRow(12, screen.empty_reason === "market_data_unavailable" ? "行情快照不可用，暂无可计算指标" : "没有证券符合当前筛选条件");
+  const sourceRows = (sourceSummary.providers || []).map((entry) => `<span><strong>${escapeHtml(screenSourceLabel(entry.provider))}</strong> ${formatInteger(entry.count)} 条 · ${formatNumber(entry.percent, 1)}%</span>`).join("") || "<span>没有来源元数据</span>";
+  const definitions = Object.values(screen.metric_definitions || {}).map((definition) => `<div><dt>${escapeHtml(definition.label || "指标")}</dt><dd><code>${escapeHtml(definition.formula || "—")}</code><span>${escapeHtml(definition.window || "")}</span></dd></div>`).join("") || "<div><dd>当前响应未提供指标定义。</dd></div>";
+  return `<div class="page-stack">
+    ${pageIntro("证券池筛选", "按时间点、资产、流动性和风险特征比较全部候选证券", filter)}
+    <section class="metric-strip" aria-label="筛选摘要">
+      ${metric("返回证券", `${formatInteger(counts.returned ?? instruments.length)} / ${formatInteger(counts.input ?? data.candidate_records)}`, `匹配 ${formatInteger(counts.matched ?? instruments.length)}，排除 ${formatInteger(counts.excluded ?? 0)}`)}
+      ${metric("数据状态", status, `${formatInteger(screen.quality_counts?.complete ?? 0)} 条当日完整，${formatInteger(screen.quality_counts?.insufficient_history ?? 0)} 条历史不足`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}
+      ${metric("来源提供方", sourceValue, fallbackUsed ? "包含回退来源，需核对数据边界" : "返回结果的主要来源", fallbackUsed ? "tone-warning" : "tone-info")}
+      ${metric("覆盖 / 滞后", coverageMedian == null ? "—" : `${formatNumber(coverageMedian, 1)}%`, maxLag == null || maxLag === 0 ? "未发现日期滞后" : `最大滞后 ${formatInteger(maxLag)} 日`, maxLag > 0 ? "tone-warning" : qualityStatus)}
+    </section>
+    ${emptyMarkup}${warningMarkup}
+    <section class="panel">
+      ${panelHeader("横向研究结果", `${data.date || "—"} 的同一快照 · ${screenSortLabel(filters.sort, filters.direction)} · ${screen.completed_session_cutoff ? `完成截止 ${screen.completed_session_cutoff}` : "完成截止待确认"}`)}
+      <div class="table-wrap"><table class="data-table universe-screen-table">
+        <thead><tr><th>证券</th><th>资产/分组</th><th class="numeric">最新收盘</th><th class="numeric">动量</th><th class="numeric">年化波动</th><th class="numeric">20 日成交额</th><th>趋势</th><th>历史</th><th>数据状态</th><th>资格</th><th>覆盖 / 截止</th><th>来源提供方</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </section>
+    <section class="screen-quality-band" aria-label="筛选质量摘要">
+      <div class="screen-quality-heading"><strong>质量摘要</strong><span>对所有候选记录统计，非仅当前返回行</span></div>
+      <div class="screen-quality-grid"><div><span>当日完整</span><strong>${formatNumber(quality.complete_percent, 1)}%</strong></div><div><span>历史达标</span><strong>${formatNumber(quality.history_ready_percent, 1)}%</strong></div><div><span>覆盖中位</span><strong>${formatNumber(quality.coverage_percent?.median, 1)}%</strong></div><div><span>最大滞后</span><strong>${maxLag == null ? "—" : `${formatInteger(maxLag)} 日`}</strong></div></div>
+      <div class="screen-source-list" aria-label="来源分布">${sourceRows}</div>
+    </section>
+    <section class="equal-layout">
+      <article class="panel">${panelHeader("筛选证据", "条件、数据身份与口径")}<div class="path-list"><div class="path-row"><span>筛选条件</span><code>${escapeHtml(JSON.stringify(screen.filters || {}))}</code></div><div class="path-row"><span>条件指纹</span><code>${escapeHtml(screen.filter_fingerprint || "—")}</code></div><div class="path-row"><span>筛选快照</span><code>${escapeHtml(screen.snapshot_id || "—")}</code></div><div class="path-row"><span>契约版本</span><code>screen-v${escapeHtml(screen.schema_version ?? "—")}</code></div><div class="path-row"><span>完成截止</span><code>${escapeHtml(screen.completed_session_cutoff || "—")}</code></div><div class="path-row"><span>主数据指纹</span><code>${escapeHtml(data.master_sha256 || "—")}</code></div></div></article>
+      <article class="panel screen-methodology">${panelHeader("指标口径", "只读计算，空值保持空值")}<details><summary>查看公式与窗口</summary><dl>${definitions}</dl></details><p class="section-note">筛选结果只是候选集合，不会自动生成订单、改变策略参数或绕过风险门禁。基本面和情绪数据仍需单独接入并标记覆盖范围。</p></article>
+    </section>
+  </div>`;
+}
+
 function screenSortLabel(value, direction) {
   const labels = { momentum: "动量", average_amount: "成交额", annual_volatility: "年化波动", latest_close: "最新收盘", coverage: "数据覆盖", symbol: "代码" };
   return `${labels[value] || "代码"} · ${direction === "asc" ? "升序" : "降序"}`;
@@ -3583,7 +3740,27 @@ function screenSortLabel(value, direction) {
 
 function screenStatusLabel(value, marketAvailable) {
   if (!marketAvailable || value === "unavailable") return "行情不可用";
-  return { ok: "完整", partial: "部分可用", empty: "无匹配" }[value] || "待确认";
+  return { ok: "完整", partial: "部分可用", empty: "无匹配", loading: "加载中" }[value] || "待确认";
+}
+
+function screenSourceLabel(value) {
+  return {
+    eastmoney: "东方财富",
+    eastmoney_network: "东方财富网络",
+    tencent: "腾讯行情",
+    tencent_newfqkline: "腾讯前复权",
+    tencent_network_fallback: "腾讯网络回退",
+    validated_local_fallback: "已验证本地回退",
+    network: "网络行情",
+    unknown: "来源未说明",
+  }[String(value || "unknown").toLowerCase()] || value || "来源未说明";
+}
+
+function screenSourceKind(value) {
+  const normalized = String(value || "unknown").toLowerCase();
+  if (normalized === "unknown") return "neutral";
+  if (normalized.includes("fallback")) return "warning";
+  return "info";
 }
 
 function screenDataStatusLabel(value) {
@@ -4279,6 +4456,12 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const universeSubmit = event.target.closest("[data-universe-submit]");
+  if (universeSubmit) {
+    const form = universeSubmit.closest("#universe-date-form");
+    if (form && !universeSubmit.disabled) applyUniverseFilterForm(form);
+    return;
+  }
   const universeReset = event.target.closest("[data-universe-reset]");
   if (universeReset) {
     state.universeDate = "";
@@ -4550,23 +4733,6 @@ document.addEventListener("submit", (event) => {
       "候选已设为实验室活动模拟版本",
       event.target.querySelector("button[type='submit']"),
     );
-  } else if (event.target.id === "universe-date-form") {
-    event.preventDefault();
-    const form = new FormData(event.target);
-    state.universeDate = String(form.get("date") || "");
-    state.universeFilters = {
-      asset_class: String(form.get("asset_class") || ""),
-      sector: String(form.get("sector") || "").trim(),
-      trend: String(form.get("trend") || "any"),
-      coverage: String(form.get("coverage") || "all"),
-      min_average_amount: String(form.get("min_average_amount") || "").trim(),
-      max_annual_volatility: String(form.get("max_annual_volatility") || "").trim(),
-      active_only: form.get("active_only") === "on",
-      sort: String(form.get("sort") || "momentum"),
-      direction: String(form.get("direction") || "desc"),
-      limit: String(form.get("limit") || "200"),
-    };
-    loadRoute();
   } else if (event.target.id === "storage-preferences-form") {
     event.preventDefault();
     saveStoragePreferences(event.target);

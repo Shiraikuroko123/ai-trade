@@ -66,8 +66,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.12.0-ui12", self.html)
-        self.assertIn("app.js?v=0.12.0-ui12", self.html)
+        self.assertIn("app.css?v=0.12.1-ui15", self.html)
+        self.assertIn("app.js?v=0.12.1-ui15", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -123,6 +123,9 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("universe-filter-form", self.javascript)
         self.assertIn("universe-filter-help", self.javascript)
         self.assertIn("data-universe-reset", self.javascript)
+        self.assertIn("data-universe-submit", self.javascript)
+        self.assertIn("applyUniverseFilterForm(form)", self.javascript)
+        self.assertIn('form.addEventListener("keydown"', self.javascript)
         self.assertIn("screenDataStatusLabel", self.javascript)
         self.assertIn("snapshot_id", self.javascript)
         self.assertIn("filter_fingerprint", self.javascript)
@@ -166,6 +169,7 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("repeat(5, minmax(0, 1fr))", self.css)
 
     def test_mobile_navigation_and_dense_surfaces_reflow_without_page_overflow(self):
+        self.assertRegex(self.css, r"html\s*\{[^}]*min-width:\s*0;[\s\S]*?\}")
         mobile_start = self.css.index("@media (max-width: 820px)")
         narrow_start = self.css.index("@media (max-width: 560px)")
         reduced_motion_start = self.css.index("@media (prefers-reduced-motion: reduce)")
