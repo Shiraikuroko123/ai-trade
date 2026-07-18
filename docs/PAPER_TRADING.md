@@ -48,3 +48,7 @@ A strategy-lab approval or activation does not modify this default account. Its 
 ## Promotion
 
 The first gate requires at least 60 independent future sessions, a clean ledger, drawdown within the configured limit, positive forward Sharpe, and nonnegative benchmark-relative return. Passing only permits broker-sandbox review. It never enables live trading.
+
+Research monitoring is a separate read-only workflow. To install its 18:20
+one-shot scan, see [监控与告警运维](MONITORING.md); it does not advance or
+authorize this paper account.

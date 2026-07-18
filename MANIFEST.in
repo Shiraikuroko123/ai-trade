@@ -14,6 +14,7 @@ include docs/BROKER_ADAPTERS.md
 include docs/CLOUD_STORAGE.md
 include docs/ECOSYSTEM.md
 include docs/PAPER_TRADING.md
+include docs/MONITORING.md
 include docs/RESEARCH_METHODOLOGY.md
 include docs/RESEARCH_JOURNAL.md
 include docs/UNIVERSE.md
@@ -24,7 +25,10 @@ include scripts/configure_ai.ps1
 include scripts/configure_cloud.ps1
 include scripts/install_paper_task.ps1
 include scripts/run_daily_paper.ps1
+include scripts/install_monitor_task.ps1
+include scripts/run_daily_monitor.ps1
 include scripts/verify_distribution.py
+include src/ai_trade/monitoring.py
 include src/ai_trade/research_archive.py
 include src/ai_trade/web/assets/app.css
 include src/ai_trade/web/assets/app.js

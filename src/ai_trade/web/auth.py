@@ -13,7 +13,7 @@ import threading
 import time
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -42,6 +42,10 @@ _USERNAME_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9._-]{1,62}[a-z0-9])?\Z")
 _ACCOUNT_ID_PATTERN = re.compile(r"acct_[0-9a-f]{32}\Z")
 _CREDENTIAL_REVISION_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _GENERIC_LOGIN_ERROR = "Authentication failed"
+# This identifier is used by the unauthenticated local-owner workspace.  A
+# legacy user record could otherwise reuse it as a persistent account id and
+# address the same monitoring profile as the local workspace.
+LOCAL_OWNER_USERNAME = "local-owner"
 
 
 class AuthenticationError(RuntimeError):
@@ -260,6 +264,30 @@ class UserStore:
             user = self._load_users().get(normalized)
             return user.account_id if user is not None else None
 
+    def enabled_account_id_for(self, username: str) -> str | None:
+        """Return an enabled user's account id from one locked store read.
+
+        Scheduler callers must use this method instead of checking existence
+        and enabled state through separate reads; otherwise a disable/delete
+        racing the second lookup can authorize a stale identity.
+        """
+        normalized = normalize_username(username)
+        with self._lock:
+            user = self._load_users().get(normalized)
+            if user is None or not user.enabled:
+                return None
+            return user.account_id
+
+    def enabled_account_ids(self) -> tuple[str, ...]:
+        """Return all enabled account ids from one locked store read."""
+        with self._lock:
+            users = self._load_users()
+            return tuple(
+                user.account_id
+                for username, user in sorted(users.items())
+                if user.enabled
+            )
+
     def export_users(self, destination: str | Path) -> int:
         output = Path(destination)
         if _same_path(output, self.path):
@@ -312,6 +340,7 @@ class UserStore:
                 result = {**existing, **imported}
             else:
                 result = dict(imported)
+            _separate_local_owner_identity(result)
             self._write_users(result)
             return tuple(_public_user(result[name]) for name in sorted(result))
 
@@ -416,7 +445,11 @@ class UserStore:
                 raise CorruptUserStoreError("User file contains duplicate account IDs")
             users[user.username] = user
             account_ids.add(user.account_id)
-        if schema_version == LEGACY_USER_FILE_SCHEMA_VERSION:
+        if _separate_local_owner_identity(users):
+            # Keep the migration durable so every subsequent read observes the
+            # same account identity and cannot collide with the local profile.
+            self._write_users(users)
+        elif schema_version == LEGACY_USER_FILE_SCHEMA_VERSION:
             self._write_users(users)
         return users
 
@@ -867,6 +900,7 @@ def _load_user_export(path: Path) -> dict[str, _StoredUser]:
             raise CorruptUserStoreError("User export contains duplicate account IDs")
         users[user.username] = user
         account_ids.add(user.account_id)
+    _separate_local_owner_identity(users)
     return users
 
 
@@ -942,6 +976,17 @@ def _new_account_id(users: Iterable[_StoredUser]) -> str:
         account_id = f"acct_{secrets.token_hex(16)}"
         if account_id not in existing:
             return account_id
+
+
+def _separate_local_owner_identity(users: dict[str, _StoredUser]) -> bool:
+    """Detach the legacy local-owner account from the local workspace profile."""
+    user = users.get(LOCAL_OWNER_USERNAME)
+    if user is None or user.account_id != LOCAL_OWNER_USERNAME:
+        return False
+    users[LOCAL_OWNER_USERNAME] = replace(
+        user, account_id=_new_account_id(users.values())
+    )
+    return True
 
 
 def _validated_account_id(account_id: object, username: str | None = None) -> str:

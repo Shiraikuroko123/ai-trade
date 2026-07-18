@@ -66,8 +66,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.12.1-ui15", self.html)
-        self.assertIn("app.js?v=0.12.1-ui15", self.html)
+        self.assertIn("app.css?v=0.12.1-ui17-monitoring", self.html)
+        self.assertIn("app.js?v=0.12.1-ui17-monitoring", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -102,6 +102,54 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("真实交易锁定", self.javascript)
         self.assertIn(".market-pulse-track:focus-visible", self.css)
         self.assertIn('window.scrollTo({ top: 0, left: 0, behavior: "auto" })', self.javascript)
+
+    def test_monitoring_is_persistent_auditable_and_actionable(self):
+        self.assertIn('data-route="monitoring"', self.html)
+        self.assertIn('monitoring: { title: "监控"', self.javascript)
+        self.assertIn('return "/api/monitoring";', self.javascript)
+        for endpoint in (
+            '"/api/monitoring/watchlist"',
+            '"/api/monitoring/rules"',
+            '"/api/monitoring/scan"',
+            "/api/monitoring/alerts/${encodeURIComponent(alertId)}/actions",
+        ):
+            self.assertIn(endpoint, self.javascript)
+        for state_label in (
+            "尚未建立监控列表",
+            "已有标的但尚未建立规则",
+            "尚未运行扫描",
+            "扫描部分完成",
+            "已扫描，当前没有触发告警",
+            "本次监控扫描失败",
+        ):
+            self.assertIn(state_label, self.javascript)
+        for action_label in ("标记已阅", "暂缓处理", "关闭并备注", "重新打开"):
+            self.assertIn(action_label, self.javascript)
+        self.assertIn('aria-busy="true"', self.javascript)
+        self.assertIn('pulseItem("监控"', self.javascript)
+        self.assertIn("state.monitoringActionBusy", self.javascript)
+        self.assertIn("expected_revision", self.javascript)
+        self.assertIn("expected_state_fingerprint", self.javascript)
+        self.assertIn("scan.config_revision ?? data.configuration?.revision", self.javascript)
+        self.assertIn("scan.snapshot_evidence_fingerprint", self.javascript)
+        self.assertIn("scan.manifest_sha256", self.javascript)
+
+    def test_monitoring_tables_scroll_and_forms_reflow_on_mobile(self):
+        self.assertIn(".monitoring-alert-table table", self.css)
+        self.assertIn("min-width: 1320px", self.css)
+        self.assertIn(".monitoring-watchlist-table table", self.css)
+        self.assertIn("min-width: 920px", self.css)
+        self.assertIn(".monitoring-rule-table table", self.css)
+        self.assertIn("min-width: 980px", self.css)
+        mobile_start = self.css.index("@media (max-width: 820px)")
+        narrow_start = self.css.index("@media (max-width: 560px)")
+        reduced_motion_start = self.css.index("@media (prefers-reduced-motion: reduce)")
+        mobile_css = self.css[mobile_start:narrow_start]
+        narrow_css = self.css[narrow_start:reduced_motion_start]
+        self.assertIn(".monitoring-config-layout", mobile_css)
+        self.assertIn("grid-template-columns: minmax(0, 1fr)", mobile_css)
+        self.assertIn(".monitoring-filter-form", narrow_css)
+        self.assertIn("repeat(6, minmax(156px, 1fr))", narrow_css)
 
     def test_risk_and_order_semantics_do_not_depend_on_color(self):
         self.assertIn('class="trade-side-code" aria-hidden="true"', self.javascript)

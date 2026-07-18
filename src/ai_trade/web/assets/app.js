@@ -3,6 +3,7 @@
 const ROUTES = {
   overview: { title: "总览", context: "每日收盘复盘" },
   market: { title: "行情", context: "只读 K 线与行情证据" },
+  monitoring: { title: "监控", context: "自选列表与收盘告警" },
   research: { title: "研究", context: "历史证据与稳健性" },
   assistant: { title: "AI 分析", context: "收盘 K 线诊断与风险复核" },
   "strategy-lab": { title: "策略实验室", context: "候选版本、验证与模拟晋级" },
@@ -54,6 +55,33 @@ const JOB_LABELS = {
   "paper-run": "运行模拟日",
   "paper-audit": "审计模拟账户",
   "cloud-backup": "备份行情",
+  "monitoring-scan": "运行收盘监控",
+};
+
+const MONITORING_SEVERITY_LABELS = {
+  info: "提示",
+  warning: "警告",
+  critical: "严重",
+};
+
+const MONITORING_STATUS_LABELS = {
+  open: "待处理",
+  acknowledged: "已阅",
+  snoozed: "已暂缓",
+  dismissed: "已关闭",
+  not_run: "尚未扫描",
+  no_rules: "尚无规则",
+  succeeded: "扫描完成",
+  partial: "部分完成",
+  failed: "扫描失败",
+};
+
+const MONITORING_ACTION_LABELS = {
+  acknowledge: "标记已阅",
+  dismiss: "关闭并备注",
+  reopen: "重新打开",
+  snooze: "暂缓处理",
+  unsnooze: "取消暂缓",
 };
 
 const CHECK_LABELS = {
@@ -197,6 +225,19 @@ const state = {
   marketChart: null,
   marketIndicatorIds: {},
   marketResizeObserver: null,
+  monitoringFilters: {
+    watchlist_id: "",
+    symbol: "",
+    severity: "",
+    status: "unresolved",
+    limit: "100",
+  },
+  monitoringBusy: false,
+  monitoringRefreshBusy: false,
+  monitoringScanError: "",
+  monitoringActionBusy: new Set(),
+  monitoringActionStatus: "",
+  monitoringActionTarget: null,
   resizeTimer: 0,
 };
 
@@ -395,11 +436,19 @@ function pulseTrading(payload) {
   return state.data.get("trading") || {};
 }
 
+function pulseMonitoring(payload) {
+  if (state.route === "monitoring") return payload || {};
+  return state.data.get("monitoring")
+    || state.data.get("overview")?.monitoring
+    || {};
+}
+
 function updateMarketPulse(payload = null, failure = "") {
   if (!marketPulse || !marketPulseTrack) return;
   const overview = pulseOverview(payload);
   const portfolio = pulsePortfolio(payload);
   const trading = pulseTrading(payload);
+  const monitoring = pulseMonitoring(payload);
   const routeChart = state.route === "market" ? payload?.chart || {} : {};
   const routeUniverse = state.route === "universe" ? payload || {} : {};
   const diagnostics = routeChart.diagnostics || {};
@@ -477,6 +526,54 @@ function updateMarketPulse(payload = null, failure = "") {
   const riskState = liveReady ? "待限时人工授权" : "真实交易锁定";
   const riskKind = liveReady ? "warning" : "danger";
 
+  const monitoringSummary = monitoring.summary || {};
+  const monitoringScan = monitoring.scan || {};
+  const monitoringSnapshot = monitoring.snapshot || {};
+  const monitoringLoaded = Object.keys(monitoring).length > 0;
+  const unresolvedAlerts = finite(monitoringSummary.unresolved_count);
+  const criticalAlerts = finite(monitoringSummary.severity_counts?.critical) || 0;
+  const monitoringDate = monitoringScan.data_date
+    || monitoringSnapshot.data_date
+    || "不可用";
+  const monitoringStatus = String(monitoringScan.status || monitoring.empty_state?.code || "").toLowerCase();
+  const monitoringValue = !monitoringLoaded
+    ? "监控未加载"
+    : monitoringSummary.watchlist_count === 0
+      ? "未配置列表"
+      : `${integerFormatter.format(unresolvedAlerts ?? 0)} 条待处理`;
+  const monitoringState = state.monitoringBusy
+    ? "扫描中 · 旧证据保留"
+    : state.monitoringScanError
+      ? "最近扫描失败"
+      : !monitoringLoaded
+        ? "状态未加载"
+        : monitoringStatus === "partial"
+          ? `部分完成 · ${monitoringDate}`
+          : monitoringStatus === "failed"
+            ? "最近扫描失败"
+            : monitoringStatus === "not_run" || monitoring.empty_state?.code === "not_scanned"
+              ? "尚未扫描"
+              : monitoringStatus === "no_rules" || monitoring.empty_state?.code === "no_rules"
+                ? "尚无启用规则"
+                : unresolvedAlerts
+                  ? `扫描至 ${monitoringDate}`
+                  : "已扫描 · 无触发";
+  const monitoringKind = state.monitoringBusy
+    ? "warning"
+    : state.monitoringScanError
+      ? "danger"
+      : !monitoringLoaded
+        ? "neutral"
+        : monitoringStatus === "failed"
+          ? "danger"
+          : monitoringStatus === "partial" || criticalAlerts > 0 || finite(monitoringSummary.stale_count) > 0
+            ? "warning"
+            : monitoringSummary.watchlist_count === 0 || monitoringStatus === "not_run" || monitoringStatus === "no_rules"
+              ? "neutral"
+              : unresolvedAlerts
+                ? "info"
+                : "success";
+
   const activeJob = state.jobs.find((job) => ["queued", "running"].includes(job.status));
   const jobValue = activeJob ? JOB_LABELS[activeJob.action] || activeJob.action : "本机就绪";
   const jobState = activeJob
@@ -488,12 +585,14 @@ function updateMarketPulse(payload = null, failure = "") {
         pulseItem("连接", "本机服务不可用", "本页数据未更新", "danger"),
         pulseItem("行情", marketDateValue, marketState, marketKind),
         pulseItem("策略", signalDate, signalState, signalKind),
+        pulseItem("监控", monitoringValue, monitoringState, monitoringKind),
         pulseItem("组合", accountValue, accountState, accountKind),
         pulseItem("风险权限", riskValue, riskState, riskKind),
       ]
     : [
         pulseItem("行情", marketDateValue, marketState, marketKind),
         pulseItem("策略", signalDate, signalState, signalKind),
+        pulseItem("监控", monitoringValue, monitoringState, monitoringKind),
         pulseItem("组合", accountValue, accountState, accountKind),
         pulseItem("风险权限", riskValue, riskState, riskKind),
         pulseItem("运行", jobValue, jobState, activeJob ? "warning" : "neutral"),
@@ -738,6 +837,12 @@ function researchPath() {
   return `/api/research${query ? `?${query}` : ""}`;
 }
 
+function monitoringPath() {
+  // The monitoring endpoint returns one owner-scoped evidence snapshot. Filters
+  // stay client-side so an older server cannot silently change scan semantics.
+  return "/api/monitoring";
+}
+
 async function loadRoute() {
   state.controller?.abort();
   destroyMarketChart();
@@ -787,6 +892,7 @@ async function loadRoute() {
       const endpoints = {
         overview: "/api/overview",
         research: researchPath(),
+        monitoring: monitoringPath(),
         assistant: "/api/assistant",
         "strategy-lab": "/api/strategy-lab",
         portfolio: "/api/portfolio",
@@ -818,6 +924,7 @@ function renderRoute(payload) {
   const renderers = {
     overview: renderOverview,
     market: renderMarket,
+    monitoring: renderMonitoring,
     research: renderResearch,
     assistant: renderAssistant,
     "strategy-lab": renderStrategyLab,
@@ -850,6 +957,9 @@ function updateRouteDate(payload) {
   } else if (state.route === "market") {
     value = payload.chart?.data_date;
     label = "K 线截止";
+  } else if (state.route === "monitoring") {
+    value = payload.scan?.data_date || payload.snapshot?.data_date;
+    label = "监控截止";
   } else if (state.route === "research") {
     value = payload.backtest?.metadata?.end;
     label = "研究截止";
@@ -909,6 +1019,41 @@ function enhanceRenderedUi() {
   }
   bindUniverseFilterForm();
   syncJournalDecisionControl();
+  syncMonitoringRuleControl();
+}
+
+function syncMonitoringRuleControl() {
+  const form = document.getElementById("monitoring-rule-form");
+  if (!form) return;
+  const type = form.querySelector("[name='rule_type']");
+  const threshold = form.querySelector("[name='threshold']");
+  const windowInput = form.querySelector("[name='window']");
+  const comparison = form.querySelector("[name='comparison_window']");
+  const help = document.getElementById("monitoring-rule-help");
+  if (!type || !threshold) return;
+  const metadata = monitoringRuleMetadata(state.data.get("monitoring") || {})[type.value] || {};
+  const thresholdRequired = Boolean(metadata.threshold_required);
+  threshold.required = thresholdRequired;
+  threshold.disabled = !type.value || !thresholdRequired;
+  if (!thresholdRequired) threshold.value = "";
+  if (windowInput) {
+    windowInput.placeholder = metadata.window_default ? `默认 ${metadata.window_default}` : "使用默认";
+  }
+  if (comparison) {
+    const isCross = String(type.value || "").startsWith("ema_cross");
+    comparison.disabled = !isCross;
+    comparison.placeholder = isCross && metadata.comparison_window_default
+      ? `默认 ${metadata.comparison_window_default}`
+      : "仅 EMA 交叉";
+    if (!isCross) comparison.value = "";
+  }
+  if (help) {
+    const formula = metadata.formula || "服务器固定口径";
+    const unit = metadata.unit ? ` · 单位 ${metadata.unit}` : "";
+    help.textContent = type.value
+      ? `${formula}${unit}${thresholdRequired ? "；需要填写阈值" : "；该规则不使用阈值"}。服务器会再次校验窗口和证券归属。`
+      : "选择规则后，服务器会校验阈值、窗口和证券是否属于列表。";
+  }
 }
 
 function applyUniverseFilterForm(form) {
@@ -4307,6 +4452,575 @@ function eligibilityLabel(reasons) {
   }[reason] || reason)).join("、");
 }
 
+function monitoringSeverityLabel(value) {
+  return MONITORING_SEVERITY_LABELS[String(value || "").toLowerCase()] || "未分级";
+}
+
+function monitoringSeverityKind(value) {
+  return { critical: "danger", warning: "warning", info: "info" }[String(value || "").toLowerCase()] || "neutral";
+}
+
+function monitoringStatusLabel(value) {
+  return MONITORING_STATUS_LABELS[String(value || "").toLowerCase()] || String(value || "待确认");
+}
+
+function monitoringStatusKind(value) {
+  return {
+    open: "warning",
+    acknowledged: "success",
+    snoozed: "info",
+    dismissed: "neutral",
+    partial: "warning",
+    failed: "danger",
+    succeeded: "success",
+    no_rules: "warning",
+    not_run: "neutral",
+  }[String(value || "").toLowerCase()] || "neutral";
+}
+
+function monitoringRuleMetadata(data) {
+  return Object.fromEntries((Array.isArray(data?.rule_types) ? data.rule_types : []).map((item) => [item.rule_type, item]));
+}
+
+function monitoringUnitValue(value, unit) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  if (unit === "ratio") return formatPercent(parsed);
+  if (unit === "CNY") return `¥${formatNumber(parsed, 4)}`;
+  if (unit === "days") return `${formatInteger(parsed)} 日`;
+  if (unit === "boolean") return "条件交叉";
+  return formatNumber(parsed, 2);
+}
+
+function monitoringRuleSummary(rule, metadata = {}) {
+  const meta = metadata[rule?.rule_type] || {};
+  const label = rule?.rule_label || meta.label || rule?.rule_type || "监控规则";
+  const threshold = rule?.threshold === null || rule?.threshold === undefined
+    ? ""
+    : ` ${rule?.operator_label || meta.operator_label || ""} ${monitoringUnitValue(rule.threshold, meta.unit)}`;
+  const window = rule?.window ? ` · 窗口 ${formatInteger(rule.window)}` : "";
+  const comparison = rule?.comparison_window ? `/${formatInteger(rule.comparison_window)}` : "";
+  return `${label}${threshold}${window}${comparison}`;
+}
+
+function monitoringRuleTargetValue(watchlistId, symbol) {
+  return `${watchlistId}~${symbol}`;
+}
+
+function parseMonitoringRuleTarget(value) {
+  const text = String(value || "");
+  const index = text.indexOf("~");
+  return index < 1 ? { watchlist_id: "", symbol: "" } : {
+    watchlist_id: text.slice(0, index),
+    symbol: text.slice(index + 1),
+  };
+}
+
+function monitoringExpectedRevision(data) {
+  const value = Number(data?.configuration?.revision);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function monitoringActionBusy(key) {
+  return state.monitoringActionBusy.has(String(key));
+}
+
+function monitoringActionStatusMarkup(id = "monitoring-action-status") {
+  const value = state.monitoringActionStatus;
+  if (!value) return `<p id="${escapeHtml(id)}" class="form-status" role="status" aria-live="polite"></p>`;
+  const status = typeof value === "string" ? { message: value, kind: "" } : value;
+  const role = status.kind === "error" ? "alert" : "status";
+  return `<p id="${escapeHtml(id)}" class="form-status${status.kind === "error" ? " error" : ""}" role="${role}" aria-live="polite">${escapeHtml(status.message || "")}</p>`;
+}
+
+function monitoringFilteredAlerts(data) {
+  const filters = state.monitoringFilters || {};
+  const watchlistId = String(filters.watchlist_id || "");
+  const symbol = String(filters.symbol || "").trim().toUpperCase();
+  const severity = String(filters.severity || "");
+  const status = String(filters.status || "unresolved");
+  const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+  const filtered = alerts.filter((item) => {
+    if (watchlistId && item.watchlist_id !== watchlistId) return false;
+    if (symbol && !String(item.symbol || "").toUpperCase().includes(symbol)) return false;
+    if (severity && item.severity !== severity) return false;
+    if (status === "unresolved" && !["open", "snoozed"].includes(item.status)) return false;
+    if (status && status !== "unresolved" && status !== "all" && item.status !== status) return false;
+    return true;
+  });
+  const limit = Math.max(1, Math.min(200, Number(filters.limit) || 100));
+  return filtered.slice(0, limit);
+}
+
+function monitoringEmptyStateMarkup(data, filteredAlerts) {
+  const empty = data?.empty_state || {};
+  const code = String(empty.code || "");
+  const scan = data?.scan || {};
+  const snapshot = data?.snapshot || {};
+  if (state.monitoringBusy) {
+    return `<aside class="callout info monitoring-state" role="status" aria-busy="true"><strong>正在运行收盘监控</strong><p>保留上一次告警记录，等待新的行情快照和规则评估完成。</p></aside>`;
+  }
+  if (state.monitoringScanError) {
+    return `<aside class="callout danger monitoring-state" role="alert"><strong>本次监控扫描失败</strong><p>${escapeHtml(state.monitoringScanError)}</p><p>已有告警和上一次扫描证据保持不变；修复数据后可以再次运行。</p></aside>`;
+  }
+  if (scan.status === "failed" || scan.error) {
+    return `<aside class="callout danger monitoring-state" role="alert"><strong>最近监控扫描失败</strong><p>${escapeHtml(scan.error?.message || scan.error || "扫描没有生成新的告警证据。")}</p><p>已有告警保持不变；修复数据后可重新运行。</p></aside>`;
+  }
+  if (snapshot.available === false) {
+    return `<aside class="callout warning monitoring-state" role="status"><strong>行情快照不可用</strong><p>${escapeHtml(snapshot.error?.message || "当前没有可校验的收盘快照；监控不会用零值代替缺失指标。")}</p><p>先刷新已完成行情，再重新运行收盘监控。</p></aside>`;
+  }
+  if (code === "no_watchlists") {
+    return `<aside class="callout info monitoring-state" role="status"><strong>尚未建立监控列表</strong><p>先建立一个列表并加入证券，系统才会有可扫描的范围。监控只生成研究证据，不会改变策略或生成订单。</p></aside>`;
+  }
+  if (code === "no_rules" || scan.status === "no_rules") {
+    return `<aside class="callout warning monitoring-state" role="status"><strong>已有标的但尚未建立规则</strong><p>为列表中的证券创建至少一条启用规则，再运行收盘监控。当前不会触发告警。</p></aside>`;
+  }
+  if (code === "not_scanned" || scan.status === "not_run") {
+    return `<aside class="callout info monitoring-state" role="status"><strong>尚未运行扫描</strong><p>当前列表和规则已经保存，但没有可复核的扫描结果。运行一次收盘监控后，系统会记录数据日期、来源和规则指纹。</p></aside>`;
+  }
+  if (code === "partial" || scan.status === "partial") {
+    return `<aside class="callout warning monitoring-state" role="status"><strong>扫描部分完成</strong><p>部分证券或规则因数据不可用被排除；请先查看扫描边界，再判断剩余告警。</p></aside>`;
+  }
+  if (Array.isArray(data?.alerts) && data.alerts.length && !filteredAlerts.length) {
+    return `<aside class="callout info monitoring-state" role="status"><strong>当前筛选没有匹配告警</strong><p>清除状态、严重级别或证券条件后查看其他记录。扫描证据仍保留在本机。</p><div class="action-row"><button class="button secondary" type="button" data-monitoring-filter-clear>清除筛选</button></div></aside>`;
+  }
+  if (code === "no_alerts") {
+    return `<aside class="callout info monitoring-state" role="status"><strong>已扫描，当前没有触发告警</strong><p>这是一次成功的零触发结果，不等同于“尚未扫描”。可在下方核对规则和数据截止日期。</p></aside>`;
+  }
+  return "";
+}
+
+function monitoringScanStatusMarkup(data) {
+  const scan = data?.scan || {};
+  const status = String(scan.status || "not_run").toLowerCase();
+  const exclusions = Array.isArray(scan.exclusions) ? scan.exclusions : [];
+  if (status === "partial" && exclusions.length) {
+    return `<aside class="callout warning monitoring-boundary" role="status"><strong>扫描边界：${formatInteger(exclusions.length)} 条被排除</strong><ul>${exclusions.slice(0, 8).map((item) => `<li><code>${escapeHtml(item.symbol || "—")}</code>：${escapeHtml(item.message || item.code || "数据不可用")}</li>`).join("")}</ul>${exclusions.length > 8 ? `<p>其余 ${formatInteger(exclusions.length - 8)} 条请查看扫描记录。</p>` : ""}</aside>`;
+  }
+  if (status === "succeeded" && Array.isArray(scan.suppressed) && scan.suppressed.length) {
+    return `<aside class="callout info monitoring-boundary" role="status"><strong>重复条件已抑制</strong><p>${formatInteger(scan.suppressed.length)} 条条件仍然成立，但受规则冷却或连续触发去重约束，没有重复生成告警。</p></aside>`;
+  }
+  return "";
+}
+
+function monitoringAlertActionButtons(alert) {
+  const id = escapeHtml(alert.alert_id);
+  const symbol = escapeHtml(alert.symbol || "该证券");
+  const status = String(alert.status || "open");
+  const buttons = [];
+  const direct = (action, label, style = "secondary") => `<button class="button ${style} compact" type="button" data-monitoring-alert-action="${action}" data-monitoring-alert-id="${id}" aria-label="${label}${symbol}"${monitoringActionBusy(`${alert.alert_id}:${action}`) ? ' disabled aria-busy="true"' : ""}>${monitoringActionBusy(`${alert.alert_id}:${action}`) ? "处理中" : label}</button>`;
+  const compose = (action, label, style = "secondary") => `<button class="button ${style} compact" type="button" data-monitoring-alert-compose="${action}" data-monitoring-alert-id="${id}" aria-label="${label}${symbol}"${monitoringActionBusy(`${alert.alert_id}:${action}`) ? ' disabled aria-busy="true"' : ""}>${label}</button>`;
+  if (status === "open") {
+    buttons.push(direct("acknowledge", "标记已阅 · "));
+    buttons.push(compose("snooze", "暂缓处理 · "));
+    buttons.push(compose("dismiss", "关闭并备注 · ", "danger"));
+  } else if (status === "snoozed") {
+    buttons.push(direct("unsnooze", "取消暂缓 · "));
+    buttons.push(direct("acknowledge", "标记已阅 · "));
+    buttons.push(compose("dismiss", "关闭并备注 · ", "danger"));
+  } else {
+    buttons.push(direct("reopen", "重新打开 · "));
+  }
+  return `<div class="action-row monitoring-alert-actions">${buttons.join("")}</div>`;
+}
+
+function monitoringActionComposer(data) {
+  const target = state.monitoringActionTarget;
+  if (!target) return "";
+  const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+  const alert = alerts.find((item) => item.alert_id === target.alertId);
+  if (!alert) return "";
+  const snooze = target.action === "snooze";
+  const today = new Date().toLocaleDateString("en-CA");
+  const defaultUntil = alert.snooze_until || today;
+  return `<section class="panel monitoring-action-composer" aria-labelledby="monitoring-action-heading">
+    ${panelHeader("处理告警", `${escapeHtml(alert.symbol || "—")} · ${escapeHtml(alert.rule_label || alert.rule_type || "规则")}`)}
+    <form id="monitoring-alert-action-form" class="monitoring-action-form" aria-describedby="monitoring-action-help">
+      <input type="hidden" name="alert_id" value="${escapeHtml(alert.alert_id)}">
+      <input type="hidden" name="action" value="${escapeHtml(target.action)}">
+      <p id="monitoring-action-help" class="section-note">${snooze ? "暂缓只改变告警处理状态，不改变规则；扫描到达所选日期后会自动重新打开。" : "关闭会保留不可变告警记录，并追加一条带备注的处理事件。"}</p>
+      ${snooze ? `<div class="field"><label for="monitoring-snooze-until">重新检查日期</label><input id="monitoring-snooze-until" name="snooze_until" type="date" min="${escapeHtml(today)}" value="${escapeHtml(defaultUntil)}" required></div>` : ""}
+      <div class="field"><label for="monitoring-action-note">处理备注${snooze ? "（可选）" : ""}</label><textarea id="monitoring-action-note" name="note" rows="3" maxlength="1000"${snooze ? "" : " required"} placeholder="记录人工判断依据"></textarea></div>
+      <div class="action-row"><button class="button ${snooze ? "secondary" : "danger"}" type="submit"${monitoringActionBusy(`${alert.alert_id}:${target.action}`) ? ' disabled aria-busy="true"' : ""}>${monitoringActionBusy(`${alert.alert_id}:${target.action}`) ? "正在保存" : MONITORING_ACTION_LABELS[target.action]}</button><button class="button ghost" type="button" data-monitoring-alert-compose-cancel>取消</button></div>
+      ${monitoringActionStatusMarkup("monitoring-composer-status")}
+    </form>
+  </section>`;
+}
+
+function renderMonitoring(data) {
+  const watchlists = Array.isArray(data?.watchlists) ? data.watchlists : [];
+  const rules = Array.isArray(data?.rules) ? data.rules : [];
+  const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+  const instruments = Array.isArray(data?.instruments) ? data.instruments : [];
+  const summary = data?.summary || {};
+  const snapshot = data?.snapshot || {};
+  const scan = data?.scan || {};
+  const metadata = monitoringRuleMetadata(data);
+  const watchlistMap = Object.fromEntries(watchlists.map((item) => [item.watchlist_id, item]));
+  const filteredAlerts = monitoringFilteredAlerts(data);
+  const unresolved = finite(summary.unresolved_count) || 0;
+  const critical = finite(summary.severity_counts?.critical) || 0;
+  const scanStatus = String(scan.status || "not_run").toLowerCase();
+  const snapshotDate = snapshot.data_date || scan.data_date || "不可用";
+  const scanLabel = monitoringStatusLabel(scanStatus);
+  const scanKind = monitoringStatusKind(scanStatus);
+  const authority = data?.authority || {};
+  const actions = `<div class="action-row"><button class="button primary" type="button" data-monitoring-scan${state.monitoringBusy ? ' disabled aria-busy="true"' : state.monitoringRefreshBusy ? " disabled" : ""}>${state.monitoringBusy ? "扫描中" : "运行收盘监控"}</button><button class="button secondary" type="button" data-monitoring-refresh${state.monitoringRefreshBusy ? ' disabled aria-busy="true"' : state.monitoringBusy ? " disabled" : ""}>${state.monitoringRefreshBusy ? "刷新中" : "刷新监控"}</button></div>`;
+  const watchlistOptions = [`<option value="">全部列表</option>`, ...watchlists.map((item) => `<option value="${escapeHtml(item.watchlist_id)}"${state.monitoringFilters.watchlist_id === item.watchlist_id ? " selected" : ""}>${escapeHtml(item.name)}</option>`)].join("");
+  const filter = `<form id="monitoring-filter-form" class="filter-form monitoring-filter-form" aria-describedby="monitoring-filter-help">
+    <div class="field"><label for="monitoring-filter-watchlist">监控列表</label><select id="monitoring-filter-watchlist" name="watchlist_id">${watchlistOptions}</select></div>
+    <div class="field"><label for="monitoring-filter-symbol">证券</label><input id="monitoring-filter-symbol" name="symbol" value="${escapeHtml(state.monitoringFilters.symbol || "")}" list="monitoring-symbol-options" placeholder="代码或名称"></div>
+    <div class="field"><label for="monitoring-filter-severity">严重级别</label><select id="monitoring-filter-severity" name="severity"><option value="">全部级别</option>${Object.entries(MONITORING_SEVERITY_LABELS).map(([value, label]) => `<option value="${value}"${state.monitoringFilters.severity === value ? " selected" : ""}>${label}</option>`).join("")}</select></div>
+    <div class="field"><label for="monitoring-filter-status">处理状态</label><select id="monitoring-filter-status" name="status"><option value="unresolved"${state.monitoringFilters.status === "unresolved" ? " selected" : ""}>待处理</option><option value="all"${state.monitoringFilters.status === "all" ? " selected" : ""}>全部</option>${Object.entries(MONITORING_STATUS_LABELS).filter(([value]) => ["open", "acknowledged", "snoozed", "dismissed"].includes(value)).map(([value, label]) => `<option value="${value}"${state.monitoringFilters.status === value ? " selected" : ""}>${label}</option>`).join("")}</select></div>
+    <div class="field"><label for="monitoring-filter-limit">最多显示</label><input id="monitoring-filter-limit" name="limit" type="number" min="1" max="200" step="1" inputmode="numeric" value="${escapeHtml(state.monitoringFilters.limit || "100")}"></div>
+    <div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button ghost" type="button" data-monitoring-filter-clear>清除</button></div>
+  </form><p id="monitoring-filter-help" class="section-note">筛选只改变当前显示，不改变已经固化的扫描和告警记录。</p>`;
+  const statusRegion = state.monitoringActionTarget ? "" : monitoringActionStatusMarkup();
+  const ruleTargetOptions = watchlists.flatMap((list) => list.symbols.map((symbol) => `<option value="${escapeHtml(monitoringRuleTargetValue(list.watchlist_id, symbol))}">${escapeHtml(list.name)} · ${escapeHtml(symbol)} · ${escapeHtml(instrumentName(symbol))}</option>`)).join("");
+  const ruleTypeOptions = (Array.isArray(data?.rule_types) ? data.rule_types : []).map((item) => `<option value="${escapeHtml(item.rule_type)}">${escapeHtml(item.label || item.rule_type)}</option>`).join("");
+  const symbolOptions = instruments.map((item) => `<option value="${escapeHtml(item.symbol)}">${escapeHtml(item.name || instrumentName(item.symbol))}</option>`).join("");
+  const symbolOptionsForWatchlist = (watchlist) => {
+    const existing = new Set(Array.isArray(watchlist.symbols) ? watchlist.symbols : []);
+    const available = instruments.filter((item) => !existing.has(item.symbol));
+    const options = available.map((item) => `<option value="${escapeHtml(item.symbol)}">${escapeHtml(item.symbol)} · ${escapeHtml(item.name || instrumentName(item.symbol))}</option>`).join("");
+    const id = `monitoring-symbol-${watchlist.watchlist_id}`;
+    return `<form class="monitoring-symbol-form" data-monitoring-symbol-form data-watchlist-id="${escapeHtml(watchlist.watchlist_id)}" aria-label="向${escapeHtml(watchlist.name)}加入证券">
+      <label class="sr-only" for="${escapeHtml(id)}">选择要加入的证券</label>
+      <select id="${escapeHtml(id)}" name="symbol"${available.length ? " required" : " disabled"}><option value="">${available.length ? "加入证券" : "证券已全部加入"}</option>${options}</select>
+      <button class="button secondary compact" type="submit"${available.length ? "" : " disabled"}>加入</button>
+    </form>`;
+  };
+
+  const alertRows = filteredAlerts.length ? filteredAlerts.map((alert) => {
+    const rule = rules.find((item) => item.rule_id === alert.rule_id) || alert;
+    const list = watchlistMap[alert.watchlist_id];
+    const evidence = monitoringRuleSummary({ ...rule, rule_label: alert.rule_label, operator_label: alert.operator_label, threshold: alert.threshold }, metadata);
+    const source = screenSourceLabel(alert.source);
+    return `<tr>
+      <td><div class="monitoring-alert-state">${statusChip(monitoringStatusLabel(alert.status), monitoringStatusKind(alert.status))}${statusChip(monitoringSeverityLabel(alert.severity), monitoringSeverityKind(alert.severity))}</div></td>
+      <td class="symbol-cell"><strong>${escapeHtml(alert.symbol || "—")}</strong><span>${escapeHtml(instrumentName(alert.symbol))}</span><span class="table-subtext">${escapeHtml(list?.name || "未分组")}</span></td>
+      <td class="monitoring-alert-action-cell">${monitoringAlertActionButtons(alert)}</td>
+      <td><strong>${escapeHtml(evidence)}</strong><span class="table-subtext">观测 ${escapeHtml(alert.observed_text || monitoringUnitValue(alert.observed_value, metadata[alert.rule_type]?.unit))}</span></td>
+      <td><span class="mono">${escapeHtml(alert.data_date || "—")}</span><span class="table-subtext">${escapeHtml(source)}${alert.completed_session_cutoff ? ` · 截止 ${escapeHtml(alert.completed_session_cutoff)}` : ""}</span></td>
+      <td><span class="mono">${escapeHtml(formatDate(alert.triggered_at, true))}</span>${alert.snooze_until ? `<span class="table-subtext">暂缓至 ${escapeHtml(alert.snooze_until)}</span>` : ""}</td>
+      <td><code class="truncate-hash" title="${escapeHtml(alert.evidence_fingerprint || "—")}">${escapeHtml(alert.evidence_fingerprint || "—")}</code></td>
+    </tr>`;
+  }).join("") : emptyRow(7, alerts.length ? "当前筛选没有匹配记录" : "尚无触发告警");
+
+  const watchlistRows = watchlists.length ? watchlists.map((item) => {
+    const busy = monitoringActionBusy(`watchlist:${item.watchlist_id}`);
+    const symbols = Array.isArray(item.symbols) ? item.symbols : [];
+    const symbolMarkup = symbols.length
+      ? `<ul class="monitoring-symbol-list" aria-label="${escapeHtml(item.name)}中的证券">${symbols.map((symbol) => `<li><code>${escapeHtml(symbol)}</code><button class="button ghost compact" type="button" data-monitoring-watchlist-action="remove_symbol" data-monitoring-watchlist-id="${escapeHtml(item.watchlist_id)}" data-monitoring-symbol="${escapeHtml(symbol)}" aria-label="从${escapeHtml(item.name)}移出${escapeHtml(symbol)}"${busy ? " disabled" : ""}>移出</button></li>`).join("")}</ul>`
+      : `<span class="value-unavailable">尚无证券</span>`;
+    return `<tr><td><strong>${escapeHtml(item.name)}</strong><span class="table-subtext mono">${escapeHtml(item.watchlist_id)}</span></td><td>${statusChip(item.enabled ? "已启用" : "已停用", item.enabled ? "success" : "neutral")}</td><td class="numeric">${formatInteger(symbols.length)}</td><td><div class="monitoring-symbols-cell">${symbolMarkup}${symbolOptionsForWatchlist(item)}</div></td><td><div class="action-row"><button class="button secondary compact" type="button" data-monitoring-watchlist-action="set_enabled" data-monitoring-watchlist-id="${escapeHtml(item.watchlist_id)}" data-monitoring-enabled="${item.enabled ? "false" : "true"}"${busy ? " disabled" : ""}>${item.enabled ? "停用" : "启用"}</button><button class="button secondary compact" type="button" data-monitoring-watchlist-action="rename" data-monitoring-watchlist-id="${escapeHtml(item.watchlist_id)}" data-monitoring-watchlist-name="${escapeHtml(item.name)}"${busy ? " disabled" : ""}>重命名</button><button class="button danger compact" type="button" data-monitoring-watchlist-action="delete" data-monitoring-watchlist-id="${escapeHtml(item.watchlist_id)}"${busy ? " disabled" : ""}>删除</button></div></td></tr>`;
+  }).join("") : emptyRow(5, "尚未建立监控列表");
+
+  const ruleRows = rules.length ? rules.map((rule) => {
+    const list = watchlistMap[rule.watchlist_id];
+    const meta = metadata[rule.rule_type] || {};
+    const busy = monitoringActionBusy(`rule:${rule.rule_id}`);
+    return `<tr><td>${statusChip(rule.enabled ? "启用" : "停用", rule.enabled ? "success" : "neutral")}<span class="table-subtext">${escapeHtml(monitoringSeverityLabel(rule.severity))}</span></td><td class="symbol-cell"><strong>${escapeHtml(rule.symbol)}</strong><span>${escapeHtml(instrumentName(rule.symbol))}</span><span class="table-subtext">${escapeHtml(list?.name || "未分组")}</span></td><td>${escapeHtml(meta.label || rule.rule_type)}<span class="table-subtext">${escapeHtml(meta.formula || "服务器固定口径")}</span></td><td class="numeric">${escapeHtml(rule.threshold === null || rule.threshold === undefined ? "—" : monitoringUnitValue(rule.threshold, meta.unit))}</td><td class="numeric">${formatInteger(rule.cooldown_sessions)} 日</td><td><div class="action-row"><button class="button secondary compact" type="button" data-monitoring-rule-action="update" data-monitoring-rule-id="${escapeHtml(rule.rule_id)}" data-monitoring-rule-enabled="${rule.enabled ? "false" : "true"}"${busy ? " disabled" : ""}>${rule.enabled ? "停用" : "启用"}</button><button class="button danger compact" type="button" data-monitoring-rule-action="delete" data-monitoring-rule-id="${escapeHtml(rule.rule_id)}"${busy ? " disabled" : ""}>删除</button></div></td></tr>`;
+  }).join("") : emptyRow(6, "尚未建立规则");
+
+  return `<div class="page-stack monitoring-page">
+    ${pageIntro("收盘监控", "持久化自选列表、确定性规则和可追溯告警；只用于研究复核，不生成订单", actions)}
+    ${contextBand([
+      { label: "行情快照", value: snapshotDate, status: snapshot.available === false ? "不可用" : snapshot.data_date ? "已加载" : "待确认", kind: snapshot.available === false ? "danger" : snapshot.data_date ? "success" : "neutral", note: `来源 ${marketProviderLabel(snapshot.source || snapshot.providers?.[0]?.provider || scan.source_summary?.providers?.[0]?.provider || "未说明")} · 截止 ${snapshot.completed_session_cutoff || scan.completed_session_cutoff || "—"}` },
+      { label: "监控列表", value: `${formatInteger(summary.watchlist_count || 0)} 个`, status: `${formatInteger(summary.symbol_count || 0)} 支证券`, kind: summary.watchlist_count ? "info" : "neutral", note: `${formatInteger(summary.enabled_rule_count || 0)} / ${formatInteger(summary.rule_count || 0)} 条规则启用` },
+      { label: "最近扫描", value: scanLabel, status: scan.data_date || scan.status === "succeeded" ? "有记录" : "无记录", kind: scanKind, note: scan.finished_at ? `完成于 ${formatDate(scan.finished_at, true)}` : "尚未生成扫描记录" },
+      { label: "待处理告警", value: `${formatInteger(unresolved)} 条`, status: critical ? `${formatInteger(critical)} 条严重` : unresolved ? "需要复核" : "当前为空", kind: critical ? "danger" : unresolved ? "warning" : "success", note: `滞后告警 ${formatInteger(summary.stale_count || 0)} 条` },
+      { label: "权限边界", value: authority.research_only === false ? "状态待确认" : "仅研究", status: authority.execution_authorized ? "需复核" : "不会下单", kind: authority.execution_authorized ? "warning" : "info", note: "不会修改策略、账本或券商权限" },
+    ], "监控日期、范围与权限")}
+    <section class="metric-strip monitoring-metric-strip" aria-label="监控摘要">
+      ${metric("监控证券", formatInteger(summary.symbol_count || 0), `${formatInteger(summary.watchlist_count || 0)} 个列表`)}
+      ${metric("启用规则", `${formatInteger(summary.enabled_rule_count || 0)} / ${formatInteger(summary.rule_count || 0)}`, "规则口径由服务器固定", summary.enabled_rule_count ? "tone-info" : "tone-warning")}
+      ${metric("待处理", `${formatInteger(unresolved)} 条`, critical ? `${formatInteger(critical)} 条严重` : "无严重告警", critical ? "tone-negative" : unresolved ? "tone-warning" : "tone-positive")}
+      ${metric("扫描证据", scan.data_date || "—", scanStatus === "failed" ? "本次失败，旧证据保留" : scanStatus === "partial" ? "部分完成" : scanStatus === "succeeded" ? "完整记录" : "尚未记录", scanStatus === "failed" ? "tone-negative" : scanStatus === "partial" ? "tone-warning" : "tone-info")}
+    </section>
+    ${monitoringEmptyStateMarkup(data, filteredAlerts)}
+    ${monitoringScanStatusMarkup(data)}
+    ${monitoringActionComposer(data)}
+    <section class="panel monitoring-alert-panel" aria-labelledby="monitoring-alerts-title">
+      ${panelHeader("告警队列", `${formatInteger(filteredAlerts.length)} / ${formatInteger(alerts.length)} 条显示 · 记录保留在当前账户`, statusChip(alerts.length ? "证据已加载" : "暂无告警", alerts.length ? "info" : "neutral"))}
+      ${filter}
+      ${statusRegion}
+      <div id="monitoring-alerts-region" class="table-wrap monitoring-alert-table"${state.monitoringBusy ? ' aria-busy="true"' : ""}><table class="data-table"><thead><tr><th>状态 / 级别</th><th>证券 / 列表</th><th>处理</th><th>触发规则与观测</th><th>数据日期 / 来源</th><th>触发时间</th><th>证据指纹</th></tr></thead><tbody>${alertRows}</tbody></table></div>
+    </section>
+    <section class="monitoring-config-layout" aria-label="监控配置">
+      <article class="panel monitoring-config-panel">
+        ${panelHeader("监控列表", "列表修改会生成新的配置修订；旧修订不覆盖")}
+        <form id="monitoring-watchlist-form" class="monitoring-create-form"><div class="field"><label for="monitoring-watchlist-name">新列表名称</label><input id="monitoring-watchlist-name" name="name" maxlength="80" required placeholder="例如 收盘核心 ETF"></div><button class="button primary" type="submit">建立列表</button></form>
+        <div class="table-wrap monitoring-watchlist-table"><table class="data-table compact"><thead><tr><th>列表</th><th>状态</th><th class="numeric">证券数</th><th>证券</th><th>操作</th></tr></thead><tbody>${watchlistRows}</tbody></table></div>
+      </article>
+      <article class="panel monitoring-config-panel">
+        ${panelHeader("规则配置", "只允许服务器已登记的规则类型；调整后重新运行扫描")}
+        <form id="monitoring-rule-form" class="monitoring-rule-form" aria-describedby="monitoring-rule-help">
+          <div class="field"><label for="monitoring-rule-target">列表 / 证券</label><select id="monitoring-rule-target" name="target" required${ruleTargetOptions ? "" : " disabled"}><option value="">${ruleTargetOptions ? "选择列表和证券" : "先加入证券"}</option>${ruleTargetOptions}</select></div>
+          <div class="field"><label for="monitoring-rule-type">规则类型</label><select id="monitoring-rule-type" name="rule_type" required${ruleTypeOptions ? "" : " disabled"}>${ruleTypeOptions || "<option value=\"\">尚无规则类型</option>"}</select></div>
+          <div class="field"><label for="monitoring-rule-threshold">阈值</label><input id="monitoring-rule-threshold" name="threshold" type="number" step="any" inputmode="decimal" placeholder="按规则需要"></div>
+          <div class="field"><label for="monitoring-rule-window">窗口</label><input id="monitoring-rule-window" name="window" type="number" min="2" max="1000" step="1" inputmode="numeric" placeholder="使用默认"></div>
+          <div class="field"><label for="monitoring-rule-comparison">比较窗口</label><input id="monitoring-rule-comparison" name="comparison_window" type="number" min="2" max="1000" step="1" inputmode="numeric" placeholder="仅 EMA 交叉"></div>
+          <div class="field"><label for="monitoring-rule-cooldown">冷却交易日</label><input id="monitoring-rule-cooldown" name="cooldown_sessions" type="number" min="0" max="250" step="1" inputmode="numeric" value="1" required></div>
+          <div class="field"><label for="monitoring-rule-severity">严重级别</label><select id="monitoring-rule-severity" name="severity"><option value="info">提示</option><option value="warning" selected>警告</option><option value="critical">严重</option></select></div>
+          <div class="action-row"><button class="button primary" type="submit"${ruleTargetOptions && ruleTypeOptions ? "" : " disabled"}>建立规则</button></div>
+          <p id="monitoring-rule-help" class="section-note">选择规则后，服务器会校验阈值、窗口和证券是否属于列表。</p>
+        </form>
+        <div class="table-wrap monitoring-rule-table"><table class="data-table compact"><thead><tr><th>状态 / 级别</th><th>证券 / 列表</th><th>规则口径</th><th class="numeric">阈值</th><th class="numeric">冷却</th><th>操作</th></tr></thead><tbody>${ruleRows}</tbody></table></div>
+      </article>
+    </section>
+    <section class="panel monitoring-evidence-panel">
+      ${panelHeader("扫描证据", "最近扫描记录持久化的配置与行情身份")}
+      <div class="path-list"><div class="path-row"><span>扫描 ID</span><code>${escapeHtml(scan.scan_id || "—")}</code></div><div class="path-row"><span>配置修订</span><code>${escapeHtml(String(scan.config_revision ?? data.configuration?.revision ?? "—"))} · ${escapeHtml(scan.config_fingerprint || data.configuration?.fingerprint || "—")}</code></div><div class="path-row"><span>快照 ID</span><code>${escapeHtml(scan.snapshot_id || snapshot.snapshot_id || "—")}</code></div><div class="path-row"><span>行情指纹</span><code>${escapeHtml(scan.snapshot_evidence_fingerprint || snapshot.evidence_fingerprint || "—")}</code></div><div class="path-row"><span>清单 SHA-256</span><code>${escapeHtml(scan.manifest_sha256 || snapshot.manifest_sha256 || "—")}</code></div><div class="path-row"><span>来源分布</span><code>${escapeHtml((scan.source_summary?.providers || snapshot.providers || []).map((item) => `${item.provider || "unknown"} ${item.rule_count ?? item.instrument_count ?? 0}`).join(" · ") || "—")}</code></div></div>
+      <p class="section-note">扫描结果仅作为研究证据。告警处理不会改变策略参数、模拟账本、风险门禁或券商权限。</p>
+    </section>
+    <datalist id="monitoring-symbol-options">${symbolOptions}</datalist>
+  </div>`;
+}
+
+function monitoringRenderCurrent() {
+  const payload = state.data.get("monitoring");
+  if (state.route === "monitoring" && payload) renderRoute(payload);
+}
+
+function monitoringSetStatus(message, kind = "") {
+  state.monitoringActionStatus = message
+    ? { message: String(message), kind }
+    : "";
+}
+
+function monitoringNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function monitoringInteger(value) {
+  const parsed = monitoringNumber(value);
+  return parsed !== null && Number.isInteger(parsed) ? parsed : null;
+}
+
+function monitoringPayload(result) {
+  return result && typeof result === "object" && Array.isArray(result.watchlists)
+    ? result
+    : null;
+}
+
+async function reloadMonitoring(silent = false) {
+  if (state.monitoringRefreshBusy && !silent) return null;
+  if (!silent) {
+    state.monitoringRefreshBusy = true;
+    monitoringSetStatus("正在刷新监控快照…", "info");
+    monitoringRenderCurrent();
+  }
+  try {
+    const payload = await api(monitoringPath());
+    state.data.set("monitoring", payload);
+    state.monitoringScanError = "";
+    if (!silent) monitoringSetStatus("监控快照已刷新", "success");
+    monitoringRenderCurrent();
+    return payload;
+  } catch (error) {
+    if (!silent) {
+      const message = friendlyError(error.message);
+      monitoringSetStatus(message, "error");
+      notify(message, true);
+      monitoringRenderCurrent();
+    }
+    throw error;
+  } finally {
+    if (!silent) {
+      state.monitoringRefreshBusy = false;
+      monitoringRenderCurrent();
+    }
+  }
+}
+
+async function runMonitoringMutation(path, payload, successMessage, key, button = null, onSuccess = null) {
+  const busyKey = String(key || path);
+  if (monitoringActionBusy(busyKey)) return false;
+  state.monitoringActionBusy.add(busyKey);
+  monitoringSetStatus("正在保存监控配置…", "info");
+  monitoringRenderCurrent();
+  try {
+    const result = await api(path, {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify(payload),
+    });
+    const next = monitoringPayload(result);
+    if (!next) throw new Error("监控服务返回了无法校验的快照");
+    state.data.set("monitoring", next);
+    state.monitoringScanError = "";
+    if (typeof onSuccess === "function") onSuccess(next);
+    monitoringSetStatus(successMessage, "success");
+    notify(successMessage);
+    return true;
+  } catch (error) {
+    let message = friendlyError(error.message);
+    if (error.status === 409) {
+      try {
+        await reloadMonitoring(true);
+        message = `${message}；已刷新当前监控配置`;
+      } catch {
+        message = `${message}；请刷新监控后重试`;
+      }
+    }
+    monitoringSetStatus(message, "error");
+    notify(message, true);
+    return false;
+  } finally {
+    state.monitoringActionBusy.delete(busyKey);
+    monitoringRenderCurrent();
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.setAttribute("aria-busy", "false");
+    }
+  }
+}
+
+async function runMonitoringScan(button = null) {
+  if (state.monitoringBusy) return false;
+  state.monitoringBusy = true;
+  state.monitoringScanError = "";
+  monitoringSetStatus("正在运行收盘监控…", "info");
+  monitoringRenderCurrent();
+  try {
+    const result = await api("/api/monitoring/scan", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify({}),
+    });
+    const next = monitoringPayload(result);
+    if (!next) throw new Error("监控服务返回了无法校验的扫描快照");
+    const scanResult = result.scan_result;
+    if (scanResult && scanResult.status === "no_rules" && next.scan?.status === "not_run") {
+      next.scan = scanResult;
+    }
+    state.data.set("monitoring", next);
+    state.monitoringScanError = "";
+    const scan = next.scan_result || next.scan || {};
+    const resultLabel = monitoringStatusLabel(scan.status || "succeeded");
+    monitoringSetStatus(`收盘监控${resultLabel}`, scan.status === "failed" ? "error" : "success");
+    notify(`收盘监控${resultLabel}`, scan.status === "failed");
+    return true;
+  } catch (error) {
+    const message = friendlyError(error.message);
+    state.monitoringScanError = message;
+    monitoringSetStatus(message, "error");
+    notify(message, true);
+    return false;
+  } finally {
+    state.monitoringBusy = false;
+    monitoringRenderCurrent();
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.setAttribute("aria-busy", "false");
+    }
+  }
+}
+
+async function createMonitoringWatchlist(form) {
+  const name = String(new FormData(form).get("name") || "").trim();
+  if (!name) {
+    form.reportValidity();
+    return;
+  }
+  const data = state.data.get("monitoring") || {};
+  const button = form.querySelector("button[type='submit']");
+  await runMonitoringMutation(
+    "/api/monitoring/watchlist",
+    { action: "create", name, expected_revision: monitoringExpectedRevision(data) },
+    "监控列表已建立",
+    "watchlist:create",
+    button,
+    () => form.reset(),
+  );
+}
+
+async function mutateMonitoringWatchlist(action, watchlistId, extras = {}, button = null) {
+  const data = state.data.get("monitoring") || {};
+  const payload = {
+    action,
+    watchlist_id: watchlistId,
+    expected_revision: monitoringExpectedRevision(data),
+    ...extras,
+  };
+  return runMonitoringMutation(
+    "/api/monitoring/watchlist",
+    payload,
+    action === "add_symbol" ? "证券已加入监控列表" : action === "remove_symbol" ? "证券已移出监控列表" : action === "rename" ? "监控列表已重命名" : action === "delete" ? "监控列表已删除" : "监控列表状态已更新",
+    `watchlist:${watchlistId}`,
+    button,
+  );
+}
+
+async function createMonitoringRule(form) {
+  const values = new FormData(form);
+  const target = parseMonitoringRuleTarget(values.get("target"));
+  const ruleType = String(values.get("rule_type") || "");
+  const data = state.data.get("monitoring") || {};
+  const metadata = monitoringRuleMetadata(data)[ruleType] || {};
+  const threshold = monitoringNumber(values.get("threshold"));
+  const window = monitoringInteger(values.get("window"));
+  const comparisonWindow = monitoringInteger(values.get("comparison_window"));
+  if (!target.watchlist_id || !target.symbol || !ruleType || (metadata.threshold_required && threshold === null)) {
+    form.reportValidity();
+    return;
+  }
+  const payload = {
+    action: "create",
+    expected_revision: monitoringExpectedRevision(data),
+    watchlist_id: target.watchlist_id,
+    symbol: target.symbol,
+    rule_type: ruleType,
+    threshold,
+    cooldown_sessions: monitoringInteger(values.get("cooldown_sessions")) ?? 1,
+    severity: String(values.get("severity") || "warning"),
+  };
+  if (window !== null) payload.window = window;
+  if (comparisonWindow !== null) payload.comparison_window = comparisonWindow;
+  const button = form.querySelector("button[type='submit']");
+  await runMonitoringMutation(
+    "/api/monitoring/rules",
+    payload,
+    "监控规则已建立",
+    "rule:create",
+    button,
+    () => form.reset(),
+  );
+}
+
+async function mutateMonitoringRule(action, ruleId, enabled, button = null) {
+  const data = state.data.get("monitoring") || {};
+  const payload = {
+    action,
+    rule_id: ruleId,
+    expected_revision: monitoringExpectedRevision(data),
+  };
+  if (action === "update") payload.enabled = Boolean(enabled);
+  return runMonitoringMutation(
+    "/api/monitoring/rules",
+    payload,
+    action === "delete" ? "监控规则已删除" : "监控规则状态已更新",
+    `rule:${ruleId}`,
+    button,
+  );
+}
+
+async function runMonitoringAlertAction(alertId, action, extras = {}, button = null) {
+  const current = (state.data.get("monitoring")?.alerts || []).find((item) => item.alert_id === alertId);
+  const expected = current?.state_fingerprint;
+  return runMonitoringMutation(
+    `/api/monitoring/alerts/${encodeURIComponent(alertId)}/actions`,
+    { action, ...extras, ...(expected ? { expected_state_fingerprint: expected } : {}) },
+    `告警${MONITORING_ACTION_LABELS[action] || "状态已更新"}`,
+    `${alertId}:${action}`,
+    button,
+    () => { state.monitoringActionTarget = null; },
+  );
+}
+
 function renderStorage(data) {
   const preferences = data.preferences || {};
   const usage = data.usage || {};
@@ -5001,6 +5715,95 @@ document.addEventListener("click", (event) => {
     loadRoute();
     return;
   }
+  const monitoringScan = event.target.closest("[data-monitoring-scan]");
+  if (monitoringScan) {
+    runMonitoringScan(monitoringScan);
+    return;
+  }
+  const monitoringRefresh = event.target.closest("[data-monitoring-refresh]");
+  if (monitoringRefresh) {
+    reloadMonitoring();
+    return;
+  }
+  const monitoringFilterClear = event.target.closest("[data-monitoring-filter-clear]");
+  if (monitoringFilterClear) {
+    state.monitoringFilters = {
+      watchlist_id: "",
+      symbol: "",
+      severity: "",
+      status: "unresolved",
+      limit: "100",
+    };
+    monitoringSetStatus("筛选已清除", "success");
+    monitoringRenderCurrent();
+    return;
+  }
+  const monitoringComposeCancel = event.target.closest("[data-monitoring-alert-compose-cancel]");
+  if (monitoringComposeCancel) {
+    state.monitoringActionTarget = null;
+    monitoringSetStatus("", "");
+    monitoringRenderCurrent();
+    return;
+  }
+  const monitoringCompose = event.target.closest("[data-monitoring-alert-compose]");
+  if (monitoringCompose) {
+    state.monitoringActionTarget = {
+      alertId: monitoringCompose.dataset.monitoringAlertId,
+      action: monitoringCompose.dataset.monitoringAlertCompose,
+    };
+    monitoringSetStatus("", "");
+    monitoringRenderCurrent();
+    window.requestAnimationFrame(() => document.getElementById("monitoring-action-note")?.focus({ preventScroll: true }));
+    return;
+  }
+  const monitoringAlertAction = event.target.closest("[data-monitoring-alert-action]");
+  if (monitoringAlertAction) {
+    runMonitoringAlertAction(
+      monitoringAlertAction.dataset.monitoringAlertId,
+      monitoringAlertAction.dataset.monitoringAlertAction,
+      {},
+      monitoringAlertAction,
+    );
+    return;
+  }
+  const monitoringWatchlistAction = event.target.closest("[data-monitoring-watchlist-action]");
+  if (monitoringWatchlistAction) {
+    const actionName = monitoringWatchlistAction.dataset.monitoringWatchlistAction;
+    const watchlistId = monitoringWatchlistAction.dataset.monitoringWatchlistId;
+    if (actionName === "delete" && !window.confirm("确认删除这个监控列表？其中的规则也将无法继续扫描。")) return;
+    if (actionName === "rename") {
+      const currentName = monitoringWatchlistAction.dataset.monitoringWatchlistName || "";
+      const name = window.prompt("输入新的监控列表名称", currentName);
+      if (name === null || !name.trim()) return;
+      mutateMonitoringWatchlist("rename", watchlistId, { name: name.trim() }, monitoringWatchlistAction);
+      return;
+    }
+    if (actionName === "set_enabled") {
+      mutateMonitoringWatchlist("set_enabled", watchlistId, { enabled: monitoringWatchlistAction.dataset.monitoringEnabled === "true" }, monitoringWatchlistAction);
+      return;
+    }
+    mutateMonitoringWatchlist(
+      actionName,
+      watchlistId,
+      actionName === "remove_symbol" || actionName === "add_symbol"
+        ? { symbol: monitoringWatchlistAction.dataset.monitoringSymbol }
+        : {},
+      monitoringWatchlistAction,
+    );
+    return;
+  }
+  const monitoringRuleAction = event.target.closest("[data-monitoring-rule-action]");
+  if (monitoringRuleAction) {
+    const actionName = monitoringRuleAction.dataset.monitoringRuleAction;
+    if (actionName === "delete" && !window.confirm("确认删除这条监控规则？历史告警证据不会被改写。")) return;
+    mutateMonitoringRule(
+      actionName,
+      monitoringRuleAction.dataset.monitoringRuleId,
+      monitoringRuleAction.dataset.monitoringRuleEnabled === "true",
+      monitoringRuleAction,
+    );
+    return;
+  }
   const shadowTemplate = event.target.closest("[data-shadow-template]");
   if (shadowTemplate) {
     downloadShadowTemplate();
@@ -5194,6 +5997,10 @@ document.addEventListener("change", (event) => {
   }
   if (event.target.closest("[data-journal-decision]")) {
     syncJournalDecisionControl();
+    return;
+  }
+  if (event.target.closest("#monitoring-rule-type")) {
+    syncMonitoringRuleControl();
   }
 });
 
@@ -5206,6 +6013,48 @@ document.addEventListener("submit", (event) => {
     if (symbol) state.marketSymbol = symbol;
     if ([120, 240, 500, 1000, 1500].includes(limit)) state.marketLimit = limit;
     loadRoute();
+  } else if (event.target.id === "monitoring-filter-form") {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    state.monitoringFilters = {
+      watchlist_id: String(values.get("watchlist_id") || ""),
+      symbol: String(values.get("symbol") || "").trim(),
+      severity: String(values.get("severity") || ""),
+      status: String(values.get("status") || "unresolved"),
+      limit: String(values.get("limit") || "100"),
+    };
+    monitoringSetStatus("筛选已应用", "success");
+    monitoringRenderCurrent();
+  } else if (event.target.id === "monitoring-watchlist-form") {
+    event.preventDefault();
+    createMonitoringWatchlist(event.target);
+  } else if (event.target.matches("[data-monitoring-symbol-form]")) {
+    event.preventDefault();
+    const form = event.target;
+    const values = new FormData(form);
+    const symbol = String(values.get("symbol") || "");
+    if (!symbol) {
+      form.reportValidity();
+      return;
+    }
+    const button = form.querySelector("button[type='submit']");
+    mutateMonitoringWatchlist(
+      "add_symbol",
+      form.dataset.watchlistId,
+      { symbol },
+      button,
+    );
+  } else if (event.target.id === "monitoring-rule-form") {
+    event.preventDefault();
+    createMonitoringRule(event.target);
+  } else if (event.target.id === "monitoring-alert-action-form") {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    const action = String(values.get("action") || "");
+    const alertId = String(values.get("alert_id") || "");
+    const extras = { note: String(values.get("note") || "") };
+    if (action === "snooze") extras.snooze_until = String(values.get("snooze_until") || "");
+    runMonitoringAlertAction(alertId, action, extras, event.target.querySelector("button[type='submit']"));
   } else if (event.target.id === "assistant-analysis-form") {
     event.preventDefault();
     runAssistantAnalysis(event.target);

@@ -22,6 +22,13 @@ from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
 from ..json_utils import loads_unique_json
+from ..monitoring import (
+    ALERT_ACTIONS,
+    MonitoringCapacityError,
+    MonitoringConflictError,
+    RULE_SEVERITIES,
+    RULE_TYPE_METADATA,
+)
 from ..research_archive import (
     ARCHIVE_DEFAULT_LIMIT,
     ARCHIVE_KINDS,
@@ -83,6 +90,11 @@ STRATEGY_LAB_FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 STRATEGY_LAB_MONITOR_ID_PATTERN = re.compile(r"monitor_[0-9a-f]{32}\Z")
 STRATEGY_LAB_OBJECTIVES = frozenset({"balanced", "drawdown", "turnover"})
 STRATEGY_LAB_LIFECYCLE_ACTIONS = frozenset({"suspend", "resume", "retire"})
+MONITORING_WATCHLIST_ID_PATTERN = re.compile(r"watch_[0-9a-f]{32}\Z")
+MONITORING_RULE_ID_PATTERN = re.compile(r"rule_[0-9a-f]{32}\Z")
+MONITORING_ALERT_ACTION_PATH = re.compile(
+    r"/api/monitoring/alerts/(alert_[0-9a-f]{32})/actions\Z"
+)
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -302,6 +314,14 @@ def _handler_factory(
                     if raw_date:
                         selected = date.fromisoformat(raw_date)
                     self._json(service.universe(selected))
+                elif parsed.path == "/api/monitoring":
+                    if parsed.query:
+                        raise ValueError(
+                            "Monitoring status does not accept query parameters"
+                        )
+                    self._json(
+                        service.monitoring(owner_id=_assistant_user_id(context))
+                    )
                 elif parsed.path == "/api/system":
                     self._json(service.system())
                 elif parsed.path == "/api/storage":
@@ -426,6 +446,94 @@ def _handler_factory(
                             draft=draft,
                         ),
                         HTTPStatus.CREATED,
+                    )
+                elif parsed.path == "/api/monitoring/watchlist":
+                    (
+                        action,
+                        expected_revision,
+                        watchlist_id,
+                        name,
+                        symbol,
+                        enabled,
+                    ) = _parse_monitoring_watchlist_payload(
+                        self._read_json(), require_expected_revision=True
+                    )
+                    if action == "create":
+                        self._json(
+                            service.monitoring_create_watchlist(
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                                name=name,
+                                expected_revision=expected_revision,
+                            ),
+                            HTTPStatus.CREATED,
+                        )
+                    else:
+                        self._json(
+                            service.monitoring_watchlist_action(
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                                watchlist_id=watchlist_id,
+                                action=action,
+                                expected_revision=expected_revision,
+                                symbol=symbol,
+                                name=name,
+                                enabled=enabled,
+                            )
+                        )
+                elif parsed.path == "/api/monitoring/rules":
+                    action, expected_revision, rule_id, rule = (
+                        _parse_monitoring_rule_payload(
+                            self._read_json(), require_expected_revision=True
+                        )
+                    )
+                    if action == "create":
+                        self._json(
+                            service.monitoring_create_rule(
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                                rule=rule,
+                                expected_revision=expected_revision,
+                            ),
+                            HTTPStatus.CREATED,
+                        )
+                    else:
+                        self._json(
+                            service.monitoring_rule_action(
+                                owner_id=_assistant_user_id(context),
+                                actor=_strategy_lab_actor(context),
+                                rule_id=rule_id,
+                                action=action,
+                                expected_revision=expected_revision,
+                                patch=rule if action == "update" else None,
+                            )
+                        )
+                elif parsed.path == "/api/monitoring/scan":
+                    _parse_empty_object(self._read_json(), "monitoring scan")
+                    self._json(
+                        service.monitoring_scan(
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                        ),
+                        HTTPStatus.CREATED,
+                    )
+                elif match := MONITORING_ALERT_ACTION_PATH.fullmatch(parsed.path):
+                    action, note, snooze_until, expected_state_fingerprint = (
+                        _parse_monitoring_alert_action_payload(
+                            self._read_json(),
+                            require_expected_state_fingerprint=True,
+                        )
+                    )
+                    self._json(
+                        service.monitoring_alert_action(
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                            alert_id=match.group(1),
+                            action=action,
+                            note=note,
+                            snooze_until=snooze_until,
+                            expected_state_fingerprint=expected_state_fingerprint,
+                        )
                     )
                 elif parsed.path == "/api/shadow-account/import":
                     if parsed.query:
@@ -585,6 +693,8 @@ def _handler_factory(
             except KeyError as exc:
                 self._json_error(HTTPStatus.NOT_FOUND, str(exc).strip("'"))
             except FileExistsError as exc:
+                self._json_error(HTTPStatus.CONFLICT, str(exc))
+            except (MonitoringConflictError, MonitoringCapacityError) as exc:
                 self._json_error(HTTPStatus.CONFLICT, str(exc))
             except StrategyLabConflictError as exc:
                 self._json_error(HTTPStatus.CONFLICT, str(exc))
@@ -1476,6 +1586,196 @@ def _parse_strategy_lab_lifecycle_payload(
     ):
         raise ValueError("monitor_id must be a valid strategy monitoring id")
     return candidate_id, fingerprint, note, monitor_id
+
+
+def _parse_monitoring_watchlist_payload(
+    payload: dict[str, object],
+    *,
+    require_expected_revision: bool = False,
+) -> tuple[str, int | None, str, str, str | None, bool | None]:
+    _reject_unknown_fields(
+        payload,
+        {
+            "action",
+            "expected_revision",
+            "watchlist_id",
+            "name",
+            "symbol",
+            "enabled",
+        },
+        "monitoring watchlist",
+    )
+    action = payload.get("action")
+    if action not in {
+        "create",
+        "add_symbol",
+        "remove_symbol",
+        "rename",
+        "set_enabled",
+        "delete",
+    }:
+        raise ValueError("Unsupported monitoring watchlist action")
+    expected_revision = _parse_monitoring_revision(
+        payload.get("expected_revision"), required=require_expected_revision
+    )
+    watchlist_id = str(payload.get("watchlist_id") or "")
+    if action == "create":
+        if watchlist_id:
+            raise ValueError("create does not accept watchlist_id")
+    elif not MONITORING_WATCHLIST_ID_PATTERN.fullmatch(watchlist_id):
+        raise ValueError("watchlist_id must be a valid monitoring watchlist id")
+    name = ""
+    if action in {"create", "rename"}:
+        name = _bounded_text(payload.get("name"), "name", 80)
+    elif payload.get("name") is not None:
+        raise ValueError(f"{action} does not accept name")
+    symbol = payload.get("symbol")
+    if action in {"add_symbol", "remove_symbol"}:
+        if (
+            not isinstance(symbol, str)
+            or symbol != symbol.strip()
+            or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
+        ):
+            raise ValueError("symbol must be a valid instrument identifier")
+    elif symbol is not None:
+        raise ValueError(f"{action} does not accept symbol")
+    enabled = payload.get("enabled")
+    if action == "set_enabled":
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be a boolean")
+    elif enabled is not None:
+        raise ValueError(f"{action} does not accept enabled")
+    return action, expected_revision, watchlist_id, name, symbol, enabled
+
+
+def _parse_monitoring_rule_payload(
+    payload: dict[str, object],
+    *,
+    require_expected_revision: bool = False,
+) -> tuple[str, int | None, str, dict[str, object]]:
+    fields = {
+        "watchlist_id",
+        "symbol",
+        "rule_type",
+        "threshold",
+        "window",
+        "comparison_window",
+        "cooldown_sessions",
+        "severity",
+        "enabled",
+    }
+    _reject_unknown_fields(
+        payload,
+        {"action", "expected_revision", "rule_id", *fields},
+        "monitoring rule",
+    )
+    action = payload.get("action")
+    if action not in {"create", "update", "delete"}:
+        raise ValueError("Unsupported monitoring rule action")
+    expected_revision = _parse_monitoring_revision(
+        payload.get("expected_revision"), required=require_expected_revision
+    )
+    rule_id = str(payload.get("rule_id") or "")
+    if action == "create":
+        if rule_id:
+            raise ValueError("create does not accept rule_id")
+    elif not MONITORING_RULE_ID_PATTERN.fullmatch(rule_id):
+        raise ValueError("rule_id must be a valid monitoring rule id")
+    if action == "delete":
+        extras = fields.intersection(payload)
+        if extras:
+            raise ValueError("delete does not accept rule fields")
+        return action, expected_revision, rule_id, {}
+    if action == "create":
+        missing = sorted(
+            {"watchlist_id", "symbol", "rule_type"} - set(payload)
+        )
+        if missing:
+            raise ValueError(
+                "Missing monitoring rule fields: " + ", ".join(missing)
+            )
+    rule = {key: payload[key] for key in fields if key in payload}
+    watchlist_id = rule.get("watchlist_id")
+    if watchlist_id is not None and (
+        not isinstance(watchlist_id, str)
+        or not MONITORING_WATCHLIST_ID_PATTERN.fullmatch(watchlist_id)
+    ):
+        raise ValueError("watchlist_id must be a valid monitoring watchlist id")
+    symbol = rule.get("symbol")
+    if symbol is not None and (
+        not isinstance(symbol, str)
+        or symbol != symbol.strip()
+        or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
+    ):
+        raise ValueError("symbol must be a valid instrument identifier")
+    rule_type = rule.get("rule_type")
+    if rule_type is not None and rule_type not in RULE_TYPE_METADATA:
+        raise ValueError("rule_type is not supported")
+    severity = rule.get("severity")
+    if severity is not None and severity not in RULE_SEVERITIES:
+        raise ValueError("severity must be info, warning, or critical")
+    for field in ("window", "comparison_window", "cooldown_sessions"):
+        value = rule.get(field)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ValueError(f"{field} must be an integer")
+    threshold = rule.get("threshold")
+    if threshold is not None and (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(float(threshold))
+    ):
+        raise ValueError("threshold must be a finite number or null")
+    if "enabled" in rule and not isinstance(rule["enabled"], bool):
+        raise ValueError("enabled must be a boolean")
+    return action, expected_revision, rule_id, rule
+
+
+def _parse_monitoring_alert_action_payload(
+    payload: dict[str, object],
+    *,
+    require_expected_state_fingerprint: bool = False,
+) -> tuple[str, str, str | None, str | None]:
+    _reject_unknown_fields(
+        payload,
+        {"action", "note", "snooze_until", "expected_state_fingerprint"},
+        "monitoring alert action",
+    )
+    action = payload.get("action")
+    if action not in ALERT_ACTIONS:
+        raise ValueError("Unsupported monitoring alert action")
+    note = payload.get("note", "")
+    if note != "":
+        note = _bounded_text(note, "note", 1_000)
+    snooze_until = payload.get("snooze_until")
+    if action == "snooze":
+        if not isinstance(snooze_until, str):
+            raise ValueError("snooze_until is required")
+        _parse_archive_date(snooze_until, "snooze_until")
+    elif snooze_until is not None:
+        raise ValueError(f"{action} does not accept snooze_until")
+    expected = payload.get("expected_state_fingerprint")
+    if require_expected_state_fingerprint and expected is None:
+        raise ValueError("expected_state_fingerprint is required")
+    if expected is not None and (
+        not isinstance(expected, str)
+        or not STRATEGY_LAB_FINGERPRINT_PATTERN.fullmatch(expected)
+    ):
+        raise ValueError(
+            "expected_state_fingerprint must be a lowercase SHA-256 fingerprint"
+        )
+    return str(action), str(note), snooze_until, expected
+
+
+def _parse_monitoring_revision(
+    value: object, *, required: bool = False
+) -> int | None:
+    if value is None:
+        if required:
+            raise ValueError("expected_revision is required")
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("expected_revision must be a non-negative integer")
+    return value
 
 
 def _parse_empty_object(payload: dict[str, object], action: str) -> None:

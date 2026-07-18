@@ -134,6 +134,46 @@ class WebAuthTests(unittest.TestCase):
             self.assertEqual(active_payload["users"][0]["account_id"], "alice")
             self.assertFalse(any(Path(temporary).glob("*.tmp")))
 
+    def test_legacy_local_owner_identity_is_separated_during_migration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "users.json"
+            initial = UserStore(path, iterations=MIN_PBKDF2_ITERATIONS)
+            initial.add_user("local-owner", PASSWORD)
+            legacy_payload = json.loads(path.read_text(encoding="utf-8"))
+            legacy_payload["schema_version"] = 1
+            legacy_payload["users"][0].pop("account_id")
+            path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+            migrated = UserStore(path, iterations=MIN_PBKDF2_ITERATIONS)
+            account_id = migrated.account_id_for("local-owner")
+            self.assertIsNotNone(account_id)
+            self.assertRegex(account_id or "", r"\Aacct_[0-9a-f]{32}\Z")
+            self.assertNotEqual(account_id, "local-owner")
+            self.assertTrue(migrated.verify("local-owner", PASSWORD))
+
+            active_payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(active_payload["schema_version"], USER_FILE_SCHEMA_VERSION)
+            self.assertEqual(active_payload["users"][0]["account_id"], account_id)
+
+    def test_enabled_account_queries_exclude_disabled_users(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = UserStore(
+                Path(temporary) / "users.json", iterations=MIN_PBKDF2_ITERATIONS
+            )
+            store.add_user("alice", PASSWORD)
+            store.add_user("bob", NEW_PASSWORD)
+            alice_account_id = store.account_id_for("alice")
+            bob_account_id = store.account_id_for("bob")
+            store.set_enabled("bob", False)
+
+            self.assertEqual(
+                store.enabled_account_id_for("alice"), alice_account_id
+            )
+            self.assertIsNone(store.enabled_account_id_for("bob"))
+            self.assertIsNone(store.enabled_account_id_for("missing"))
+            self.assertEqual(store.enabled_account_ids(), (alice_account_id,))
+            self.assertNotIn(bob_account_id, store.enabled_account_ids())
+
     def test_user_file_rejects_malformed_and_duplicate_account_ids(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "users.json"

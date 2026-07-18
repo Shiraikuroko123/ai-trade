@@ -16,7 +16,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [cvxportfolio](https://github.com/cvxgrp/cvxportfolio) | Multi-period optimization with costs and constraints | Reference for future institutional portfolio construction |
 | [Riskfolio-Lib](https://github.com/dcajasn/Riskfolio-Lib) | Broad portfolio-risk optimization | Reference for CVaR and hierarchical risk research |
 | [FinRL](https://github.com/AI4Finance-Foundation/FinRL) | Reinforcement-learning experiments | Isolated research only; never promoted without strict leakage and forward tests |
-| [Freqtrade](https://github.com/freqtrade/freqtrade) | Operational lifecycle, monitoring and strategy deployment | Reference for health checks and promotion stages; crypto execution is out of scope |
+| [Freqtrade](https://github.com/freqtrade/freqtrade) | Operational lifecycle, monitoring and strategy deployment | Owner-scoped scheduled research scans and alert review are implemented; automated strategy deployment and crypto execution are out of scope |
 | [KLineChart](https://github.com/klinecharts/KLineChart) | Browser K-line rendering and interaction | Pinned local 10.0.0 renderer for read-only completed-session charts; AI Trade owns data, aggregation, indicators, provenance, and trading boundaries |
 
 ## Hosted Platforms Worth Comparing
@@ -42,6 +42,19 @@ authoritative paper and broker ledgers.
 | Weekly analysis/archive | Partial | Available evidence is aggregated by ISO week with expected-session coverage and source fingerprints; a versioned weekly report, revision chain, and cloud archive are still planned. |
 | Historical holdings snapshot | Partial | The Research page exposes recent ledger quantities by date; it deliberately does not reconstruct historical prices, market value, or weights, and does not create a separate snapshot ledger. |
 
+## Research Monitoring Status
+
+| Capability | Status | AI Trade boundary |
+|---|---|---|
+| Per-owner watchlists and deterministic daily rules | Complete | Configuration revisions are owner-scoped and compare-and-swap protected. Rules use completed daily bars from the validated local snapshot. |
+| Multi-profile scheduled sweep | Complete on Windows | The task scans the local owner and enabled beta accounts. One malformed profile is reported as failed without stopping later profiles; an invalid beta-user store produces a warning and non-zero CLI exit. |
+| Partial and failed retry | Complete | Only a fully successful owner/configuration/snapshot scan is reusable. Partial and failed attempts remain evidence and are reevaluated under a new attempt ID; staged alert/scan publication has owner-local marker recovery. |
+| Historical rule/evidence binding | Complete within the local trust boundary | Historical configuration revisions and persisted snapshot evidence rederive alert rule metadata and evidence fingerprints. The hashes remain unkeyed local values. |
+| Alert review lifecycle | Complete within the local trust boundary | Open, acknowledge, snooze, dismiss, reopen, and automatic scan-time unsnooze actions are append-only and state-fingerprint protected. There is no push notification or timer service. |
+| Capacity and retention | Bounded | Each owner has hard immutable-file caps and no archive/compaction service; reaching a cap stops new writes until a future verified checkpoint format exists. |
+| Host-independent tamper evidence | Not implemented | Local SHA-256 and cross-record validation are not signatures or WORM storage. A local administrator can recalculate records or delete a newest chain tail; monitoring state is not included in the R2 market-cache backup. |
+| Minute/Tick/Level-2 monitoring and live execution | Not implemented | The current monitor uses completed daily data and remains `research_only`; it cannot change strategy, accounting, broker permissions, or orders. |
+
 The matrix deliberately keeps human notes, accounting evidence, and strategy
 decisions separate. A note saying “hold” or “reduce risk” is a record of what the
 operator thought at that time, not a signal, order, or promotion fact.
@@ -59,6 +72,7 @@ operator thought at that time, not a signal, order, or promotion fact.
 9. The market workstation renders only local validated completed snapshots. Indicator and chart controls are observations, not strategy mutations or order signals.
 10. Research notes are append-only, owner-scoped evidence. They can explain a decision, but cannot mutate strategy, accounting, broker permissions, or live authority.
 11. Closing archives are read-time evidence projections. The paper equity ledger and daily reports remain accounting authority; archive rows cannot promote a strategy or authorize an order.
+12. Monitoring alerts are owner-scoped research prompts. Partial and failed scans remain explicit attempts, and no alert or review action changes strategy, paper accounting, broker permissions, or order authority.
 
 ## What Is Deliberately Not Adopted
 

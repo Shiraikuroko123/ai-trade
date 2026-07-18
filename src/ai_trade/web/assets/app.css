@@ -373,7 +373,7 @@ p {
 
 .market-pulse-track {
   display: grid;
-  grid-template-columns: repeat(5, minmax(156px, 1fr));
+  grid-template-columns: repeat(6, minmax(156px, 1fr));
   margin: 0;
   min-width: 0;
   overflow-x: auto;
@@ -3439,6 +3439,184 @@ progress {
   margin: 1rem;
 }
 
+/* Monitoring stays a dense evidence surface: rows scroll internally while
+   configuration and action areas preserve reading order on narrow screens. */
+.monitoring-page,
+.monitoring-page .panel {
+  min-width: 0;
+}
+
+.monitoring-filter-form {
+  align-items: end;
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: minmax(150px, 1fr) minmax(130px, 1fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) 92px auto;
+  padding: 0 0 0.75rem;
+}
+
+.monitoring-filter-form .filter-actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.monitoring-alert-table,
+.monitoring-watchlist-table,
+.monitoring-rule-table {
+  margin-top: 0.7rem;
+  max-width: 100%;
+}
+
+.monitoring-alert-table {
+  max-height: 650px;
+  overflow: auto;
+}
+
+.monitoring-alert-table table {
+  min-width: 1320px;
+}
+
+.monitoring-watchlist-table table {
+  min-width: 920px;
+}
+
+.monitoring-rule-table table {
+  min-width: 980px;
+}
+
+.monitoring-config-layout {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.monitoring-config-panel {
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  padding-top: 0.8rem;
+}
+
+.monitoring-create-form {
+  align-items: end;
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 0.8rem;
+}
+
+.monitoring-rule-form {
+  align-items: end;
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding-bottom: 0.8rem;
+}
+
+.monitoring-rule-form .field:first-child {
+  grid-column: span 2;
+}
+
+.monitoring-rule-form .action-row {
+  align-self: end;
+}
+
+.monitoring-rule-form .section-note {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+.monitoring-alert-state {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.monitoring-alert-actions {
+  align-items: stretch;
+  flex-direction: column;
+  min-width: 132px;
+}
+
+.monitoring-alert-actions .button {
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+
+.monitoring-action-composer {
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  padding: 0.8rem 0;
+}
+
+.monitoring-action-form {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: minmax(170px, 0.45fr) minmax(260px, 1fr) auto;
+}
+
+.monitoring-action-form .section-note,
+.monitoring-action-form .action-row,
+.monitoring-action-form #monitoring-composer-status {
+  grid-column: 1 / -1;
+}
+
+.monitoring-state,
+.monitoring-boundary {
+  margin: 0;
+}
+
+.monitoring-boundary ul {
+  margin-bottom: 0;
+}
+
+.monitoring-evidence-panel {
+  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  padding-top: 0.8rem;
+}
+
+.monitoring-symbols-cell {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 260px;
+}
+
+.monitoring-symbol-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.monitoring-symbol-list li {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.monitoring-symbol-list code {
+  font-size: 0.76rem;
+}
+
+.monitoring-symbol-form {
+  align-items: end;
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: minmax(150px, 1fr) auto;
+}
+
+.monitoring-symbol-form select,
+.monitoring-symbol-form .button {
+  min-height: 40px;
+}
+
 @media (max-width: 1120px) {
   .sidebar {
     width: 196px;
@@ -3573,6 +3751,28 @@ progress {
   .universe-filter-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
+  }
+
+  .monitoring-filter-form,
+  .monitoring-rule-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .monitoring-filter-form .filter-actions,
+  .monitoring-rule-form .section-note {
+    grid-column: 1 / -1;
+  }
+
+  .monitoring-config-layout,
+  .monitoring-action-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .monitoring-action-form .section-note,
+  .monitoring-action-form .action-row,
+  .monitoring-action-form #monitoring-composer-status {
+    grid-column: auto;
   }
 
   body {
@@ -3810,6 +4010,33 @@ progress {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .monitoring-filter-form,
+  .monitoring-rule-form,
+  .monitoring-create-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .monitoring-rule-form .field:first-child,
+  .monitoring-filter-form .filter-actions,
+  .monitoring-rule-form .section-note {
+    grid-column: auto;
+  }
+
+  .monitoring-filter-form .filter-actions,
+  .monitoring-create-form .button,
+  .monitoring-rule-form .action-row,
+  .monitoring-rule-form .button,
+  .monitoring-action-form .action-row,
+  .monitoring-action-form .button {
+    width: 100%;
+  }
+
+  .monitoring-filter-form .filter-actions,
+  .monitoring-action-form .action-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .journal-heading,
   .journal-entry-head,
   .journal-entry-actions {
@@ -3930,7 +4157,7 @@ progress {
   }
 
   .market-pulse-track {
-    grid-template-columns: repeat(5, minmax(156px, 1fr));
+    grid-template-columns: repeat(6, minmax(156px, 1fr));
   }
 
   .page-intro {

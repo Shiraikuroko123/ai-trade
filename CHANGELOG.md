@@ -23,6 +23,42 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added owner-scoped research monitoring with versioned watchlists and rules,
+  one-snapshot scans, immutable alert evidence, append-only review actions, and
+  a Windows scheduled-task runner. Monitoring remains `research_only` and has
+  no strategy, paper-ledger, broker, approval, or order authority.
+- Made scan outcomes explicit and retryable: a fully successful scan may be
+  reused for the same owner/configuration/snapshot tuple, while `partial` and
+  `failed` attempts remain immutable evidence and are reevaluated under a new
+  attempt ID. Alert-write failures roll back alerts created by that attempt
+  before a failed scan is recorded.
+- Added optimistic configuration revisions and alert-state fingerprints,
+  process and file locks, bounded strict JSON records, owner binding, and
+  scan/alert/action integrity checks. These local SHA-256 records detect
+  accidental changes and many inconsistent edits. Historical configuration and
+  persisted snapshot-evidence fields are rechecked against alert rule and
+  evidence fingerprints. The hashes are not signatures or WORM storage, and a
+  local administrator can rewrite or delete state. In particular, deleting the
+  newest configuration/action tail (or a consistent scan/alert tail) is not
+  detectable without an external durable head or backup.
+- Added an atomically staged owner-local scan transaction marker and recovery.
+  Hard termination between alert and parent-scan publication is reconciled on
+  the next integrity-checked read by either committing the exact complete pair
+  or rolling back the exact uncommitted alerts; an incomplete newest scan is
+  rolled back as a unit when no review action exists. Malformed markers,
+  non-tail transactions, and action-bearing recovery states fail closed.
+  Writes now validate the full record envelope before publication, clean only
+  reserved staging names within bounded residue limits, and use Windows
+  write-through same-volume publication where available.
+- Monitoring record budgets are explicit hard caps (1,000 configuration
+  revisions, 2,000 scans, 5,000 alerts, and 10,000 actions per owner, alongside
+  bounded watchlists, symbols, and rules). This release has no verified archive
+  or compaction path, so reaching a cap stops new writes until a future
+  checkpointed retention format exists.
+- Added open, acknowledged, snoozed, and dismissed alert review states. A
+  reached `snooze_until` date appends an auditable automatic unsnooze action at
+  the next snapshot-backed scan; it does not create a separate timer or
+  background wake-up.
 - Added an immutable, per-owner research journal for manual observations,
   decision rationale, trade reviews, risk notes, strategy notes, and corrections.
   Each record binds the authenticated actor to the market snapshot and active

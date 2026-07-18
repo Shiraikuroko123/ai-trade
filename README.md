@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 `v0.12.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
@@ -297,9 +297,9 @@ ai-trade/
 ├── .github/                 # CI、Issue 和 PR 模板
 ├── config/default.json      # 策略、数据、风控、成本和模拟盘配置
 ├── config/security_master.json # 证券主数据、成分区间和交易状态
-├── docs/                    # 架构、研究方法、研究日志和模拟盘运维文档
+├── docs/                    # 架构、研究方法、研究日志、监控和模拟盘运维文档
 ├── local/                   # Git 忽略的云快照恢复暂存区
-├── scripts/                 # Windows 初始化与计划任务脚本
+├── scripts/                 # Windows 初始化、模拟盘与监控计划任务脚本
 ├── src/ai_trade/
 │   ├── assistant/           # research-only K 线复核与本地历史存储
 │   ├── broker/              # 模拟账户、前向审计和实盘阻断
@@ -307,6 +307,7 @@ ai-trade/
 │   ├── web/                 # 零运行依赖的本地工作台、任务队列和 HTTP 防护
 │   ├── research_archive.py  # 模拟账本、日报与日志的只读收盘归档投影
 │   ├── research_journal.py  # 每用户隔离的不可变研究日志
+│   ├── monitoring.py        # 每用户隔离的监控规则、扫描与告警证据
 │   ├── backtest.py          # 事件驱动回测
 │   ├── security.py          # 时点证券主数据与动态标的池
 │   ├── strategy.py          # 信号、流动性和组合风险预算
@@ -422,6 +423,16 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Paper Daily' -Confirm:$false
 ```
 
 计划任务脚本会传递 Python 的非零退出码；数据、状态或网络异常不会被伪装成成功。当前 Windows 用户配置 R2 并选择“本地 + R2”后，成功的模拟盘刷新流程会尝试追加一次行情快照；云端失败只记告警，不会把有效的本地交易结果改成失败。
+
+安装每日 18:20 的研究监控任务（与模拟盘错开）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_monitor_task.ps1
+Get-ScheduledTask -TaskName 'AI-Trade Research Monitor Daily'
+Get-ScheduledTaskInfo -TaskName 'AI-Trade Research Monitor Daily'
+```
+
+监控任务调用一次性 `monitor-scan --all-profiles`，不会启动常驻服务或修改策略、模拟账本和券商权限。日志位于 `logs/scheduled_monitor.log`，超过 5 MiB 自动轮换并保留最近 5 份。完整命令、失败语义和卸载方法见 [监控与告警运维](docs/MONITORING.md)。
 
 ## 已知研究边界
 

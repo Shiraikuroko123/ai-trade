@@ -29,6 +29,7 @@ from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
+from ..monitoring import MonitoringEngine
 from ..research_archive import (
     ResearchArchiveProjection,
     ResearchArchiveQuery,
@@ -103,6 +104,7 @@ class DashboardService:
         self._strategy_lab: StrategyLabEngine | None = None
         self._research_journal: ResearchJournalStore | None = None
         self._research_archive: ResearchArchiveProjection | None = None
+        self._monitoring: MonitoringEngine | None = None
 
     def overview(self) -> dict[str, Any]:
         backtest = self._json_report("backtest_summary.json") or {}
@@ -726,6 +728,131 @@ class DashboardService:
         result["generated_at"] = generated_at
         return result
 
+    def monitoring(self, *, owner_id: str) -> dict[str, Any]:
+        engine = self._monitoring_engine()
+        try:
+            market = self.market(recover_snapshot=False)
+        except (OSError, RuntimeError, ValueError):
+            market = None
+        return engine.status(owner_id, market=market)
+
+    def monitoring_create_watchlist(
+        self,
+        *,
+        owner_id: str,
+        actor: str,
+        name: str,
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        engine = self._monitoring_engine()
+        engine.store.profile(owner_id).create_watchlist(
+            name,
+            actor=actor,
+            expected_revision=expected_revision,
+        )
+        return self.monitoring(owner_id=owner_id)
+
+    def monitoring_watchlist_action(
+        self,
+        *,
+        owner_id: str,
+        actor: str,
+        watchlist_id: str,
+        action: str,
+        expected_revision: int | None,
+        symbol: str | None = None,
+        name: str | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        if action == "add_symbol" and symbol is not None and symbol not in {
+            item.symbol for item in self.config.instruments
+        }:
+            raise ValueError("symbol must be in the configured security master")
+        engine = self._monitoring_engine()
+        engine.store.profile(owner_id).mutate_watchlist(
+            watchlist_id,
+            action=action,
+            actor=actor,
+            expected_revision=expected_revision,
+            symbol=symbol,
+            name=name,
+            enabled=enabled,
+        )
+        return self.monitoring(owner_id=owner_id)
+
+    def monitoring_create_rule(
+        self,
+        *,
+        owner_id: str,
+        actor: str,
+        rule: dict[str, Any],
+        expected_revision: int | None,
+    ) -> dict[str, Any]:
+        if rule.get("symbol") not in {item.symbol for item in self.config.instruments}:
+            raise ValueError("symbol must be in the configured security master")
+        engine = self._monitoring_engine()
+        engine.store.profile(owner_id).create_rule(
+            rule,
+            actor=actor,
+            expected_revision=expected_revision,
+        )
+        return self.monitoring(owner_id=owner_id)
+
+    def monitoring_rule_action(
+        self,
+        *,
+        owner_id: str,
+        actor: str,
+        rule_id: str,
+        action: str,
+        expected_revision: int | None,
+        patch: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if patch and patch.get("symbol") not in (None, *(
+            item.symbol for item in self.config.instruments
+        )):
+            raise ValueError("symbol must be in the configured security master")
+        engine = self._monitoring_engine()
+        engine.store.profile(owner_id).mutate_rule(
+            rule_id,
+            action=action,
+            actor=actor,
+            expected_revision=expected_revision,
+            patch=patch,
+        )
+        return self.monitoring(owner_id=owner_id)
+
+    def monitoring_scan(self, *, owner_id: str, actor: str) -> dict[str, Any]:
+        engine = self._monitoring_engine()
+        try:
+            market = self.market(recover_snapshot=False)
+        except (OSError, RuntimeError, ValueError):
+            market = None
+        scan = engine.scan(owner_id, actor=actor, market=market)
+        return {**self.monitoring(owner_id=owner_id), "scan_result": scan}
+
+    def monitoring_alert_action(
+        self,
+        *,
+        owner_id: str,
+        actor: str,
+        alert_id: str,
+        action: str,
+        note: str,
+        snooze_until: str | None,
+        expected_state_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        engine = self._monitoring_engine()
+        engine.store.profile(owner_id).alert_action(
+            alert_id,
+            action=action,
+            actor=actor,
+            note=note,
+            snooze_until=snooze_until,
+            expected_state_fingerprint=expected_state_fingerprint,
+        )
+        return self.monitoring(owner_id=owner_id)
+
     def _screen_metrics(
         self,
         item: dict[str, Any],
@@ -1248,6 +1375,12 @@ class DashboardService:
                     self._research_journal_store(),
                 )
             return self._research_archive
+
+    def _monitoring_engine(self) -> MonitoringEngine:
+        with self._lock:
+            if self._monitoring is None:
+                self._monitoring = MonitoringEngine(self.config)
+            return self._monitoring
 
     def _journal_market_evidence(self) -> dict[str, Any]:
         try:

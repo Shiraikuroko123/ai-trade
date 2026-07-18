@@ -25,6 +25,7 @@ from .config import AppConfig, load_config
 from .data.eastmoney import download_universe
 from .data.market import MarketData
 from .diagnostics import diagnose
+from .monitoring import MonitoringEngine
 from .report import save_backtest_report
 from .strategy import MomentumTrendStrategy
 from .validation import run_robustness_validation, save_validation_report
@@ -107,6 +108,31 @@ def build_parser() -> argparse.ArgumentParser:
     assistant_analyze.add_argument("--lookback", type=int, default=180)
     assistant_analyze.add_argument(
         "--mode", choices=("local", "model"), default="local"
+    )
+
+    monitor_scan = subparsers.add_parser(
+        "monitor-scan",
+        help="Evaluate persisted research alerts on one completed market snapshot",
+    )
+    monitor_scope = monitor_scan.add_mutually_exclusive_group()
+    monitor_scope.add_argument(
+        "--all-profiles",
+        action="store_true",
+        help="Scan every persisted monitoring profile without exposing account names",
+    )
+    monitor_scope.add_argument(
+        "--owner-local",
+        action="store_true",
+        help="Scan the loopback owner profile (the default interactive scope)",
+    )
+    monitor_scope.add_argument(
+        "--username",
+        help="Scan one local beta account by its configured username",
+    )
+    monitor_scan.add_argument(
+        "--no-refresh",
+        action="store_true",
+        help="Use the existing verified cache without contacting a provider",
     )
 
     paper_init = subparsers.add_parser(
@@ -422,6 +448,81 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
+        if args.command == "monitor-scan":
+            refresh_warning = None
+            if args.no_refresh:
+                try:
+                    _ensure_cache(config)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    refresh_warning = str(exc)
+            else:
+                try:
+                    download_universe(config, force=False)
+                    _maybe_automatic_cloud_backup(config)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    # A verified local cache may still support a scan. If it
+                    # cannot be opened, the engine records a failed ScanRun.
+                    refresh_warning = str(exc)
+            try:
+                market = MarketData(config, recover_snapshot=False)
+            except (OSError, RuntimeError, ValueError):
+                market = None
+            engine = MonitoringEngine(config)
+            if args.all_profiles:
+                allowed_profiles, profile_warning = _monitor_allowed_profiles(config, engine)
+                scans = engine.scan_all_profiles(
+                    actor="scheduled-monitor",
+                    market=market,
+                    allowed_profile_ids=allowed_profiles,
+                )
+                result = {
+                    "schema_version": 1,
+                    "scope": "all_profiles",
+                    "profiles_scanned": len(scans),
+                    "status_counts": _monitor_status_counts(scans),
+                    "triggered_alerts": sum(
+                        len(item.get("triggered_alert_ids", [])) for item in scans
+                    ),
+                    "scans": scans,
+                    "refresh_warning": refresh_warning,
+                    "profile_warning": profile_warning,
+                    "authority": {
+                        "research_only": True,
+                        "execution_authorized": False,
+                    },
+                }
+            else:
+                owner = "local-owner"
+                actor = "local-owner"
+                if args.username:
+                    from .web.auth import UserStore, normalize_username
+
+                    actor = normalize_username(args.username)
+                    account_id = UserStore(
+                        config.auth_users_file
+                    ).enabled_account_id_for(actor)
+                    if account_id is None:
+                        raise ValueError("Beta user does not exist or is disabled")
+                    owner = account_id
+                scan = engine.scan(owner, actor=actor, market=market)
+                result = {
+                    "schema_version": 1,
+                    "scope": "beta_user" if args.username else "local_owner",
+                    "profiles_scanned": 1,
+                    "status_counts": _monitor_status_counts([scan]),
+                    "triggered_alerts": len(scan.get("triggered_alert_ids", [])),
+                    "scans": [scan],
+                    "refresh_warning": refresh_warning,
+                    "authority": {
+                        "research_only": True,
+                        "execution_authorized": False,
+                    },
+                }
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 1 if (
+                any(item.get("status") == "failed" for item in result["scans"])
+                or bool(result.get("profile_warning"))
+            ) else 0
         if args.command == "paper-init":
             state = initialize_paper(config, args.cash, args.overwrite)
             print(json.dumps(state, ensure_ascii=False, indent=2))
@@ -504,6 +605,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _monitor_status_counts(scans: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for scan in scans:
+        status = str(scan.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _monitor_allowed_profiles(
+    config: AppConfig, engine: MonitoringEngine
+) -> tuple[set[str], str | None]:
+    """Limit scheduled sweeps to the local owner and enabled beta accounts."""
+    allowed = {engine.store.owner_id("local-owner")}
+    warning = None
+    try:
+        from .web.auth import UserStore
+
+        users = UserStore(config.auth_users_file)
+        for account_id in users.enabled_account_ids():
+            allowed.add(engine.store.owner_id(account_id))
+    except (OSError, RuntimeError, ValueError) as exc:
+        # A missing auth store must not prevent the local owner sweep.
+        warning = str(exc)
+    return allowed, warning
 
 
 def _maybe_automatic_cloud_backup(config: AppConfig) -> None:

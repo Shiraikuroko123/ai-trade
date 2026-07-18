@@ -74,6 +74,91 @@ KLineChart 10.0.0 is a pinned local distribution asset, not a CDN dependency. It
 
 The read-only `/api/universe/screen` projection derives liquidity, momentum, annualized volatility, trend, and history readiness for every configured instrument from the same completed snapshot. Its bounded query contract returns a filter fingerprint, snapshot ID, data-status counts, source route, and explicit empty/unavailable states. It never refreshes providers, changes strategy settings, writes paper ledgers, or grants broker authority. The UI keeps the base security-master eligibility separate from the screen result so a research filter cannot silently redefine the tradable universe.
 
+## Research Monitoring Boundary
+
+```text
+owner-scoped watchlists + versioned deterministic rules
+                         |
+                         v
+             one validated completed snapshot
+                         |
+                         v
+      immutable scan + alert evidence + review-action chain
+                         |
+                         X  no strategy write, paper-ledger write,
+                            broker call, approval, or order authority
+```
+
+`monitoring.py` stores each owner below
+`state/monitoring/users/<sha256-owner>/`. Configuration changes create numbered
+revisions linked to the prior revision fingerprint. Scans bind the owner,
+configuration revision and fingerprint, snapshot, completed-session cutoff,
+rule observations, exclusions, suppression reasons, and triggered alert IDs.
+Alert records retain the deterministic rule fingerprint, source-file hash, and
+evidence fingerprint. Review actions append state transitions instead of editing
+the original alert. Authenticated HTTP writes derive owner and actor from the
+server session, require same-origin CSRF protection, and use configuration or
+alert-state compare-and-swap tokens. Per-owner re-entrant process locks and an
+operating-system file lock serialize readers and writers. Before publishing a
+scan with new alerts, the owner writes an atomically staged
+`.scan-transaction.json` marker from the private `.staging/` directory. Recovery
+on the next integrity-checked read verifies the exact scan and alert
+fingerprints, commits a complete pair, or removes the marker's exact
+uncommitted alerts. If a newest scan is present but its alert set is incomplete,
+the scan and remaining transaction alerts are rolled back together unless an
+action has already been appended. A malformed or mismatched marker, a non-tail
+scan, or an action-bearing transaction fails closed.
+This protocol covers interrupted processes after a filesystem publish; it is
+not a cross-platform guarantee against sudden power loss, storage-controller
+loss, or privileged deletion. Windows uses write-through same-volume publication
+when available, while local SHA-256 values remain unkeyed tamper evidence.
+
+A successful scan is reusable only for the same owner, configuration, and
+snapshot. `partial` means at least one rule was explicitly excluded while other
+evidence may still be valid; `failed` means the snapshot, rule evaluation, or
+durable publication could not complete. Partial and failed attempts are never
+cache hits: they remain immutable and a retry gets a new attempt ID. Alerts
+created before an alert-publication failure are rolled back before the failed
+scan is written. A failed attempt does not replace the latest valid rule state
+used for transition and cooldown decisions. One malformed owner in an
+all-profile sweep is reported as failed without stopping later owners. Normal
+error paths use compensating rollback, while the transaction marker makes a
+hard process termination between alert and parent-scan publication recoverable:
+the next integrity-checked read either commits the complete pair or rolls back
+the exact uncommitted alerts. Marker tampering or an incomplete/mismatched pair
+still fails closed.
+
+`snooze_until` is a review date, not a timer service. When a later scan has a
+validated completed-session cutoff on or after that date, the scanner appends an
+automatic `unsnooze` action before evaluating rules. Merely loading the page or
+leaving the workstation stopped does not wake or reopen an alert.
+
+The monitoring fingerprints are unkeyed local SHA-256 checks, not digital
+signatures, remote attestations, or append-only storage enforced outside the
+host. Strict schemas, owner binding, content fingerprints, contiguous action
+chains, configuration parent links, and scan/alert cross-references detect
+accidental corruption and many inconsistent edits. Scan/alert identifiers and
+selected configuration/snapshot fields are cross-checked. Historical
+configuration revisions are loaded to rederive rule fingerprints and alert
+metadata, and persisted snapshot evidence fields are used to rederive each
+alert evidence fingerprint. These are still unkeyed local hashes: a process
+with write access to the state directory,
+especially the local Windows administrator, can still rewrite records and
+recalculate fingerprints or delete records. There is no durable external
+collection head, so deleting the newest configuration or action, or deleting a
+consistent tail of scans and their alerts, can cause an apparently valid
+rollback. A lone alert deletion is rejected while its parent scan still
+references it, but a privileged operator can rewrite the related tail together.
+Monitoring state is excluded from the R2 market-cache allowlist.
+Operators who require stronger history must restrict filesystem ACLs and keep
+an independent versioned backup or signed/WORM audit export.
+
+Monitoring deliberately uses bounded immutable files rather than archive
+compaction: 1,000 configuration revisions, 2,000 scans, 5,000 alerts, and
+10,000 alert actions per owner, with additional watchlist, symbol, and rule
+limits. Dismissal does not reclaim action capacity, and reaching a cap stops
+new writes until a future verified checkpoint/archive format is introduced.
+
 ## Research-only Assistant Boundary
 
 ```text
@@ -232,7 +317,7 @@ A candidate keeps its parent and candidate fingerprints, complete configuration-
 
 All writes for one owner run under both an in-process re-entrant lock and an operating-system file lock. The active pointer and its activation, suspension, resumption, retirement, or rollback event are coordinated through a recoverable transaction marker, so another process sees either the prior committed state or the completed transition after recovery. Immutable writes use create-once semantics inside the same lock. Candidate creation is capped at 100 records, monitoring at 500 records, lifecycle transitions share a 1,000-event budget, browser summaries retain only the newest 50 candidates and 200 events while reporting total counts, and each workstation process admits only one synchronous strategy backtest at a time. Real compare-and-swap and capacity conflicts return HTTP 409.
 
-Monitoring reruns the active candidate and its recorded parent over a bounded recent window on one immutable market snapshot. It compares recent Sharpe and drawdown with both the same-window parent and the candidate's activation-time holdout evidence. The result is an immutable `MONITORING_OK`, `REVIEW_REQUIRED`, or `INSUFFICIENT_DATA` record. No verdict changes the active lifecycle state. Suspension, resumption, and retirement require a human confirmation bound to the exact active candidate ID and fingerprint; optional monitoring evidence is fingerprint-bound as well. Retirement is terminal for that candidate and atomically restores the prior lab baseline. None of these operations starts or stops an external paper process, changes a broker configuration, or grants live authority.
+Strategy-lab lifecycle monitoring reruns the active candidate and its recorded parent over a bounded recent window on one immutable market snapshot. It is separate from the watchlist/alert monitor described above. It compares recent Sharpe and drawdown with both the same-window parent and the candidate's activation-time holdout evidence. The result is an immutable `MONITORING_OK`, `REVIEW_REQUIRED`, or `INSUFFICIENT_DATA` record. No verdict changes the active lifecycle state. Suspension, resumption, and retirement require a human confirmation bound to the exact active candidate ID and fingerprint; optional monitoring evidence is fingerprint-bound as well. Retirement is terminal for that candidate and atomically restores the prior lab baseline. None of these operations starts or stops an external paper process, changes a broker configuration, or grants live authority.
 
 AI suggestions are deterministic bounded parameter diffs. They cannot generate Python, arbitrary rules, orders, target positions, approval records, exports, or deployment decisions. Approval is necessary but does not alter `config/default.json` or the existing paper ledger. Export rewrites paper-state paths into a candidate-specific profile and forces the broker mode to `disabled`; starting that profile remains a separate operator action. Historical evidence never mutates the live-readiness gates.
 
@@ -276,6 +361,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
 - `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
 - `research_journal.py`: per-owner immutable human notes, decision rationale, correction links, evidence fingerprints, and fixed research-only authority.
+- `monitoring.py`: owner-scoped watchlists, deterministic rules, immutable scan and alert evidence, append-only review actions, and research-only scheduled scans.
 - `strategy_lab/`: allowlisted strategy/risk parameters, immutable per-user candidates and monitoring evidence, same-snapshot validation, human approval, isolated paper export, activation lifecycle, retirement registry, and rollback.
 - `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
 - `web/`: loopback-only authenticated HTTP server, non-mutating market-chart projection, background job manager, dashboard service, and packaged static application with pinned local KLineChart assets.
@@ -288,7 +374,13 @@ Before a future sandbox or live writer creates evidence, an atomically published
 
 Formal sandbox reconciliation is a separate authority-bearing ledger. New rows bind adapter, account, date, configuration, cash values, complete canonical expected/broker position maps, and automatically reproduced issue details into a `v3_` content fingerprint. The auditor validates the exact schema and every row before selecting the active account; duplicate nested JSON keys, duplicate logical sessions, malformed rows, reordered dates, fingerprint mismatches, and issue/snapshot disagreement fail closed. Updates use the same in-process/operating-system locking and atomic same-directory publication as lifecycle ledgers. Legacy 24-character identity-only and `v2_` cash-only rows remain readable for operational continuity but are excluded from the consecutive clean-session gate because they do not bind the compared position snapshots.
 
-Provider fallback, cloud backup, research-journal append, shadow CSV review, and broker routing are separate trust boundaries. A successful data refresh, R2 backup, journal entry, or shadow comparison does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision. The journal and shadow review have no broker object and cannot call submission or cancellation methods.
+Provider fallback, cloud backup, research-journal append, research monitoring,
+shadow CSV review, and broker routing are separate trust boundaries. A
+successful data refresh, R2 backup, journal entry, monitoring alert, or shadow
+comparison does not satisfy a paper-promotion gate, authorize live trading, or
+establish that the data is suitable for an order decision. The journal,
+monitoring engine, and shadow review have no broker object and cannot call
+submission or cancellation methods.
 
 The security-master schema removes a fixed instrument-count assumption, but the default master remains a curated ETF universe. A professional stock universe additionally requires licensed or independently verified point-in-time constituent and corporate-action data; the architecture does not treat a current constituent list as historical truth.
 
