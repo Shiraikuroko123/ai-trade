@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from ai_trade.assistant import AssistantEngine
-from ai_trade.assistant.features import ALLOWED_CONCLUSIONS
+from ai_trade.assistant.features import ALLOWED_CONCLUSIONS, RESEARCH_PERSPECTIVE_KEYS
 from ai_trade.assistant.store import MAX_ANALYSIS_RECORD_BYTES, AssistantRecordStore
 from ai_trade.assistant.provider import (
     AssistantProviderError,
@@ -75,6 +75,25 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertTrue(set(result["assessment"]["evidence_ids"]) <= evidence_ids)
             for step in result["decision_path"]:
                 self.assertTrue(set(step["evidence_ids"]) <= evidence_ids)
+
+            perspectives = result["perspectives"]
+            self.assertEqual(
+                {item["key"] for item in perspectives},
+                set(RESEARCH_PERSPECTIVE_KEYS),
+            )
+            for item in perspectives:
+                self.assertTrue(set(item["evidence_ids"]) <= evidence_ids)
+            unavailable = {
+                item["key"]: item
+                for item in perspectives
+                if item["status"] == "UNAVAILABLE"
+            }
+            self.assertEqual(
+                set(unavailable), {"fundamental_coverage", "sentiment_coverage"}
+            )
+            self.assertTrue(
+                all(item["stance"] == "NOT_AVAILABLE" for item in unavailable.values())
+            )
 
             records = list((Path(temporary) / "state" / "assistant").rglob("*.json"))
             self.assertEqual(len(records), 1)
@@ -162,6 +181,7 @@ class AssistantEngineTests(unittest.TestCase):
             rendered = json.dumps(status)
             self.assertTrue(status["model_configured"])
             self.assertEqual(status["supported_modes"], ["local", "model"])
+            self.assertEqual(status["research_views"], list(RESEARCH_PERSPECTIVE_KEYS))
             self.assertNotIn(secret, rendered)
             self.assertNotIn(base, rendered)
             self.assertNotIn("base_url", rendered)
@@ -180,6 +200,16 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertEqual(result["assessment"]["risk_budget_pct"], 0)
             self.assertTrue(result["validation"]["model_enhanced"])
             self.assertEqual(result["validation"]["usage"]["total_tokens"], 30)
+            self.assertEqual(
+                {item["key"] for item in result["perspectives"]},
+                set(RESEARCH_PERSPECTIVE_KEYS),
+            )
+            self.assertEqual(
+                next(
+                    item for item in result["perspectives"] if item["key"] == "strategy_gate"
+                )["stance"],
+                "CAUTION",
+            )
 
     def test_model_failure_falls_back_without_leaking_transport_details(self):
         with tempfile.TemporaryDirectory() as temporary:

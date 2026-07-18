@@ -2013,6 +2013,11 @@ function assistantResultMarkup(result) {
       <span>生成时间 <strong>${formatDate(result.created_at, true)}</strong></span>
     </section>
 
+    <section class="panel assistant-perspectives-panel" aria-label="研究视角">
+      ${panelHeader("研究视角", assistantPerspectiveSummary(result.perspectives))}
+      ${assistantPerspectivesMarkup(result.perspectives)}
+    </section>
+
     <section class="panel">
       ${panelHeader("价格结构", `${result.lookback || points.length} 个交易日 · ${escapeHtml(modeLabel)}`)}
       ${chartMarkup(
@@ -2089,6 +2094,58 @@ function assistantEvidenceMarkup(items) {
       <span class="mono">${escapeHtml(value)}</span>
     </div>`;
   }).join("")}</div>`;
+}
+
+function assistantPerspectiveSummary(items) {
+  const values = Array.isArray(items) ? items : [];
+  if (!values.length) return "旧记录未保存视角结构";
+  const available = values.filter((item) => item?.status === "AVAILABLE").length;
+  return `${available}/${values.length} 个视角有可用数据 · 缺失数据不会被模型补写`;
+}
+
+function assistantPerspectivesMarkup(items) {
+  const values = Array.isArray(items) ? items : [];
+  if (!values.length) {
+    return `<div class="empty-state compact-empty" role="status"><strong>视角数据不可用</strong><p>这是旧版分析记录；重新运行一次分析后会生成可追溯的研究视角。</p></div>`;
+  }
+  return `<div class="perspective-ledger">${values.map((item) => {
+    const available = item?.status === "AVAILABLE";
+    const stance = assistantPerspectiveStance(item?.stance);
+    const kind = assistantPerspectiveKind(item?.stance, available);
+    const evidenceIds = Array.isArray(item?.evidence_ids) ? item.evidence_ids.join(" · ") : "—";
+    return `<article class="perspective-row${available ? "" : " perspective-unavailable"}">
+      <div class="perspective-row-head">
+        <strong>${escapeHtml(item?.label || "研究视角")}</strong>
+        ${statusChip(available ? "数据已覆盖" : "暂不可评估", available ? "success" : "warning")}
+        ${statusChip(stance, kind)}
+      </div>
+      <p>${escapeHtml(item?.summary || "当前没有视角摘要。")}</p>
+      <span class="perspective-limit">边界：${escapeHtml(item?.limitation || "未提供")}</span>
+      <code>证据：${escapeHtml(evidenceIds)}</code>
+    </article>`;
+  }).join("")}</div>`;
+}
+
+function assistantPerspectiveStance(value) {
+  return {
+    SUPPORTIVE: "偏支持",
+    CAUTION: "谨慎",
+    ADVERSE: "偏不利",
+    MIXED: "信号混合",
+    REVIEW: "需要复核",
+    NOT_AVAILABLE: "不可评估",
+  }[String(value || "").toUpperCase()] || "未知";
+}
+
+function assistantPerspectiveKind(value, available) {
+  if (!available) return "warning";
+  return {
+    SUPPORTIVE: "success",
+    ADVERSE: "danger",
+    CAUTION: "warning",
+    REVIEW: "info",
+    MIXED: "neutral",
+  }[String(value || "").toUpperCase()] || "neutral";
 }
 
 function assistantDecisionPath(items) {

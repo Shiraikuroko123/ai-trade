@@ -18,6 +18,25 @@ Both modes return one of four closed conclusion values:
 | `REVIEW_CANDIDATE` | The evidence warrants human review; this is not approval to trade. |
 | `REDUCE_RISK` | Review existing risk exposure; this is not an instruction to sell, resize, or submit an order. |
 
+## Research Perspective Matrix
+
+Every new analysis also returns five deterministic, evidence-bound views under
+`perspectives`. They are a review layout, not five independent trading agents:
+
+| Key | Status in the current release | Evidence basis |
+|---|---|---|
+| `technical` | Available | EMA20/EMA50, 20-session momentum, RSI, candle structure, and breakout state |
+| `risk` | Available | Annualized volatility, ATR14 percentage, and support reference |
+| `fundamental_coverage` | `UNAVAILABLE` until a validated financial-data provider is configured | Explicit coverage evidence; no financial conclusion is inferred |
+| `sentiment_coverage` | `UNAVAILABLE` until traceable news, flow, or sentiment data is configured | Explicit coverage evidence; model prose cannot fill the gap |
+| `strategy_gate` | Available | Deterministic conclusion, research gate, and assessment evidence |
+
+Each view contains `status`, `stance`, `summary`, `limitation`, and
+`evidence_ids`. The engine rejects a result with an unknown view, duplicate
+view, missing evidence reference, or incomplete coverage. Model-enhanced mode
+can change wording and can only tighten the local conclusion; it cannot change
+the coverage status or introduce uncited facts.
+
 Enforcement outside the model must keep `authority="research_only"` and reject any result that tries to create an order intent, target position, quantity, entry price, stop, take-profit instruction, portfolio mutation, paper-promotion fact, sandbox reconciliation, live authorization, or changed kill-switch state. A timeout, stale snapshot, malformed response, unknown conclusion, or provider failure fails closed.
 
 ## Windows Model Configuration

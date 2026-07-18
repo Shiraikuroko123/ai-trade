@@ -12,6 +12,14 @@ ALLOWED_CONCLUSIONS = {
     "REDUCE_RISK",
 }
 
+RESEARCH_PERSPECTIVE_KEYS = (
+    "technical",
+    "risk",
+    "fundamental_coverage",
+    "sentiment_coverage",
+    "strategy_gate",
+)
+
 
 def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
     if not bars:
@@ -73,7 +81,7 @@ def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
         "breakout20": breakout,
         "bar_count": len(bars),
     }
-    evidence = _evidence(features, trend, regime, volatility)
+    evidence = _evidence(features, trend, regime, volatility, gate)
     diagnosis_refs = [item["evidence_id"] for item in evidence]
     diagnosis = {
         "stage": "market_diagnosis",
@@ -95,6 +103,7 @@ def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
         "invalidation": _invalidation(features, conclusion),
         "scenarios": _scenarios(features),
     }
+    perspectives = build_research_perspectives(features, diagnosis, assessment)
     decision_path = _decision_path(
         regime=regime,
         risk_level=risk_level,
@@ -126,9 +135,126 @@ def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
         "features": features,
         "diagnosis": diagnosis,
         "assessment": assessment,
+        "perspectives": perspectives,
         "decision_path": decision_path,
         "chart": chart,
     }
+
+
+def build_research_perspectives(
+    features: dict[str, Any],
+    diagnosis: dict[str, Any],
+    assessment: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build deterministic, evidence-bound research views.
+
+    The coverage views deliberately report unavailable data instead of filling
+    gaps with model prose. This keeps the role-based presentation useful while
+    preserving the research-only authority boundary.
+    """
+    evidence = diagnosis.get("evidence") if isinstance(diagnosis, dict) else []
+    allowed = {
+        item.get("evidence_id")
+        for item in evidence
+        if isinstance(item, dict) and isinstance(item.get("evidence_id"), str)
+    }
+    trend = str(diagnosis.get("trend", "MIXED"))
+    risk_level = str(assessment.get("risk_level", "HIGH"))
+    conclusion = str(assessment.get("conclusion", "NO_ACTION"))
+    score = diagnosis.get("score")
+
+    def refs(*values: str) -> list[str]:
+        return [value for value in values if value in allowed]
+
+    technical_stance = (
+        "SUPPORTIVE"
+        if trend == "UP" and isinstance(score, int) and score >= 60
+        else "ADVERSE"
+        if trend == "DOWN"
+        else "MIXED"
+    )
+    risk_stance = {
+        "LOW": "SUPPORTIVE",
+        "MEDIUM": "CAUTION",
+        "HIGH": "ADVERSE",
+    }.get(risk_level, "CAUTION")
+    strategy_stance = {
+        "REVIEW_CANDIDATE": "REVIEW",
+        "WATCH": "CAUTION",
+        "REDUCE_RISK": "ADVERSE",
+        "NO_ACTION": "CAUTION",
+    }.get(conclusion, "CAUTION")
+
+    return [
+        {
+            "key": "technical",
+            "label": "技术面",
+            "status": "AVAILABLE",
+            "stance": technical_stance,
+            "summary": (
+                f"基于 EMA、20 日动量、RSI 和突破状态，当前趋势为{_label(trend)}。"
+            ),
+            "evidence_ids": refs(
+                "trend.ema20",
+                "trend.ema50",
+                "momentum.return20",
+                "momentum.rsi14",
+                "structure.last_candle",
+            ),
+            "limitation": "只使用已完成交易日 OHLCV，不代表盘中或未来价格。",
+        },
+        {
+            "key": "risk",
+            "label": "风险面",
+            "status": "AVAILABLE",
+            "stance": risk_stance,
+            "summary": (
+                f"近期波动风险为{_label(risk_level)}，ATR 和波动率用于决定复核强度。"
+            ),
+            "evidence_ids": refs(
+                "risk.volatility20",
+                "risk.atr14_pct",
+                "structure.support20",
+            ),
+            "limitation": "风险视角不是止损价，也不会生成仓位或订单。",
+        },
+        {
+            "key": "fundamental_coverage",
+            "label": "基本面覆盖",
+            "status": "UNAVAILABLE",
+            "stance": "NOT_AVAILABLE",
+            "summary": "当前快照未包含财务报表、估值或公司行动数据，基本面暂不可评估。",
+            "evidence_ids": refs("coverage.fundamentals"),
+            "limitation": "接入并校验授权基本面数据源后才可启用该视角。",
+        },
+        {
+            "key": "sentiment_coverage",
+            "label": "情绪覆盖",
+            "status": "UNAVAILABLE",
+            "stance": "NOT_AVAILABLE",
+            "summary": "当前快照未包含新闻、公告、资金流或情绪数据，情绪暂不可评估。",
+            "evidence_ids": refs("coverage.sentiment"),
+            "limitation": "不会用模型语言猜测市场情绪；需要可追溯的外部数据源。",
+        },
+        {
+            "key": "strategy_gate",
+            "label": "策略门禁",
+            "status": "AVAILABLE",
+            "stance": strategy_stance,
+            "summary": (
+                f"确定性研究结论为{_label(conclusion)}；该状态只决定研究复核范围。"
+            ),
+            "evidence_ids": refs(
+                "strategy.gate",
+                *(
+                    assessment.get("evidence_ids", [])
+                    if isinstance(assessment.get("evidence_ids"), list)
+                    else []
+                ),
+            ),
+            "limitation": "策略门禁不等同于买卖指令，也不会解锁模拟或真实交易权限。",
+        },
+    ]
 
 
 def _validate_bars(bars: Sequence[Any]) -> None:
@@ -264,7 +390,11 @@ def _risk_budget(conclusion: str) -> int:
 
 
 def _evidence(
-    features: dict[str, Any], trend: str, regime: str, volatility: str
+    features: dict[str, Any],
+    trend: str,
+    regime: str,
+    volatility: str,
+    gate: str,
 ) -> list[dict[str, Any]]:
     rows = [
         ("price.close", "最新收盘", features["close"], "用于确认分析截止价格", "neutral"),
@@ -277,6 +407,9 @@ def _evidence(
         ("structure.support20", "20 日支撑参考", features["support20"], "近期窗口低点，不是保证有效的止损位", "neutral"),
         ("structure.resistance20", "20 日阻力参考", features["resistance20"], "近期窗口高点，不是保证有效的目标价", "neutral"),
         ("structure.last_candle", "最新 K 线结构", features["last_candle"], f"20 日突破状态为 {_label(features['breakout20'])}", "neutral"),
+        ("coverage.fundamentals", "基本面数据覆盖", "UNAVAILABLE", "当前快照没有财务报表、估值和公司行动数据", "warning"),
+        ("coverage.sentiment", "情绪数据覆盖", "UNAVAILABLE", "当前快照没有新闻、公告、资金流和情绪数据", "warning"),
+        ("strategy.gate", "策略研究门禁", gate, "只表示研究复核范围，不是交易授权", "warning" if gate != "PROCEED" else "neutral"),
     ]
     return [
         {

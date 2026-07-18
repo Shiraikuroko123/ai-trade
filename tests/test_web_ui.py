@@ -66,8 +66,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.12.0-ui9", self.html)
-        self.assertIn("app.js?v=0.12.0-ui9", self.html)
+        self.assertIn("app.css?v=0.12.0-ui10", self.html)
+        self.assertIn("app.js?v=0.12.0-ui10", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -110,6 +110,13 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn('metric-strip-priority portfolio-risk-strip', self.javascript)
         self.assertIn('metric-strip-priority risk-metric-strip', self.javascript)
         self.assertIn("现金缓冲", self.javascript)
+
+    def test_research_perspectives_show_coverage_and_evidence_boundaries(self):
+        self.assertIn("function assistantPerspectivesMarkup", self.javascript)
+        self.assertIn("研究视角", self.javascript)
+        self.assertIn("缺失数据不会被模型补写", self.javascript)
+        self.assertIn("perspective-ledger", self.css)
+        self.assertIn("perspective-unavailable", self.css)
 
     def test_shadow_review_is_a_read_only_auditable_workflow(self):
         self.assertIn('["shadow", "影子复盘"]', self.javascript)

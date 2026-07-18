@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .features import ALLOWED_CONCLUSIONS, build_local_analysis
+from .features import (
+    ALLOWED_CONCLUSIONS,
+    RESEARCH_PERSPECTIVE_KEYS,
+    build_local_analysis,
+    build_research_perspectives,
+)
 from .provider import (
     AssistantProviderError,
     OpenAICompatibleProvider,
@@ -56,6 +61,7 @@ class AssistantEngine:
             "model": self._settings.model if self._settings is not None else None,
             "configuration_error": self._configuration_error,
             "authority": "research_only",
+            "research_views": list(RESEARCH_PERSPECTIVE_KEYS),
         }
 
     def analyze(
@@ -122,6 +128,7 @@ class AssistantEngine:
             "features": local["features"],
             "diagnosis": local["diagnosis"],
             "assessment": local["assessment"],
+            "perspectives": local["perspectives"],
             "decision_path": local["decision_path"],
             "chart": local["chart"],
             "comparison": _comparison(previous, local, bars[-1].date.isoformat()),
@@ -264,6 +271,9 @@ def _apply_enhancement(local: dict[str, Any], enhancement: dict[str, Any]) -> No
     if proposed in {"NO_ACTION", "REDUCE_RISK"}:
         local["assessment"]["risk_budget_pct"] = 0
     local["decision_path"][-1]["outcome"] = proposed
+    local["perspectives"] = build_research_perspectives(
+        local["features"], local["diagnosis"], local["assessment"]
+    )
 
 
 def _stricter_risk(local: str, model: str) -> str:
@@ -327,6 +337,7 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
         errors.append("assistant authority boundary is invalid")
     diagnosis = result.get("diagnosis")
     assessment = result.get("assessment")
+    perspectives = result.get("perspectives")
     path = result.get("decision_path")
     if not isinstance(diagnosis, dict) or diagnosis.get("stage") != "market_diagnosis":
         errors.append("diagnosis stage is invalid")
@@ -350,6 +361,43 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
     if isinstance(risk_budget, bool) or not isinstance(risk_budget, int) or not 0 <= risk_budget <= 100:
         errors.append("assessment risk budget is invalid")
     _check_references(assessment.get("evidence_ids"), allowed, "assessment", errors)
+    if not isinstance(perspectives, list):
+        errors.append("research perspectives are missing")
+    else:
+        perspective_keys = []
+        for index, item in enumerate(perspectives):
+            if not isinstance(item, dict):
+                errors.append(f"research perspective {index} is invalid")
+                continue
+            key = item.get("key")
+            perspective_keys.append(key)
+            if key not in RESEARCH_PERSPECTIVE_KEYS:
+                errors.append(f"research perspective {index} has an invalid key")
+            if item.get("status") not in {"AVAILABLE", "UNAVAILABLE"}:
+                errors.append(f"research perspective {index} has an invalid status")
+            if item.get("stance") not in {
+                "SUPPORTIVE",
+                "CAUTION",
+                "ADVERSE",
+                "MIXED",
+                "REVIEW",
+                "NOT_AVAILABLE",
+            }:
+                errors.append(f"research perspective {index} has an invalid stance")
+            if not isinstance(item.get("summary"), str) or not item["summary"].strip():
+                errors.append(f"research perspective {index} summary is missing")
+            if not isinstance(item.get("limitation"), str) or not item["limitation"].strip():
+                errors.append(f"research perspective {index} limitation is missing")
+            _check_references(
+                item.get("evidence_ids"),
+                allowed,
+                f"research perspective {index}",
+                errors,
+            )
+        if len(perspective_keys) != len(set(perspective_keys)):
+            errors.append("research perspective keys are duplicated")
+        if set(perspective_keys) != set(RESEARCH_PERSPECTIVE_KEYS):
+            errors.append("research perspective coverage is incomplete")
     if not isinstance(path, list) or not path:
         errors.append("decision path is missing")
     else:

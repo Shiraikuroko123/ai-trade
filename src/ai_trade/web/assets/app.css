@@ -1307,6 +1307,55 @@ progress {
   max-width: none;
 }
 
+.perspective-ledger {
+  border-top: 1px solid var(--rule);
+}
+
+.perspective-row {
+  align-items: start;
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  gap: 0.45rem 1rem;
+  grid-template-columns: minmax(150px, 0.28fr) minmax(0, 1fr) minmax(190px, 0.42fr);
+  padding: 0.75rem 0;
+}
+
+.perspective-row-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.perspective-row-head strong {
+  flex: 1 1 100%;
+  font-size: 0.8rem;
+}
+
+.perspective-row p,
+.perspective-limit,
+.perspective-row code {
+  font-size: 0.74rem;
+}
+
+.perspective-row p {
+  color: var(--ink);
+  margin: 0;
+}
+
+.perspective-limit {
+  color: var(--ink-soft);
+}
+
+.perspective-row code {
+  color: var(--teal-hover);
+  overflow-wrap: anywhere;
+}
+
+.perspective-unavailable p {
+  color: var(--ink-soft);
+}
+
 .evidence-ledger {
   border-top: 1px solid var(--rule);
 }
@@ -3255,6 +3304,17 @@ progress {
   .evidence-row code {
     grid-column: 1 / -1;
     overflow-wrap: anywhere;
+  }
+
+  .perspective-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .perspective-row-head,
+  .perspective-row p,
+  .perspective-limit,
+  .perspective-row code {
+    grid-column: 1;
   }
 
   .evidence-row > div {
