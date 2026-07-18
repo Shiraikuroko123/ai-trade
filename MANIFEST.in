@@ -8,6 +8,7 @@ include DESIGN.md
 include config/default.json
 include config/security_master.json
 include docs/ARCHITECTURE.md
+include docs/DATA_PROVIDERS.md
 include docs/AI_ASSISTANT.md
 include docs/BROKER_ADAPTERS.md
 include docs/CLOUD_STORAGE.md

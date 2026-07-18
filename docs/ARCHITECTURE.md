@@ -35,7 +35,13 @@ point-in-time universe -> signal factors -> portfolio constraints
                     loopback-only local workstation
 ```
 
-The market refresh route is deterministic and auditable. Eastmoney is the configured primary provider. A failed primary request can fall back to Tencent Finance; a refresh-scoped transport circuit breaker skips repeated Eastmoney attempts after a qualifying connection failure. Only when both permitted network routes fail may the refresh reuse a locally validated cache inside the configured freshness window.
+The market refresh route is deterministic and auditable. The configured primary
+and fallback are resolved through the shared provider boundary described in
+`docs/DATA_PROVIDERS.md`. The release registers Eastmoney and Tencent Finance
+for daily bars; a refresh-scoped transport circuit breaker skips repeated
+primary-provider attempts only when that provider classifies the failure as
+provider-wide. Only when all configured network routes fail may the refresh
+reuse a locally validated cache inside the configured freshness window.
 
 Every candidate file is staged and validated before publication. The cache manifest distinguishes the requested completed-session cutoff from the latest trading session shared by the required active instruments, and records each instrument's route, errors, fallback reason, latest session, row count, and SHA-256. Tencent incremental refreshes and local network fallbacks accept a seed only when the active manifest, provider, adjustment, requested history start, latest session, row count, source route, and file hash match; entries record the retained seed source/hash in addition to refresh mode, proxy mode, page and overlap counts, and amount-quality fields.
 

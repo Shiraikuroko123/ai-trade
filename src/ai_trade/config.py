@@ -236,8 +236,19 @@ def _validate(
         raise ValueError(f"Unknown configured universe: {universe_name!r}")
     if minimum_listing_days < 0:
         raise ValueError("security_master.minimum_listing_days must be non-negative")
-    if raw["data"].get("provider") != "eastmoney":
-        raise ValueError("Only data.provider='eastmoney' is supported")
+    # Provider names are resolved through the shared registry.  Keeping this
+    # validation at configuration load time prevents a typo from silently
+    # falling through to a local cache during a scheduled refresh.
+    from .data.providers import registered_provider_names
+
+    provider = raw["data"].get("provider", "eastmoney")
+    supported_providers = set(registered_provider_names())
+    if not isinstance(provider, str) or provider.strip().lower() not in supported_providers:
+        supported = ", ".join(sorted(supported_providers))
+        raise ValueError(
+            f"data.provider must be one of {supported}; got {provider!r}"
+        )
+    raw["data"]["provider"] = provider.strip().lower()
     if raw["data"].get("adjustment", "forward") not in {"none", "forward", "backward"}:
         raise ValueError("data.adjustment must be none, forward, or backward")
     _validate_data_transport(raw["data"])
@@ -343,11 +354,26 @@ def _validate(
 
 def _validate_data_transport(data: dict[str, Any]) -> None:
     fallback_provider = data.get("fallback_provider", "tencent")
+    from .data.providers import registered_provider_names
+
+    supported_providers = set(registered_provider_names())
     if (
         not isinstance(fallback_provider, str)
-        or fallback_provider not in {"tencent", "none"}
+        or fallback_provider.strip().lower()
+        not in supported_providers | {"none"}
     ):
-        raise ValueError("data.fallback_provider must be tencent or none")
+        supported = ", ".join(sorted(supported_providers | {"none"}))
+        raise ValueError(
+            f"data.fallback_provider must be one of {supported}; "
+            f"got {fallback_provider!r}"
+        )
+    data["fallback_provider"] = fallback_provider.strip().lower()
+    provider = data.get("provider", "eastmoney")
+    if (
+        isinstance(provider, str)
+        and fallback_provider.strip().lower() == provider.strip().lower()
+    ):
+        raise ValueError("data.fallback_provider must differ from data.provider")
     proxy_mode = data.get("proxy_mode", "system")
     if not isinstance(proxy_mode, str) or proxy_mode not in {"system", "direct"}:
         raise ValueError("data.proxy_mode must be system or direct")

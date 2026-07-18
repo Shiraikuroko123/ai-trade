@@ -22,7 +22,7 @@ from uuid import uuid4
 from ..config import AppConfig
 from ..json_utils import load_unique_json, loads_unique_json
 from ..models import Bar, Instrument
-from . import tencent
+from . import tencent  # noqa: F401 - compatibility patch/import path
 from .cache_snapshot import (
     install_snapshot,
     recover_pending_snapshot,
@@ -71,6 +71,12 @@ def download_universe(config: AppConfig, force: bool = False) -> dict[str, Path]
 def _download_universe_locked(
     config: AppConfig, force: bool = False
 ) -> dict[str, Path]:
+    # Keep the snapshot transaction in this module, but resolve concrete
+    # network implementations through the shared provider boundary.  Existing
+    # Eastmoney/Tencent functions remain compatibility entry points for tests
+    # and third-party callers.
+    from .providers import provider_for
+
     market_close = config.raw["data"].get("market_close_time", "15:30")
     target_session = completed_session_cutoff(market_close=market_close)
     final_paths = {
@@ -104,7 +110,16 @@ def _download_universe_locked(
         failure_cooldown = max(
             0.0, float(config.raw["data"].get("failure_cooldown_seconds", 20.0))
         )
-        fallback_provider = config.raw["data"].get("fallback_provider", "tencent")
+        primary_provider_name = config.raw["data"].get("provider", "eastmoney")
+        primary_provider = provider_for(primary_provider_name)
+        fallback_provider_name = config.raw["data"].get(
+            "fallback_provider", "tencent"
+        )
+        fallback_provider = (
+            None
+            if fallback_provider_name == "none"
+            else provider_for(fallback_provider_name)
+        )
         proxy_mode = _proxy_mode(config)
         circuit_reason: str | None = None
         circuit_symbol: str | None = None
@@ -120,60 +135,69 @@ def _download_universe_locked(
             primary_error: Exception | None = None
             if circuit_reason is not None:
                 detail = (
-                    "Eastmoney circuit breaker open; skipped after transport "
+                    f"{primary_provider.descriptor.display_name} circuit breaker "
+                    "open; skipped after transport "
                     f"failure on {circuit_symbol}: {circuit_reason}"
                 )
                 errors.append(detail)
                 primary_error = RuntimeError(detail)
             else:
                 try:
-                    staged_paths[instrument.symbol] = download_instrument(
+                    staged_paths[instrument.symbol] = primary_provider.download(
                         config,
                         instrument,
-                        True,
                         staged,
-                        network_errors=errors,
+                        cache_path=final_paths[instrument.symbol],
                         cutoff=instrument_cutoff,
                         proxy_mode=proxy_mode,
+                        network_errors=errors,
+                        provider_metadata=provider_metadata[instrument.symbol],
                     )
-                    sources[instrument.symbol] = "network"
+                    sources[instrument.symbol] = primary_provider.primary_source_label
                     fallback_reasons[instrument.symbol] = None
                 except Exception as exc:
                     primary_error = exc
-                    if _is_transport_failure(exc):
+                    if primary_provider.is_transport_failure(exc):
                         circuit_reason = f"{type(exc).__name__}: {exc}"
                         circuit_symbol = instrument.symbol
 
             if primary_error is not None:
-                eastmoney_reason = (
-                    f"Eastmoney {type(primary_error).__name__}: {primary_error}"
+                primary_reason = (
+                    f"{primary_provider.descriptor.display_name} "
+                    f"{type(primary_error).__name__}: {primary_error}"
                 )
-                tencent_error: Exception | None = None
-                if fallback_provider == "tencent":
+                fallback_error: Exception | None = None
+                if fallback_provider is not None:
                     try:
-                        staged_paths[instrument.symbol] = tencent.download_instrument(
+                        staged_paths[instrument.symbol] = fallback_provider.download(
                             config,
                             instrument,
                             staged,
                             cache_path=final_paths[instrument.symbol],
                             cutoff=instrument_cutoff,
                             proxy_mode=proxy_mode,
+                            network_errors=errors,
                             provider_metadata=provider_metadata[instrument.symbol],
                         )
-                        sources[instrument.symbol] = "tencent_network_fallback"
-                        fallback_reasons[instrument.symbol] = eastmoney_reason
+                        sources[instrument.symbol] = (
+                            fallback_provider.fallback_source_label
+                        )
+                        fallback_reasons[instrument.symbol] = primary_reason
                         LOGGER.warning(
-                            "Eastmoney failed for %s; Tencent fallback succeeded: %s",
+                            "%s failed for %s; %s fallback succeeded: %s",
+                            primary_provider.descriptor.display_name,
                             instrument.symbol,
+                            fallback_provider.descriptor.display_name,
                             primary_error,
                         )
                     except Exception as exc:
-                        tencent_error = exc
+                        fallback_error = exc
                         errors.append(
-                            f"Tencent fallback failed: {type(exc).__name__}: {exc}"
+                            f"{fallback_provider.descriptor.key.title()} fallback "
+                            f"failed: {type(exc).__name__}: {exc}"
                         )
 
-                if fallback_provider == "none" or tencent_error is not None:
+                if fallback_provider is None or fallback_error is not None:
                     fallback = final_paths[instrument.symbol]
                     _stage_recent_completed_cache(
                         config,
@@ -184,10 +208,11 @@ def _download_universe_locked(
                     )
                     staged_paths[instrument.symbol] = staged
                     sources[instrument.symbol] = "validated_local_fallback"
-                    fallback_reason = eastmoney_reason
-                    if tencent_error is not None:
+                    fallback_reason = primary_reason
+                    if fallback_error is not None:
                         fallback_reason += (
-                            f"; Tencent {type(tencent_error).__name__}: {tencent_error}"
+                            f"; {fallback_provider.descriptor.display_name} "
+                            f"{type(fallback_error).__name__}: {fallback_error}"
                         )
                     fallback_reasons[instrument.symbol] = fallback_reason
                     LOGGER.warning(
@@ -237,7 +262,22 @@ def _download_universe_locked(
             "request_policy": {
                 "mode": "serial",
                 "proxy_mode": proxy_mode,
-                "fallback_provider": fallback_provider,
+                "primary_provider": primary_provider_name,
+                "fallback_provider": fallback_provider_name,
+                "provider_chain": [
+                    primary_provider_name,
+                    *(
+                        []
+                        if fallback_provider_name == "none"
+                        else [fallback_provider_name]
+                    ),
+                    "validated_local_cache",
+                ],
+                "primary_provider_circuit_breaker": {
+                    "opened": circuit_reason is not None,
+                    "trigger_symbol": circuit_symbol,
+                    "reason": circuit_reason,
+                },
                 "eastmoney_circuit_breaker": {
                     "opened": circuit_reason is not None,
                     "trigger_symbol": circuit_symbol,
@@ -642,6 +682,7 @@ def _validate_local_cache_provenance(
         )
     if metadata.get("source") not in {
         "network",
+        "eastmoney_network_fallback",
         "tencent_network_fallback",
         "validated_local_fallback",
     }:

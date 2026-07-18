@@ -619,6 +619,7 @@ def _recent_cached_bars(
         source = file_metadata.get("source")
         if not isinstance(source, str) or source not in {
             "network",
+            "eastmoney_network_fallback",
             "tencent_network_fallback",
             "validated_local_fallback",
         }:

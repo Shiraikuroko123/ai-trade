@@ -23,6 +23,13 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added a shared daily market-data provider boundary with explicit Eastmoney
+  and Tencent registrations. The configured primary and fallback can now be
+  selected independently, while unsupported providers fail at startup instead
+  of silently using stale local data.
+- Added provider-chain and primary-circuit-breaker evidence to every market
+  snapshot manifest, plus a provider capability reference in
+  `docs/DATA_PROVIDERS.md`.
 - The Data view now provides a bounded, read-only cross-sectional universe
   screen for every configured instrument. Momentum, annualized volatility,
   20-session average amount, trend, history readiness, freshness, provenance,
