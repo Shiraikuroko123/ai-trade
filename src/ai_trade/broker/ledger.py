@@ -33,6 +33,7 @@ from .scope import (
     ensure_scope_manifest,
     inspect_scope_manifest,
     preflight_scope_manifest,
+    read_scope_manifest,
     require_scope_manifest,
 )
 
@@ -74,7 +75,10 @@ _LEDGER_THREAD_LOCK = threading.RLock()
 CHINA_STANDARD_TIME = timezone(timedelta(hours=8))
 _APPROVAL_ID = re.compile(r"approval_[0-9a-f]{32}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_SCOPE_ID = re.compile(r"v1_[0-9a-f]{24}\Z")
+_SCOPED_DIGEST = re.compile(r"(?:[0-9a-f]{24}|[0-9a-f]{64})\Z")
 _LIVE_INTENT_PREFIX = "ai-trade-live-intent-v1:"
+_SCOPED_RECORD_PREFIX = "s1:"
 
 
 def initialize_broker_ledger_scope(
@@ -125,18 +129,24 @@ def append_order_events(
     path.parent.mkdir(parents=True, exist_ok=True)
     with _ledger_locks(_scoped_paths([path], scope_path, scope)):
         _require_bound_scope(scope_path, scope)
+        scope_id = scope.scope_id if scope is not None else None
         existing_rows = _read_rows(
             path,
             "event_id",
             allowed_schemas=(ORDER_EVENT_FIELDS,),
         )
-        existing_events = _order_events_from_rows(existing_rows)
+        existing_events = _order_events_from_rows(existing_rows, scope_id=scope_id)
+        if scope_id is None and _row_scope_ids(existing_rows):
+            raise RuntimeError("Scoped broker order ledger requires its scope")
         recover_order_states(existing_events + orders)
         pending_orders = [order for order in orders if order not in existing_events]
         if pending_orders:
             _append_rows(
                 path,
-                [_order_event_payload(order) for order in pending_orders],
+                [
+                    _order_event_payload(order, scope_id=scope_id)
+                    for order in pending_orders
+                ],
                 "event_id",
                 existing_rows,
             )
@@ -185,7 +195,11 @@ def reserve_order_intents(
         )
         for order in orders
     ]
-    rows = [_order_event_payload(snapshot) for snapshot in snapshots]
+    scope_id = scope.scope_id if scope is not None else None
+    rows = [
+        _order_event_payload(snapshot, scope_id=scope_id)
+        for snapshot in snapshots
+    ]
     batch_notional = sum(order.quantity * order.limit_price for order in orders)
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +223,11 @@ def reserve_order_intents(
                 "client_order_id already exists in the broker ledger: "
                 + ", ".join(duplicates)
             )
-        recover_order_states(_order_events_from_rows(existing_rows) + snapshots)
+        recover_order_states(
+            _order_events_from_rows(existing_rows, scope_id=scope_id) + snapshots
+        )
+        if scope_id is None and _row_scope_ids(existing_rows):
+            raise RuntimeError("Scoped broker order ledger requires its scope")
         submitted = _submitted_order_notional(existing_rows, on_date)
         if submitted + batch_notional > max_daily_notional:
             raise ValueError("Orders exceed configured daily notional limit")
@@ -266,13 +284,21 @@ def append_fills(
     path.parent.mkdir(parents=True, exist_ok=True)
     with _ledger_locks(_scoped_paths([path], scope_path, scope)):
         _require_bound_scope(scope_path, scope)
+        scope_id = scope.scope_id if scope is not None else None
         existing_rows = _read_rows(
             path,
             "fill_id",
             allowed_schemas=(FILL_FIELDS, LEGACY_FILL_FIELDS),
         )
-        _fills_from_rows(existing_rows)
-        rows = _fill_rows_for_ledger(path, fills, existing_rows)
+        _fills_from_rows(existing_rows, scope_id=scope_id)
+        if scope_id is None and _row_scope_ids(existing_rows):
+            raise RuntimeError("Scoped broker fill ledger requires its scope")
+        rows = _fill_rows_for_ledger(
+            path,
+            fills,
+            existing_rows,
+            scope_id=scope_id,
+        )
         _append_rows(path, rows, "fill_id", existing_rows)
 
 
@@ -297,6 +323,7 @@ def append_broker_observation(
 
     paths = _scoped_paths([orders_path, fills_path], scope_path, scope)
     with _ledger_locks(paths):
+        scope_id = scope.scope_id if scope is not None else None
         if scope is not None and scope_path is not None:
             ensure_scope_manifest(
                 scope_path,
@@ -317,10 +344,21 @@ def append_broker_observation(
             fills_path,
             fills,
             existing_fill_rows,
+            scope_id=scope_id,
         )
-        existing_events = _order_events_from_rows(existing_order_rows)
+        existing_events = _order_events_from_rows(
+            existing_order_rows,
+            scope_id=scope_id,
+        )
+        if scope_id is None and _row_scope_ids(existing_order_rows):
+            raise RuntimeError("Scoped broker order ledger requires its scope")
+        if scope_id is None and _row_scope_ids(existing_fill_rows):
+            raise RuntimeError("Scoped broker fill ledger requires its scope")
         pending_orders = [order for order in orders if order not in existing_events]
-        order_rows = [_order_event_payload(order) for order in pending_orders]
+        order_rows = [
+            _order_event_payload(order, scope_id=scope_id)
+            for order in pending_orders
+        ]
         prospective_order_rows = _merged_rows(
             existing_order_rows, order_rows, "event_id"
         )
@@ -328,8 +366,8 @@ def append_broker_observation(
             existing_fill_rows, fill_rows, "fill_id"
         )
         report = build_lifecycle_report(
-            _order_events_from_rows(prospective_order_rows),
-            _fills_from_rows(prospective_fill_rows),
+            _order_events_from_rows(prospective_order_rows, scope_id=scope_id),
+            _fills_from_rows(prospective_fill_rows, scope_id=scope_id),
         )
         errors = report["integrity_errors"]
         if errors:
@@ -345,7 +383,11 @@ def append_broker_observation(
     return report
 
 
-def read_order_events(path: Path) -> list[BrokerOrderSnapshot]:
+def read_order_events(
+    path: Path,
+    *,
+    scope_id: str | None = None,
+) -> list[BrokerOrderSnapshot]:
     if not path.exists():
         return []
     with ledger_lock(path):
@@ -354,11 +396,16 @@ def read_order_events(path: Path) -> list[BrokerOrderSnapshot]:
                 path,
                 "event_id",
                 allowed_schemas=(ORDER_EVENT_FIELDS,),
-            )
+            ),
+            scope_id=scope_id,
         )
 
 
-def read_fills(path: Path) -> list[BrokerFill]:
+def read_fills(
+    path: Path,
+    *,
+    scope_id: str | None = None,
+) -> list[BrokerFill]:
     if not path.exists():
         return []
     with ledger_lock(path):
@@ -367,7 +414,8 @@ def read_fills(path: Path) -> list[BrokerFill]:
                 path,
                 "fill_id",
                 allowed_schemas=(FILL_FIELDS, LEGACY_FILL_FIELDS),
-            )
+            ),
+            scope_id=scope_id,
         )
 
 
@@ -388,8 +436,16 @@ def recover_order_lifecycle(
         if scope_path is not None
         else None
     )
+    embedded_scope_id = None
+    if scope_path is not None and scope_path.exists():
+        try:
+            embedded_scope_id = read_scope_manifest(scope_path).scope_id
+        except RuntimeError:
+            # Keep the lifecycle rows inspectable; scope_report below still
+            # marks the manifest invalid and removes authority.
+            embedded_scope_id = None
     try:
-        events = read_order_events(orders_path)
+        events = read_order_events(orders_path, scope_id=embedded_scope_id)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return _attach_scope_report(
             lifecycle_error_report(
@@ -398,7 +454,7 @@ def recover_order_lifecycle(
             scope_report,
         )
     try:
-        fills = read_fills(fills_path)
+        fills = read_fills(fills_path, scope_id=embedded_scope_id)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return _attach_scope_report(
             lifecycle_error_report(
@@ -441,7 +497,8 @@ def submitted_order_notional(
             "event_id",
             allowed_schemas=(ORDER_EVENT_FIELDS,),
         )
-        recover_order_states(_order_events_from_rows(rows))
+        scope_id = scope.scope_id if scope is not None else None
+        recover_order_states(_order_events_from_rows(rows, scope_id=scope_id))
         return _submitted_order_notional(rows, on_date)
 
 
@@ -466,7 +523,8 @@ def submitted_order_count(
             "event_id",
             allowed_schemas=(ORDER_EVENT_FIELDS,),
         )
-        recover_order_states(_order_events_from_rows(rows))
+        scope_id = scope.scope_id if scope is not None else None
+        recover_order_states(_order_events_from_rows(rows, scope_id=scope_id))
         return sum(
             updated_at.date() == on_date
             for updated_at, _ in _first_order_events(rows).values()
@@ -754,8 +812,13 @@ def _normalized_row(
     return tuple(values)
 
 
-def _order_event_payload(order: BrokerOrderSnapshot) -> dict[str, object]:
+def _order_event_payload(
+    order: BrokerOrderSnapshot,
+    *,
+    scope_id: str | None = None,
+) -> dict[str, object]:
     validate_order_snapshot(order)
+    _validate_scope_id(scope_id)
     payload: dict[str, object] = {
         "client_order_id": order.client_order_id,
         "broker_order_id": order.broker_order_id,
@@ -773,25 +836,46 @@ def _order_event_payload(order: BrokerOrderSnapshot) -> dict[str, object]:
         "updated_at": order.updated_at.isoformat(),
         "message": order.message,
     }
+    fingerprint_payload: object = payload
+    if scope_id is not None:
+        fingerprint_payload = {"scope_id": scope_id, "event": payload}
     raw = json.dumps(
-        payload,
+        fingerprint_payload,
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
     )
-    payload["event_id"] = "v2_" + hashlib.sha256(raw.encode("ascii")).hexdigest()[:24]
+    digest = hashlib.sha256(raw.encode("ascii")).hexdigest()[:24]
+    payload["event_id"] = (
+        f"{_SCOPED_RECORD_PREFIX}{scope_id}:{digest}"
+        if scope_id is not None
+        else "v2_" + digest
+    )
     return payload
 
 
-def _fill_payload(fill: BrokerFill) -> dict[str, object]:
+def _fill_payload(
+    fill: BrokerFill,
+    *,
+    scope_id: str | None = None,
+) -> dict[str, object]:
     payload = _legacy_fill_payload(fill)
+    _validate_scope_id(scope_id)
+    fingerprint_payload: object = payload
+    if scope_id is not None:
+        fingerprint_payload = {"scope_id": scope_id, "fill": payload}
     raw = json.dumps(
-        payload,
+        fingerprint_payload,
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
     )
-    payload["record_sha256"] = hashlib.sha256(raw.encode("ascii")).hexdigest()
+    digest = hashlib.sha256(raw.encode("ascii")).hexdigest()
+    payload["record_sha256"] = (
+        f"{_SCOPED_RECORD_PREFIX}{scope_id}:{digest}"
+        if scope_id is not None
+        else digest
+    )
     return payload
 
 
@@ -820,7 +904,10 @@ def _fill_rows_for_ledger(
     path: Path,
     fills: list[BrokerFill],
     existing_rows: list[dict[str, str]],
+    *,
+    scope_id: str | None = None,
 ) -> list[dict[str, object]]:
+    _validate_scope_id(scope_id)
     if existing_rows:
         schema = list(existing_rows[0])
     elif path.exists():
@@ -829,16 +916,24 @@ def _fill_rows_for_ledger(
     else:
         schema = FILL_FIELDS
     if schema == FILL_FIELDS:
-        return [_fill_payload(fill) for fill in fills]
+        return [_fill_payload(fill, scope_id=scope_id) for fill in fills]
     if schema == LEGACY_FILL_FIELDS:
+        if scope_id is not None:
+            raise RuntimeError(
+                "Scoped broker fill ledgers require content-bound fill rows"
+            )
         return [_legacy_fill_payload(fill) for fill in fills]
     raise RuntimeError("Invalid broker fill ledger schema")
 
 
 def _order_events_from_rows(
     rows: list[dict[str, object]],
+    *,
+    scope_id: str | None = None,
 ) -> list[BrokerOrderSnapshot]:
+    _validate_scope_id(scope_id)
     events = []
+    embedded_scope_ids: set[str] = set()
     for row in rows:
         if list(row) != ORDER_EVENT_FIELDS:
             raise RuntimeError("Invalid broker order ledger schema")
@@ -864,20 +959,46 @@ def _order_events_from_rows(
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError(f"Invalid broker order ledger row: {exc}") from exc
         actual_event_id = str(row["event_id"])
-        if actual_event_id.startswith("v2_"):
+        if actual_event_id.startswith(_SCOPED_RECORD_PREFIX):
+            actual_scope_id, digest = _split_scoped_record_id(actual_event_id)
+            embedded_scope_ids.add(actual_scope_id)
+            if scope_id is not None and actual_scope_id != scope_id:
+                raise RuntimeError(
+                    f"Broker order row scope does not match client order {event.client_order_id}"
+                )
+            valid_event_id = actual_event_id == str(
+                _order_event_payload(event, scope_id=actual_scope_id)["event_id"]
+            )
+        elif actual_event_id.startswith("v2_"):
+            if scope_id is not None:
+                raise RuntimeError(
+                    "Unscoped broker order row cannot be used with a bound scope"
+                )
             valid_event_id = actual_event_id == expected_event_id
         else:
+            if scope_id is not None:
+                raise RuntimeError(
+                    "Legacy broker order row cannot be used with a bound scope"
+                )
             valid_event_id = actual_event_id == _legacy_order_event_id(event)
         if not valid_event_id:
             raise RuntimeError(
                 f"Broker order ledger row failed content validation: {event.client_order_id}"
             )
         events.append(event)
+    if len(embedded_scope_ids) > 1:
+        raise RuntimeError("Broker order ledger contains multiple scope IDs")
     return events
 
 
-def _fills_from_rows(rows: list[dict[str, object]]) -> list[BrokerFill]:
+def _fills_from_rows(
+    rows: list[dict[str, object]],
+    *,
+    scope_id: str | None = None,
+) -> list[BrokerFill]:
+    _validate_scope_id(scope_id)
     fills = []
+    embedded_scope_ids: set[str] = set()
     for row in rows:
         schema = list(row)
         if schema not in (FILL_FIELDS, LEGACY_FILL_FIELDS):
@@ -898,15 +1019,64 @@ def _fills_from_rows(rows: list[dict[str, object]]) -> list[BrokerFill]:
             expected_record_sha256 = str(_fill_payload(fill)["record_sha256"])
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError(f"Invalid broker fill ledger row: {exc}") from exc
-        if (
-            schema == FILL_FIELDS
-            and str(row["record_sha256"]) != expected_record_sha256
-        ):
+        if schema == FILL_FIELDS:
+            actual_record = str(row["record_sha256"])
+            if actual_record.startswith(_SCOPED_RECORD_PREFIX):
+                actual_scope_id, _ = _split_scoped_record_id(actual_record)
+                embedded_scope_ids.add(actual_scope_id)
+                if scope_id is not None and actual_scope_id != scope_id:
+                    raise RuntimeError(
+                        f"Broker fill row scope does not match fill {fill.fill_id}"
+                    )
+                expected_record_sha256 = str(
+                    _fill_payload(fill, scope_id=actual_scope_id)["record_sha256"]
+                )
+            elif scope_id is not None:
+                raise RuntimeError(
+                    "Unscoped broker fill row cannot be used with a bound scope"
+                )
+            if actual_record != expected_record_sha256:
+                raise RuntimeError(
+                    f"Broker fill ledger row failed content validation: {fill.fill_id}"
+                )
+        elif scope_id is not None:
             raise RuntimeError(
-                f"Broker fill ledger row failed content validation: {fill.fill_id}"
+                "Legacy broker fill row cannot be used with a bound scope"
             )
         fills.append(fill)
+    if len(embedded_scope_ids) > 1:
+        raise RuntimeError("Broker fill ledger contains multiple scope IDs")
     return fills
+
+
+def _row_scope_ids(rows: list[dict[str, object]]) -> set[str]:
+    scope_ids: set[str] = set()
+    for row in rows:
+        for name in ("event_id", "record_sha256"):
+            value = row.get(name)
+            if isinstance(value, str) and value.startswith(_SCOPED_RECORD_PREFIX):
+                scope_id, _ = _split_scoped_record_id(value)
+                scope_ids.add(scope_id)
+    return scope_ids
+
+
+def _split_scoped_record_id(value: str) -> tuple[str, str]:
+    prefix, separator, remainder = value.partition(":")
+    if prefix != _SCOPED_RECORD_PREFIX[:-1] or not separator:
+        raise RuntimeError("Scoped broker ledger fingerprint has an invalid prefix")
+    scope_id, separator, digest = remainder.partition(":")
+    if (
+        not separator
+        or not _SCOPE_ID.fullmatch(scope_id)
+        or not _SCOPED_DIGEST.fullmatch(digest)
+    ):
+        raise RuntimeError("Scoped broker ledger fingerprint is invalid")
+    return scope_id, digest
+
+
+def _validate_scope_id(scope_id: str | None) -> None:
+    if scope_id is not None and not _SCOPE_ID.fullmatch(scope_id):
+        raise ValueError("Broker ledger scope ID is invalid")
 
 
 def _legacy_order_event_id(order: BrokerOrderSnapshot) -> str:

@@ -4,6 +4,9 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Scoped broker order events and fill fingerprints now carry the bound ledger
+  scope ID. A copied or replaced scope manifest cannot silently reassign old
+  order evidence, and unscoped writers cannot append into a scoped ledger.
 - Reconciliation audits now expose a deterministic fingerprint and validated
   row counts for the complete ledger. Formal evidence keeps one fixed CNY 0.01
   cash tolerance so diagnostic comparisons cannot silently disagree with the

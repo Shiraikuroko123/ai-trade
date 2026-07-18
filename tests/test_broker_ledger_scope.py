@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -115,6 +116,83 @@ class BrokerLedgerScopeTests(unittest.TestCase):
             self.assertNotIn("private-account-123456", json.dumps(report))
             self.assertFalse(report["qualifying_evidence"])
             self.assertFalse(report["execution_enabled"])
+
+            with orders.open("r", encoding="utf-8", newline="") as handle:
+                order_rows = list(csv.DictReader(handle))
+            with fills.open("r", encoding="utf-8", newline="") as handle:
+                fill_rows = list(csv.DictReader(handle))
+            self.assertTrue(
+                all(row["event_id"].startswith("s1:v1_") for row in order_rows)
+            )
+            self.assertTrue(
+                all(row["record_sha256"].startswith("s1:v1_") for row in fill_rows)
+            )
+
+    def test_scoped_rows_cannot_be_extended_without_their_scope(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            orders = root / "orders.csv"
+            fills = root / "fills.csv"
+            manifest = root / "scope.json"
+            scope = _scope(root)
+            order_events, fill_events = _observations()
+            append_broker_observation(
+                orders,
+                fills,
+                order_events,
+                fill_events,
+                scope_path=manifest,
+                scope=scope,
+            )
+            before = orders.read_bytes()
+            later = BrokerOrderSnapshot(
+                "scope-later",
+                "scope-later-broker",
+                "510300",
+                OrderSide.BUY,
+                100,
+                0,
+                10.0,
+                None,
+                OrderStatus.SUBMITTED,
+                START + timedelta(minutes=2),
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "requires its scope"):
+                append_order_events(orders, [later])
+            self.assertEqual(orders.read_bytes(), before)
+
+    def test_replacing_manifest_cannot_rebind_existing_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            orders = root / "orders.csv"
+            fills = root / "fills.csv"
+            manifest = root / "scope.json"
+            original = _scope(root)
+            replacement = _scope(root, account_id="replacement-account")
+            order_events, fill_events = _observations()
+            append_broker_observation(
+                orders,
+                fills,
+                order_events,
+                fill_events,
+                scope_path=manifest,
+                scope=original,
+            )
+            manifest.write_text(
+                json.dumps(replacement.manifest()),
+                encoding="utf-8",
+            )
+
+            report = recover_order_lifecycle(
+                orders,
+                fills,
+                scope_path=manifest,
+                expected_scope=replacement,
+            )
+
+            self.assertEqual(report["status"], "INTEGRITY_ERROR")
+            self.assertEqual(report["integrity_errors"][0]["code"], "order_ledger_invalid")
 
     def test_scope_manifest_rejects_ambiguous_or_unbounded_json(self):
         with tempfile.TemporaryDirectory() as temporary:

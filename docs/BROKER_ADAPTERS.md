@@ -203,6 +203,12 @@ a SHA-256 account reference. The plaintext broker account ID is never stored in
 the manifest or returned by the lifecycle report; the UI exposes only a
 12-character hexadecimal reference for human comparison.
 
+New scoped order event IDs and fill fingerprints also embed the non-secret scope
+ID before hashing. Readers validate that embedded ID against the active manifest
+and reject mixed scopes; unscoped writers cannot append to a scoped ledger.
+This second binding prevents a copied or replaced manifest from reassigning
+existing account/configuration evidence without an explicit integrity error.
+
 The reconciliation, order, fill, scope, authorization, batch-approval, and
 kill-switch paths must also resolve to different files. Configuration loading
 compares paths against the configuration root, so an alias such as
