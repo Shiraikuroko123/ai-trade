@@ -897,7 +897,9 @@ function enhanceRenderedUi() {
     region.setAttribute("role", "region");
     region.setAttribute("aria-describedby", "table-scroll-help");
     const heading = region.closest(".panel, article, section")?.querySelector("h2, h3");
-    if (heading) {
+    if (region.hasAttribute("aria-label")) {
+      region.removeAttribute("aria-labelledby");
+    } else if (heading) {
       if (!heading.id) heading.id = `${state.route}-table-heading-${tableIndex}`;
       region.setAttribute("aria-labelledby", heading.id);
     } else {
@@ -2187,6 +2189,144 @@ function journalEntry(entry) {
     </article>`;
 }
 
+const RESEARCH_ARCHIVE_STATUS = {
+  current: ["证据一致", "success"],
+  partial: ["部分可用", "warning"],
+  missing_report: ["缺少日报", "warning"],
+  unbound_report: ["日报未绑定账本", "danger"],
+  evidence_mismatch: ["证据不一致", "danger"],
+  journal_only: ["仅研究日志", "neutral"],
+  empty: ["暂无归档", "neutral"],
+  unavailable: ["归档不可用", "danger"],
+};
+
+function researchArchiveStatus(value) {
+  return RESEARCH_ARCHIVE_STATUS[String(value || "").toLowerCase()] || ["状态待确认", "neutral"];
+}
+
+function researchArchiveStatusChip(value) {
+  const [label, kind] = researchArchiveStatus(value);
+  return statusChip(label, kind);
+}
+
+function researchArchives(data) {
+  if (!data?.available) {
+    const error = data?.errors?.[0] || {};
+    const recovery = error.recovery_action && state.actions.includes(error.recovery_action)
+      ? actionButton(error.recovery_action, "secondary")
+      : '<button class="button secondary" type="button" data-retry>重新读取</button>';
+    return `
+      <section class="archive-panel" aria-labelledby="research-archive-heading">
+        <header class="archive-heading">
+          <div><h2 id="research-archive-heading">收盘归档</h2><p>日报、权益账本与研究日志的只读交叉校验</p></div>
+          ${researchArchiveStatusChip("unavailable")}
+        </header>
+        <div class="empty-state archive-empty" role="alert">
+          <h3>无法建立历史快照</h3>
+          <p>${escapeHtml(error.message || "模拟账户尚未初始化，或其账本暂时无法安全读取。")}</p>
+          ${recovery}
+        </div>
+      </section>`;
+  }
+  const daily = Array.isArray(data.daily) ? data.daily : [];
+  const weekly = Array.isArray(data.weekly) ? data.weekly : [];
+  const snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+  const latestSnapshot = snapshots[0];
+  const errors = Array.isArray(data.errors) ? data.errors : [];
+  return `
+    <section class="archive-panel" aria-labelledby="research-archive-heading">
+      <header class="archive-heading">
+        <div>
+          <h2 id="research-archive-heading">收盘归档</h2>
+          <p>逐日持仓快照和 ISO 周汇总只读取已落盘证据，不刷新行情或改变账户</p>
+        </div>
+        <div class="archive-heading-status">
+          ${researchArchiveStatusChip(data.status)}
+          <span>${formatInteger(data.summary?.source_equity_sessions || 0)} 个账本交易日</span>
+        </div>
+      </header>
+      ${errors.length ? `
+        <aside class="archive-warning" role="alert">
+          <strong>部分来源需要复核</strong>
+          <ul>${errors.slice(0, 5).map((error) => `<li>${escapeHtml(error.message || error.code)}</li>`).join("")}</ul>
+        </aside>` : ""}
+      <div class="archive-layout">
+        <section class="archive-section" aria-labelledby="archive-daily-heading">
+          <div class="archive-section-title"><h3 id="archive-daily-heading">逐日摘要</h3><span>最近 ${formatInteger(daily.length)} 个记录日</span></div>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="逐日收盘归档表，可横向滚动">
+            <table class="dense-table archive-table">
+              <thead><tr><th>记录日</th><th>校验</th><th class="numeric">权益</th><th class="numeric">日收益</th><th class="numeric">回撤</th><th class="numeric">持仓</th><th class="numeric">日志</th></tr></thead>
+              <tbody>${daily.length ? daily.map(archiveDailyRow).join("") : emptyRow(7, "尚无模拟日报或研究日志")}</tbody>
+            </table>
+          </div>
+        </section>
+        <section class="archive-section" aria-labelledby="archive-weekly-heading">
+          <div class="archive-section-title"><h3 id="archive-weekly-heading">周度复盘</h3><span>按周一至周日归组</span></div>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="周度研究归档表，可横向滚动">
+            <table class="dense-table archive-table">
+              <thead><tr><th>周起始</th><th>覆盖</th><th class="numeric">交易日</th><th class="numeric">周收益</th><th class="numeric">最低回撤</th><th class="numeric">成交 / 拒单</th><th class="numeric">日志</th></tr></thead>
+              <tbody>${weekly.length ? weekly.map(archiveWeeklyRow).join("") : emptyRow(7, "尚无可聚合的周度证据")}</tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      ${latestSnapshot ? archivePositionSnapshot(latestSnapshot) : ""}
+      <p class="archive-boundary"><strong>权限边界：</strong>归档是账本和日志的只读投影；缺失值不会补零，归档结论不会生成订单、改变策略或授予实盘权限。</p>
+    </section>`;
+}
+
+function archiveDailyRow(item) {
+  const positions = Array.isArray(item.positions) ? item.positions.length : 0;
+  const journalCount = Number(item.journal?.entry_count || 0);
+  return `<tr>
+    <td class="mono">${escapeHtml(item.as_of_date || "—")}</td>
+    <td>${researchArchiveStatusChip(item.status)}${item.status_detail ? `<span class="table-subtext">${escapeHtml(item.status_detail)}</span>` : ""}</td>
+    <td class="numeric">${formatMoney(item.equity)}</td>
+    <td class="numeric ${tone(item.daily_return)}">${formatPercent(item.daily_return, true)}</td>
+    <td class="numeric ${tone(item.drawdown)}">${formatPercent(item.drawdown)}</td>
+    <td class="numeric">${formatInteger(positions)}</td>
+    <td class="numeric">${formatInteger(journalCount)}</td>
+  </tr>`;
+}
+
+function archiveWeeklyRow(item) {
+  const expected = item.expected_sessions === null || item.expected_sessions === undefined
+    ? `${formatInteger(item.included_sessions)} / 待确认`
+    : `${formatInteger(item.included_sessions)} / ${formatInteger(item.expected_sessions)}`;
+  const coverageIssues = [
+    item.missing_sessions?.length ? `缺 ${formatInteger(item.missing_sessions.length)} 个已知交易日` : "",
+    item.unexpected_sessions?.length ? `多 ${formatInteger(item.unexpected_sessions.length)} 个非交易日记录` : "",
+  ].filter(Boolean).join("；");
+  return `<tr>
+    <td class="mono"><strong>${escapeHtml(item.week_start || "—")}</strong><span class="table-subtext">至 ${escapeHtml(item.week_end || "—")}</span></td>
+    <td>${researchArchiveStatusChip(item.status)}${coverageIssues ? `<span class="table-subtext">${coverageIssues}</span>` : ""}</td>
+    <td class="numeric">${escapeHtml(expected)}</td>
+    <td class="numeric ${tone(item.period_return)}">${formatPercent(item.period_return, true)}</td>
+    <td class="numeric ${tone(item.max_drawdown)}">${formatPercent(item.max_drawdown)}</td>
+    <td class="numeric">${formatInteger(item.trades_count)} / ${formatInteger(item.rejections_count)}</td>
+    <td class="numeric">${formatInteger(item.journal_count)}</td>
+  </tr>`;
+}
+
+function archivePositionSnapshot(snapshot) {
+  const positions = Array.isArray(snapshot.positions) ? snapshot.positions : [];
+  return `
+    <details class="archive-snapshot">
+      <summary>最近持仓快照 · ${escapeHtml(snapshot.as_of_date || "日期待确认")} · ${formatInteger(positions.length)} 项</summary>
+      <div class="archive-snapshot-meta">
+        <span>账本权益 <strong>${formatMoney(snapshot.equity)}</strong></span>
+        <span>现金 <strong>${formatMoney(snapshot.cash)}</strong></span>
+        <span>估值口径 <strong>账本数量；无历史价格推算</strong></span>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="最近持仓数量快照，可横向滚动">
+        <table class="dense-table archive-table">
+          <thead><tr><th>证券</th><th class="numeric">数量</th><th>口径</th></tr></thead>
+          <tbody>${positions.length ? positions.map((position) => `<tr><td><strong>${escapeHtml(position.symbol)}</strong><span class="table-subtext">${escapeHtml(instrumentName(position.symbol))}</span></td><td class="numeric">${formatInteger(position.quantity)}</td><td>收盘后账本数量；价格与市值不回填</td></tr>`).join("") : emptyRow(3, "该记录日没有持仓")}</tbody>
+        </table>
+      </div>
+    </details>`;
+}
+
 function renderResearch(data) {
   const metrics = data.backtest?.metrics || {};
   const benchmark = data.backtest?.benchmark || {};
@@ -2198,6 +2338,8 @@ function renderResearch(data) {
       ${pageIntro("研究证据", "回测、滚动样本外、区块自助法与压力测试使用同一份可审计报告", [actionButton("backtest", "secondary"), actionButton("walk-forward", "secondary"), actionButton("validate", "primary")].join(""))}
 
       ${researchFreshness(data.reports)}
+
+      ${researchArchives(data.archives)}
 
       ${researchJournal(data.journal)}
 

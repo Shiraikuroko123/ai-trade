@@ -31,11 +31,34 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   broker permissions, or live gates.
 - Added the Research view journal workflow with category/symbol/text filters,
   bounded results, ISO-week timeline grouping, explicit empty/unavailable/running
-  states, and an append-linked correction flow. Daily and weekly automatic archive
-  generation remains partial; grouping is not a generated report.
+  states, and an append-linked correction flow. Scheduled/versioned daily and
+  weekly archive generation remains partial; grouping alone is not a generated
+  report, while the separate read-time projection is documented below.
 - Documented the journal storage and trust boundary in
   `docs/RESEARCH_JOURNAL.md`, including owner-hashed Git-ignored state and the
   explicit exclusion from the Cloudflare R2 market-cache backup allowlist.
+- Added `ResearchArchiveProjection` and the read-only `GET /api/research/archive`
+  contract. It strictly joins the active paper equity ledger, matching daily
+  reports, and the authenticated owner's journal into daily summaries, ISO-week
+  review rows, and ledger-quantity position snapshots. Account/date/schema,
+  duplicate-key, fingerprint, and cross-source mismatches fail closed or remain
+  explicit `partial` statuses; missing values are never zero-filled and historical
+  prices are never inferred for snapshots.
+- Added the Research-page closing-archive view with coverage dates, explicit
+  evidence-status text, bounded table scrolling, and a fixed `research_only`
+  authority declaration; the API retains source fingerprints for audit tooling.
+  The projection is computed on demand and does not refresh providers, write
+  ledgers, create archive files, schedule reports, maintain version/revision
+  chains, upload journal data, or change execution gates.
+- Added archive release-surface checks for the wheel and source distribution and
+  documented the distinction between authoritative paper evidence and the read-only
+  projection in the architecture, ecosystem, README, and research-journal guides.
+- Hardened archive edge cases: post-run journal notes remain visible, invalid journal
+  input preserves valid paper evidence with a partial state, unbound reports cannot
+  become holdings or weekly accounting, weekly returns include the first session,
+  the active configuration fingerprint and trading calendar are cross-checked,
+  zero-quantity holdings fail validation, and explicit table labels remain available
+  to keyboard and screen-reader users.
 - Added a shared daily market-data provider boundary with explicit Eastmoney
   and Tencent registrations. The configured primary and fallback can now be
   selected independently, while unsupported providers fail at startup instead

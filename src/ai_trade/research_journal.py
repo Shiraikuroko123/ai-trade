@@ -253,6 +253,58 @@ class ResearchJournalStore:
             "errors": [],
         }
 
+    def entries_between(
+        self,
+        owner: str,
+        start: date,
+        end: date,
+    ) -> list[dict[str, Any]]:
+        """Return validated immutable entries for an inclusive date range.
+
+        This internal projection boundary is intentionally separate from the
+        paginated browser query. Archive generation must not silently build a
+        weekly report from only the first 200 visible entries.
+        """
+        if not isinstance(start, date) or isinstance(start, datetime):
+            raise ValueError("Research journal range start is invalid")
+        if not isinstance(end, date) or isinstance(end, datetime) or end < start:
+            raise ValueError("Research journal range end is invalid")
+        owner_hash = self.owner_id(owner)
+        directory = self.owner_directory(owner) / "entries"
+        if directory.is_symlink():
+            raise RuntimeError("Research journal entries must not be symbolic links")
+        if not directory.exists():
+            return []
+        if not directory.is_dir():
+            raise RuntimeError("Research journal entries path must be a directory")
+        paths: list[Path] = []
+        for path in directory.glob("journal_*.json"):
+            if path.is_symlink():
+                raise RuntimeError(
+                    "Research journal entries must not be symbolic links"
+                )
+            if path.is_file():
+                if len(paths) >= MAX_ENTRIES_PER_OWNER:
+                    raise RuntimeError(
+                        "Research journal contains more records than the supported "
+                        f"per-owner limit ({MAX_ENTRIES_PER_OWNER})"
+                    )
+                paths.append(path)
+        records = [_read_record(path, owner_hash) for path in paths]
+        records = [
+            record
+            for record in records
+            if start <= date.fromisoformat(record["research_date"]) <= end
+        ]
+        records.sort(
+            key=lambda item: (
+                item["research_date"],
+                item["created_at"],
+                item["entry_id"],
+            )
+        )
+        return [_public_record(record) for record in records]
+
     @contextmanager
     def _owner_lock(self, owner: str) -> Iterator[None]:
         directory = self.owner_directory(owner)

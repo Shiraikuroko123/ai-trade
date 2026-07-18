@@ -29,6 +29,11 @@ from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
+from ..research_archive import (
+    ResearchArchiveProjection,
+    ResearchArchiveQuery,
+    unavailable_research_archive,
+)
 from ..research_journal import (
     JOURNAL_CATEGORIES,
     JOURNAL_DECISIONS,
@@ -97,6 +102,7 @@ class DashboardService:
         self._assistant: AssistantEngine | None = None
         self._strategy_lab: StrategyLabEngine | None = None
         self._research_journal: ResearchJournalStore | None = None
+        self._research_archive: ResearchArchiveProjection | None = None
 
     def overview(self) -> dict[str, Any]:
         backtest = self._json_report("backtest_summary.json") or {}
@@ -228,6 +234,10 @@ class DashboardService:
             )
         except (OSError, RuntimeError, ValueError, KeyError) as exc:
             journal = unavailable_journal(str(exc))
+        try:
+            archives = self.research_archive(owner_id=owner_id)
+        except (AttributeError, OSError, RuntimeError, ValueError, KeyError) as exc:
+            archives = unavailable_research_archive(str(exc))
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
@@ -255,7 +265,46 @@ class DashboardService:
                 "selection_disclosure": validation.get("selection_disclosure"),
             },
             "journal": journal,
+            "archives": archives,
         }
+
+    def research_archive(
+        self,
+        *,
+        owner_id: str = "local-owner",
+        query: ResearchArchiveQuery | None = None,
+    ) -> dict[str, Any]:
+        query = query or ResearchArchiveQuery()
+        try:
+            state = self._paper_state()
+            account_id = str((state or {}).get("account_id") or "")
+            config_fingerprint = str(
+                (state or {}).get("config_fingerprint") or ""
+            )
+            if not account_id:
+                return unavailable_research_archive(
+                    "Paper account is not initialized. Run paper-init before reviewing "
+                    "historical snapshots.",
+                    code="paper_account_unavailable",
+                    recovery_action="paper-init",
+                    query=query,
+                )
+            projection = self._research_archive_projection()
+            calendar = None
+            try:
+                market = self.market(recover_snapshot=False)
+                calendar = getattr(market, "calendar", None)
+            except (AttributeError, OSError, RuntimeError, ValueError):
+                calendar = None
+            return projection.build(
+                owner_id,
+                account_id=account_id,
+                config_fingerprint=config_fingerprint,
+                query=query,
+                market_calendar=calendar,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return unavailable_research_archive(str(exc), query=query)
 
     def research_journal(
         self,
@@ -1189,6 +1238,16 @@ class DashboardService:
                         root = reports_dir.parent / "state" / "research_journal"
                 self._research_journal = ResearchJournalStore(root)
             return self._research_journal
+
+    def _research_archive_projection(self) -> ResearchArchiveProjection:
+        with self._lock:
+            if self._research_archive is None:
+                self._research_archive = ResearchArchiveProjection(
+                    self.config.reports_dir,
+                    self.config.paper_equity_file,
+                    self._research_journal_store(),
+                )
+            return self._research_archive
 
     def _journal_market_evidence(self) -> dict[str, Any]:
         try:

@@ -145,8 +145,9 @@ atomically created, and duplicate JSON keys, unknown fields, owner mismatches,
 or fingerprint changes fail closed on read. There is no edit or delete API. A
 correction appends a new record with `correction_of` pointing to the original,
 leaving the original evidence intact. The store caps one owner at 2,000 records
-and keeps the browser query bounded; the UI groups records by week but does not
-generate an automated daily/weekly archive or report.
+and keeps the browser query bounded. The UI groups records by week and can build a
+separate read-only closing-archive projection, but that projection is computed on
+demand and is not an automated report or a new authoritative ledger.
 
 The journal root is Git-ignored local state and is excluded from release
 artifacts. The optional R2 exporter has an explicit market-cache allowlist and
@@ -154,6 +155,45 @@ cannot read `state/research_journal/` (or any other `state/` member). Consequent
 R2 capacity and operation counters do not include journal records, and a cloud
 cache restore cannot restore or mutate a user's journal. See
 `docs/RESEARCH_JOURNAL.md` for the user workflow and request contract.
+
+## Read-only Closing Archive Projection
+
+```text
+paper_equity.csv  +  paper_YYYYMMDD.json  +  current owner's journal entries
+          | strict schema, account/date/fingerprint cross-checks
+          v
+  daily summaries + ISO weekly review + ledger-quantity position snapshots
+          |
+          X no provider refresh, strategy write, ledger write, broker call,
+            order intent, permission change, or cloud upload
+```
+
+`ResearchArchiveProjection` is a read-only evidence join. It accepts only the active
+paper `account_id` and its validated configuration fingerprint, validates the bounded
+CSV ledger and each matching daily report, and reads journal entries through the
+authenticated owner's scope. A daily row is
+marked `current` only when the ledger and report agree on the key accounting and
+snapshot fields. Missing reports, reports without a bound ledger row, journal-only
+dates, malformed input, and cross-source mismatches remain explicit statuses rather
+than being converted to zeros or silently dropped. The aggregate response reports
+`current`, `partial`, `empty`, or `unavailable` and includes source fingerprints and
+recovery actions.
+
+The `/api/research/archive` endpoint bounds the projection to `all`, `daily`, or
+`weekly`, an optional ISO date or Monday week start, and at most 52 rows. Weekly
+records use the supplied market calendar when available to disclose expected versus
+included sessions and unexpected ledger dates. Position snapshots deliberately expose
+ledger quantities only;
+they do not reconstruct historical prices, market value, or weights from today's
+cache. The browser renders the same limitations and keeps wide tables internally
+scrollable.
+
+This is an on-demand projection, not persistence. It does not write archive files,
+generate scheduled daily digests, version weekly reports, maintain a `supersedes`
+revision chain, or synchronize journal data to R2. The original paper reports,
+equity ledger, and owner-scoped journal remain the authoritative evidence. A future
+automated archive must introduce its own append-only storage and audit contract
+without allowing the projection to gain execution authority.
 
 ## Strategy Lab Boundary
 

@@ -22,6 +22,12 @@ from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
 from ..json_utils import loads_unique_json
+from ..research_archive import (
+    ARCHIVE_DEFAULT_LIMIT,
+    ARCHIVE_KINDS,
+    ARCHIVE_MAX_LIMIT,
+    ResearchArchiveQuery,
+)
 from ..research_journal import (
     JOURNAL_CATEGORIES,
     JOURNAL_DECISIONS,
@@ -268,6 +274,14 @@ def _handler_factory(
                         service.research(
                             owner_id=_assistant_user_id(context),
                             journal_query=journal_query,
+                        )
+                    )
+                elif parsed.path == "/api/research/archive":
+                    archive_query = _parse_research_archive_query(parsed.query)
+                    self._json(
+                        service.research_archive(
+                            owner_id=_assistant_user_id(context),
+                            query=archive_query,
                         )
                     )
                 elif parsed.path == "/api/portfolio":
@@ -990,6 +1004,68 @@ def _parse_research_journal_query(query: str) -> JournalQuery:
         query=text_query,
         limit=limit,
     )
+
+
+def _parse_research_archive_query(query: str) -> ResearchArchiveQuery:
+    if len(query) > 1024:
+        raise ValueError("Research archive query is too long")
+    if not query:
+        return ResearchArchiveQuery()
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=4,
+        )
+    except ValueError as exc:
+        raise ValueError("Research archive query is invalid") from exc
+    unsupported = sorted(set(values) - {"kind", "date", "week", "limit"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported research archive query parameters: "
+            + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    kind = values.get("kind", ["all"])[0]
+    if kind not in ARCHIVE_KINDS:
+        raise ValueError("kind must be all, daily, or weekly")
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    week_start = _parse_archive_date(values.get("week", [None])[0], "week")
+    if week_start is not None and week_start.weekday() != 0:
+        raise ValueError("week must be an ISO Monday")
+    if on_date is not None and week_start is not None:
+        raise ValueError("date and week cannot be combined")
+    raw_limit = values.get("limit", [str(ARCHIVE_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= ARCHIVE_MAX_LIMIT:
+        raise ValueError(
+            f"limit must be between 1 and {ARCHIVE_MAX_LIMIT}"
+        )
+    return ResearchArchiveQuery(
+        kind=kind,
+        on_date=on_date,
+        week_start=week_start,
+        limit=limit,
+    )
+
+
+def _parse_archive_date(value: str | None, field: str) -> date | None:
+    if value is None:
+        return None
+    if not value or value != value.strip():
+        raise ValueError(f"{field} must be an ISO calendar date")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO calendar date") from exc
+    if parsed.isoformat() != value:
+        raise ValueError(f"{field} must use YYYY-MM-DD format")
+    return parsed
 
 
 def _parse_research_journal_payload(payload: dict[str, object]) -> JournalDraft:
