@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 `v0.12.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
@@ -26,6 +26,7 @@
 13. 将券商成交文件严格标准化为本地不可变影子账本，识别重复或冲突成交，并与当前模拟成交做非晋级偏差复盘。
 14. 从本地券商订单与成交账本恢复每笔订单的当前状态，校验部分成交、撤单竞态、乱序回报和重启后的账本一致性。
 15. 用原子作用域清单把未来券商生命周期账本绑定到适配器、账户引用、环境、配置与账本路径，阻止跨账户或跨配置混写。
+16. 在每个登录用户隔离的研究日志中追加人工观察、判断和修正，并绑定当时的行情与策略证据；日志不会改变任何执行权限。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -230,6 +231,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
 
 助理始终为 `research_only`：不能创建订单意图、目标仓位、入场/止损/止盈价格，不能解锁模拟晋级、沙箱对账、人工授权、紧急停止或真实交易门禁，也不提供收益承诺。每个本地用户的历史位于 Git 忽略的 `state/assistant/`，不会进入 R2 或发行版。完整模式说明、变量约束、数据边界和故障处理见 [AI K线助理](docs/AI_ASSISTANT.md)。
 
+## 研究日志
+
+**研究** 页面中的“研究日志”用于记录人工观察、研究理由和复盘结论。每条记录按用户隔离，带有研究日期、记录类型、可选证券、标题、笔记、观点和确信度；服务器会自动绑定登录用户和记录人，并在写入时保存可重算的内容指纹、行情快照日期/指纹以及当前策略候选状态。行情或策略证据暂不可用时会显式记录 `available=false`，不会用空值冒充已验证证据。
+
+日志是 **append-only**：页面没有编辑或删除操作。发现错误时对原记录执行“追加修正”，系统新增一条带 `correction_of` 的记录并保留旧记录。直接改写 JSON 会使指纹校验失败，读取会安全失败。研究日志只属于 `research_only` 研究层，不能修改策略实验室、模拟账户、订单、券商权限或任何实盘门禁；详细字段、接口、限额和恢复边界见 [研究日志](docs/RESEARCH_JOURNAL.md)。
+
+默认记录目录为 Git 忽略的 `state/research_journal/users/<owner-sha256>/entries/`，不进入发行包，也不上传 Cloudflare R2。R2 行情备份只允许 `data/cache` CSV 与行情 manifest；存储页显示的容量和 A/B 预算不包含研究日志。当前版本按研究日期把记录分成周时间线，但尚未自动生成每日摘要、周报、持仓快照或云端日志同步。
+
 命令行研究流程仍可独立运行：
 
 ```powershell
@@ -274,7 +283,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_cloud.ps1
 
 存储页不是 Cloudflare 账单页。容量来自当前安装命名空间最近一次 R2 对象清点；A/B 类操作只统计 AI Trade 从本版本开始在本机观测到的高层请求，不包含其他应用、其他电脑、升级前请求或 SDK 内部重试。页面中的额度、周期和“剩余”是用户自行设置的本地预算，不是 Cloudflare 官方账户余额、免费额度证明或强制限流。初始预算为 10 GB、A 类 1,000,000 次、B 类 10,000,000 次、每月 1 日起算，用户应按自己的 Cloudflare 套餐和管理目标修改。
 
-`cloud-backup` 只打包当前已校验的 `data/cache` CSV 与 `manifest.json`。`reports/`、`state/`、`logs/`、内测账号、券商凭据和任何实盘授权都不会上传。R2 endpoint、bucket、安装命名空间、对象 key 和访问密钥不会返回网页或写入报告；非敏感偏好和本机观测账本位于 Git 忽略的 `state/`。`cloud-restore` 只解压到新的 `local/cloud-restore/<snapshot-id>/` 暂存目录，不会覆盖活动缓存。完整口径、命令、权限建议、轮换和恢复检查见 [云端行情快照](docs/CLOUD_STORAGE.md)。
+`cloud-backup` 只打包当前已校验的 `data/cache` CSV 与 `manifest.json`。`reports/`、`state/`（包括本地 `state/research_journal/` 研究日志）、`logs/`、内测账号、券商凭据和任何实盘授权都不会上传。R2 endpoint、bucket、安装命名空间、对象 key 和访问密钥不会返回网页或写入报告；非敏感偏好和本机观测账本位于 Git 忽略的 `state/`。`cloud-restore` 只解压到新的 `local/cloud-restore/<snapshot-id>/` 暂存目录，不会覆盖活动缓存。完整口径、命令、权限建议、轮换和恢复检查见 [云端行情快照](docs/CLOUD_STORAGE.md)。
 
 ## 工程结构
 
@@ -283,7 +292,7 @@ ai-trade/
 ├── .github/                 # CI、Issue 和 PR 模板
 ├── config/default.json      # 策略、数据、风控、成本和模拟盘配置
 ├── config/security_master.json # 证券主数据、成分区间和交易状态
-├── docs/                    # 架构、研究方法和模拟盘运维文档
+├── docs/                    # 架构、研究方法、研究日志和模拟盘运维文档
 ├── local/                   # Git 忽略的云快照恢复暂存区
 ├── scripts/                 # Windows 初始化与计划任务脚本
 ├── src/ai_trade/
@@ -291,6 +300,7 @@ ai-trade/
 │   ├── broker/              # 模拟账户、前向审计和实盘阻断
 │   ├── data/                # 行情下载、校验、快照和市场访问
 │   ├── web/                 # 零运行依赖的本地工作台、任务队列和 HTTP 防护
+│   ├── research_journal.py  # 每用户隔离的不可变研究日志
 │   ├── backtest.py          # 事件驱动回测
 │   ├── security.py          # 时点证券主数据与动态标的池
 │   ├── strategy.py          # 信号、流动性和组合风险预算
@@ -316,6 +326,7 @@ ai-trade/
 - `doctor` 显示共同数据截止日、各标的覆盖范围、哈希及被排除的未完成日期。
 - 模型增强模式只读取当前 Windows 用户环境变量；应用不会把 API Key 写入项目文件、助理历史、报告、R2 快照或发行包。用户环境变量不是专用保险库，同一 Windows 用户下的其他进程仍可能读取它。
 - 助理历史位于 `state/assistant/`。现有 `state/*` 忽略规则阻止它进入 Git，R2 的行情 allowlist 不会读取它，发行校验也拒绝任何 `state/` 成员。
+- 研究日志位于 `state/research_journal/`，所有者目录使用 SHA-256 而不是明文用户名。它与助理历史、模拟账本一样被 Git 忽略，R2 行情 allowlist 不会读取它；内容指纹用于发现意外修改，不是数字签名或云端备份。
 
 ## 行情连接与降级
 
@@ -373,6 +384,7 @@ ai-trade/
 - `state/broker_reconciliation.csv`：内容指纹绑定的正式沙箱现金/持仓对账证据；旧身份 ID 不计入连续干净会话。
 - `state/shadow_fills.csv`：按登录用户、来源和账户别名隔离的标准化影子成交；每行带可重算的内容指纹。
 - `state/shadow_imports.csv`：原始文件 SHA-256、接收/重复数量和导入时间；不保留原始券商 CSV。
+- `state/research_journal/users/<owner-sha256>/entries/`：按登录用户隔离的 append-only 研究记录；每条记录绑定证据指纹，修正通过新记录关联旧编号。
 - `paper_audit.json`、`paper_audit.md`：账本完整性、前向指标和券商沙盒晋级门槛。
 
 工作台“系统”页会验证报告是否与当前行情快照一致，并允许在本机下载已生成的 `.html`、`.json`、`.csv` 和 `.md` 报告；路径穿越和其他文件后缀会被拒绝。

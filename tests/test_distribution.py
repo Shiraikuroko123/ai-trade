@@ -33,6 +33,11 @@ class DistributionVerificationTests(unittest.TestCase):
         self.assertIn("ai_trade/json_utils.py", WHEEL_REQUIRED)
         self.assertIn("src/ai_trade/json_utils.py", SDIST_REQUIRED)
 
+    def test_research_journal_release_surface_is_required_in_both_artifacts(self):
+        self.assertIn("ai_trade/research_journal.py", WHEEL_REQUIRED)
+        self.assertIn("src/ai_trade/research_journal.py", SDIST_REQUIRED)
+        self.assertIn("docs/RESEARCH_JOURNAL.md", SDIST_REQUIRED)
+
     def test_assistant_release_surface_is_required_in_both_artifacts(self):
         for module in (
             "__init__.py",

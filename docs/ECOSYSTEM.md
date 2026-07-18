@@ -11,6 +11,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [RQAlpha](https://github.com/ricequant/rqalpha) | China-market simulation rules | Dated stock fees, lot size, suspension and price-limit rules |
 | [vectorbt](https://github.com/polakowo/vectorbt) | Fast parameter and signal research | Useful future research backend, not the accounting authority |
 | [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Shared daily-provider boundary is implemented; independent cross-checks and additional licensed adapters remain planned |
+| [kimi-stock-agent](https://github.com/dbbbbm/kimi-stock-agent) | Daily research cadence, historical review, and human operation notes | Immutable per-user research notes and decision rationale are implemented; automatic daily/weekly archives remain partial |
 | [PyPortfolioOpt](https://github.com/PyPortfolio/PyPortfolioOpt) | Efficient frontier, Black-Litterman and HRP | Research candidates after simple risk budgets pass forward tests |
 | [cvxportfolio](https://github.com/cvxgrp/cvxportfolio) | Multi-period optimization with costs and constraints | Reference for future institutional portfolio construction |
 | [Riskfolio-Lib](https://github.com/dcajasn/Riskfolio-Lib) | Broad portfolio-risk optimization | Reference for CVaR and hierarchical risk research |
@@ -26,6 +27,24 @@ AI Trade does not attempt to merge several large repositories into one process. 
 
 Hosted results depend on each provider's data license, adjustment policy, fill model, region, and account permissions. AI Trade should use them for independent comparison or future adapters, not assume that two platforms with the same strategy name have the same data semantics.
 
+## Capability Status Matrix
+
+The comparison below tracks the specific `kimi-stock-agent`-style workflow that is
+implemented in AI Trade. “Complete” means the capability has a tested local
+contract; it does not mean that it has execution authority or that it replaces the
+authoritative paper and broker ledgers.
+
+| Reference capability | Status | AI Trade boundary |
+|---|---|---|
+| Manual research notes and decision rationale | Complete | The Research page appends immutable, per-user notes with category, symbol, date, decision, confidence, actor, and evidence fingerprints. Corrections append a linked record; the original is retained. |
+| Manual holdings, fills, and cash accounting | Separate authoritative layer | Paper and shadow-account ledgers remain the source of positions, fills, cash, and fees. The research journal can describe a review but cannot edit those ledgers. |
+| Daily analysis archive | Partial | Daily reports and immutable research entries are available, but there is no journal-driven automatic daily digest or notification. |
+| Weekly analysis/archive | Partial | Entries are grouped by the ISO research week in the UI; an automatically generated, versioned weekly report and full position snapshot archive are still planned. |
+
+The matrix deliberately keeps human notes, accounting evidence, and strategy
+decisions separate. A note saying “hold” or “reduce risk” is a record of what the
+operator thought at that time, not a signal, order, or promotion fact.
+
 ## Current Layer Decisions
 
 1. Security master is the authority for identity and point-in-time eligibility.
@@ -37,6 +56,7 @@ Hosted results depend on each provider's data license, adjustment policy, fill m
 7. Historical validation can promote a model only to future paper testing, never directly to live trading.
 8. Eastmoney is a bounded primary data route and Tencent Finance is an auditable network fallback; neither public endpoint is treated as exchange-certified or guaranteed.
 9. The market workstation renders only local validated completed snapshots. Indicator and chart controls are observations, not strategy mutations or order signals.
+10. Research notes are append-only, owner-scoped evidence. They can explain a decision, but cannot mutate strategy, accounting, broker permissions, or live authority.
 
 ## What Is Deliberately Not Adopted
 

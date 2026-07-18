@@ -181,6 +181,14 @@ const state = {
   strategyLabMode: "manual",
   strategyCandidateId: "",
   strategyActionBusy: false,
+  journalFilters: {
+    category: "",
+    symbol: "",
+    query: "",
+    limit: "100",
+  },
+  journalBusy: false,
+  journalCorrectionOf: "",
   marketSymbol: "510300",
   marketPeriod: "day",
   marketLimit: 240,
@@ -719,6 +727,17 @@ function universeScreenPath() {
   return `/api/universe/screen${query ? `?${query}` : ""}`;
 }
 
+function researchPath() {
+  const params = new URLSearchParams();
+  const filters = state.journalFilters || {};
+  if (filters.category) params.set("category", filters.category);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.query) params.set("q", filters.query);
+  if (filters.limit && filters.limit !== "100") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/research${query ? `?${query}` : ""}`;
+}
+
 async function loadRoute() {
   state.controller?.abort();
   destroyMarketChart();
@@ -767,7 +786,7 @@ async function loadRoute() {
     } else {
       const endpoints = {
         overview: "/api/overview",
-        research: "/api/research",
+        research: researchPath(),
         assistant: "/api/assistant",
         "strategy-lab": "/api/strategy-lab",
         portfolio: "/api/portfolio",
@@ -887,6 +906,7 @@ function enhanceRenderedUi() {
     tableIndex += 1;
   }
   bindUniverseFilterForm();
+  syncJournalDecisionControl();
 }
 
 function applyUniverseFilterForm(form) {
@@ -922,6 +942,138 @@ function bindUniverseFilterForm() {
     event.preventDefault();
     applyUniverseFilterForm(form);
   });
+}
+
+function syncJournalDecisionControl() {
+  const form = document.getElementById("research-journal-form");
+  if (!form) return;
+  const decision = form.querySelector("[data-journal-decision]");
+  const confidence = form.querySelector("[data-journal-confidence]");
+  if (!decision || !confidence) return;
+  const enabled = decision.value !== "not_recorded";
+  confidence.disabled = !enabled;
+  confidence.required = enabled;
+  if (!enabled) confidence.value = "";
+}
+
+function applyJournalFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.journalFilters = {
+    category: String(values.get("category") || ""),
+    symbol: String(values.get("symbol") || ""),
+    query: String(values.get("query") || "").trim(),
+    limit: String(values.get("limit") || "100"),
+  };
+  loadRoute();
+}
+
+function clearJournalFilters() {
+  state.journalFilters = {
+    category: "",
+    symbol: "",
+    query: "",
+    limit: "100",
+  };
+  loadRoute();
+}
+
+function selectJournalCorrection(entryId) {
+  state.journalCorrectionOf = entryId;
+  const form = document.getElementById("research-journal-form");
+  if (!form) return;
+  const hidden = form.querySelector("[name='correction_of']");
+  if (hidden) hidden.value = entryId;
+  const context = document.getElementById("research-journal-correction");
+  if (context) {
+    context.hidden = false;
+    const code = context.querySelector("code");
+    if (code) code.textContent = shortCandidateId(entryId);
+  }
+  const title = form.querySelector("[name='title']");
+  title?.focus({ preventScroll: true });
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function cancelJournalCorrection() {
+  state.journalCorrectionOf = "";
+  const form = document.getElementById("research-journal-form");
+  if (!form) return;
+  const hidden = form.querySelector("[name='correction_of']");
+  if (hidden) hidden.value = "";
+  const context = document.getElementById("research-journal-correction");
+  if (context) context.hidden = true;
+}
+
+async function appendResearchJournal(form) {
+  if (state.journalBusy || !form.reportValidity()) return;
+  const values = new FormData(form);
+  const decision = String(values.get("decision") || "not_recorded");
+  const button = form.querySelector("button[type='submit']");
+  const status = document.getElementById("research-journal-status");
+  state.journalBusy = true;
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "正在写入";
+  }
+  if (status) {
+    status.className = "form-status";
+    status.textContent = "正在固化研究证据与权限边界…";
+  }
+  try {
+    const payload = await api("/api/research/journal", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify({
+        research_date: String(values.get("research_date") || ""),
+        category: String(values.get("category") || ""),
+        symbol: String(values.get("symbol") || "") || null,
+        title: String(values.get("title") || ""),
+        note: String(values.get("note") || ""),
+        decision,
+        confidence: decision === "not_recorded" ? null : Number(values.get("confidence")),
+        correction_of: String(values.get("correction_of") || "") || null,
+      }),
+    });
+    state.journalCorrectionOf = "";
+    state.journalBusy = false;
+    form.reset();
+    cancelJournalCorrection();
+    syncJournalDecisionControl();
+    try {
+      await reloadResearch();
+    } catch {
+      const message = "研究日志已写入，但列表刷新失败；请刷新视图确认，避免重复提交。";
+      if (status?.isConnected) {
+        status.className = "form-status error";
+        status.textContent = message;
+      }
+      notify(message, true);
+      return;
+    }
+    notify(payload.entry_id ? "研究日志已写入；旧记录保持不变" : "研究日志已写入");
+  } catch (error) {
+    const message = friendlyError(error.message);
+    if (status) {
+      status.className = "form-status error";
+      status.textContent = message;
+    }
+    notify(message, true);
+  } finally {
+    state.journalBusy = false;
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.setAttribute("aria-busy", "false");
+      button.textContent = "写入研究日志";
+    }
+  }
+}
+
+async function reloadResearch() {
+  const payload = await api(researchPath());
+  state.data.set("research", payload);
+  if (state.route === "research") renderRoute(payload);
 }
 
 function marketProviderLabel(value) {
@@ -1825,6 +1977,216 @@ function translateDisclosure(value) {
   return value;
 }
 
+const JOURNAL_CATEGORY_LABELS = {
+  observation: "观察",
+  decision: "研究决定",
+  trade_review: "操作复盘",
+  risk: "风险",
+  strategy: "策略",
+  weekly_review: "周度复盘",
+};
+
+const JOURNAL_DECISION_LABELS = {
+  not_recorded: "未记录观点",
+  watch: "继续观察",
+  consider_increase: "研究增配",
+  hold: "维持研究判断",
+  consider_reduce: "研究减配",
+  avoid: "暂不纳入",
+};
+
+function journalCategoryKind(value) {
+  return {
+    decision: "info",
+    risk: "warning",
+    strategy: "info",
+    trade_review: "neutral",
+    weekly_review: "neutral",
+  }[value] || "neutral";
+}
+
+function journalDecisionKind(value) {
+  return {
+    watch: "info",
+    consider_increase: "success",
+    hold: "neutral",
+    consider_reduce: "warning",
+    avoid: "danger",
+  }[value] || "neutral";
+}
+
+function localCalendarDate() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+function journalOption(value, label, selected) {
+  return `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+function researchJournal(data) {
+  if (!data?.available) {
+    const message = data?.errors?.[0]?.message || "研究日志存储暂时不可用。";
+    return `
+      <section class="journal-panel" aria-labelledby="research-journal-heading">
+        <header class="journal-heading">
+          <div><h2 id="research-journal-heading">研究日志</h2><p>人工判断与当时证据的不可变记录</p></div>
+          ${statusChip("写入已暂停", "danger")}
+        </header>
+        <div class="empty-state journal-error" role="alert">
+          <h3>无法安全读取研究日志</h3>
+          <p>${escapeHtml(message)}</p>
+          <button class="button secondary" type="button" data-retry>重新读取</button>
+        </div>
+      </section>`;
+  }
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const summary = data.summary || {};
+  const filters = data.filters || {};
+  const symbols = Array.isArray(data.options?.symbols) ? data.options.symbols : [];
+  const categories = Array.isArray(data.options?.categories)
+    ? data.options.categories
+    : Object.keys(JOURNAL_CATEGORY_LABELS);
+  const decisions = Array.isArray(data.options?.decisions)
+    ? data.options.decisions
+    : Object.keys(JOURNAL_DECISION_LABELS);
+  const correctionId = state.journalCorrectionOf;
+  const correctionEntry = entries.find((entry) => entry.entry_id === correctionId);
+  const defaultDate = localCalendarDate();
+  const totalLabel = `${formatInteger(summary.total || 0)} 条不可变记录`;
+  return `
+    <section class="journal-panel" aria-labelledby="research-journal-heading">
+      <header class="journal-heading">
+        <div>
+          <h2 id="research-journal-heading">研究日志</h2>
+          <p>把收盘判断、风险复核与操作理由绑定到当时的行情和策略指纹</p>
+        </div>
+        <div class="journal-heading-status">
+          ${statusChip("研究记录", "info")}
+          <span>${escapeHtml(totalLabel)}</span>
+        </div>
+      </header>
+      <div class="journal-layout">
+        <div class="journal-compose">
+          <div class="journal-section-title">
+            <h3>新增记录</h3>
+            <span>提交后不可覆盖</span>
+          </div>
+          <form id="research-journal-form" class="journal-form" aria-describedby="research-journal-boundary research-journal-status">
+            <input type="hidden" name="correction_of" value="${escapeHtml(correctionId)}">
+            <div id="research-journal-correction" class="journal-correction"${correctionId ? "" : " hidden"}>
+              <span>正在追加修正：<code>${escapeHtml(correctionId ? shortCandidateId(correctionId) : "")}</code>${correctionEntry ? ` · ${escapeHtml(correctionEntry.title)}` : ""}</span>
+              <button class="button ghost compact" type="button" data-journal-correction-cancel>取消修正</button>
+            </div>
+            <div class="journal-field-grid">
+              <label class="field"><span>研究日期</span><input name="research_date" type="date" value="${escapeHtml(defaultDate)}" required></label>
+              <label class="field"><span>记录类型</span><select name="category" required>${categories.map((value) => journalOption(value, JOURNAL_CATEGORY_LABELS[value] || value, "observation")).join("")}</select></label>
+              <label class="field"><span>关联证券</span><select name="symbol"><option value="">组合 / 全市场</option>${symbols.map((symbol) => journalOption(symbol, `${symbol} · ${instrumentName(symbol)}`, "")).join("")}</select></label>
+              <label class="field"><span>研究观点</span><select name="decision" data-journal-decision>${decisions.map((value) => journalOption(value, JOURNAL_DECISION_LABELS[value] || value, "not_recorded")).join("")}</select></label>
+              <label class="field"><span>确信度</span><div class="unit-input"><input name="confidence" data-journal-confidence type="number" min="0" max="100" step="5" inputmode="numeric" value="" disabled><span>%</span></div></label>
+            </div>
+            <label class="field"><span>标题</span><input name="title" maxlength="80" autocomplete="off" required></label>
+            <label class="field"><span>证据、理由与待验证项</span><textarea name="note" rows="5" maxlength="4000" required></textarea></label>
+            <p id="research-journal-boundary" class="journal-boundary"><strong>权限边界：</strong>日志只保存研究证据，不会改变策略、模拟账户、订单或券商权限。</p>
+            <div class="form-footer">
+              <span>如需更正，请在原记录上选择“追加修正”；旧记录会继续保留。</span>
+              <button class="button primary" type="submit"${state.journalBusy ? ' disabled aria-busy="true"' : ""}>${state.journalBusy ? "正在写入" : "写入研究日志"}</button>
+            </div>
+            <p id="research-journal-status" class="form-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+        <div class="journal-ledger">
+          <div class="journal-section-title">
+            <h3>审计时间线</h3>
+            <span>显示 ${formatInteger(summary.returned || 0)} / 匹配 ${formatInteger(summary.matched || 0)}</span>
+          </div>
+          <form id="research-journal-filter-form" class="journal-filter" role="search" aria-label="筛选研究日志">
+            <label class="field"><span>类型</span><select name="category"><option value="">全部类型</option>${categories.map((value) => journalOption(value, JOURNAL_CATEGORY_LABELS[value] || value, filters.category || "")).join("")}</select></label>
+            <label class="field"><span>证券</span><select name="symbol"><option value="">全部证券</option>${symbols.map((symbol) => journalOption(symbol, `${symbol} · ${instrumentName(symbol)}`, filters.symbol || "")).join("")}</select></label>
+            <label class="field journal-search"><span>关键词</span><input name="query" type="search" maxlength="80" value="${escapeHtml(filters.query || "")}" placeholder="标题、理由、记录人或编号"></label>
+            <label class="field"><span>最多显示</span><select name="limit">${[50, 100, 200].map((value) => journalOption(String(value), `${value} 条`, String(filters.limit || 100))).join("")}</select></label>
+            <div class="journal-filter-actions">
+              <button class="button secondary" type="submit">应用筛选</button>
+              <button class="button ghost" type="button" data-journal-filter-clear>清除</button>
+            </div>
+          </form>
+          ${journalTimeline(entries, summary)}
+        </div>
+      </div>
+    </section>`;
+}
+
+function journalTimeline(entries, summary) {
+  if (!entries.length) {
+    const filtered = Number(summary?.total || 0) > 0;
+    return `<div class="empty-state journal-empty" role="status">
+      <h3>${filtered ? "筛选条件下没有记录" : "尚无研究记录"}</h3>
+      <p>${filtered ? "调整类型、证券或关键词后重新筛选；原始记录没有被删除。" : "左侧写入第一条收盘观察，系统会同时固化行情与策略证据。"}</p>
+      ${filtered ? '<button class="button secondary" type="button" data-journal-filter-clear>清除筛选</button>' : ""}
+    </div>`;
+  }
+  const groups = new Map();
+  entries.forEach((entry) => {
+    const week = entry.week_start || entry.research_date || "日期未知";
+    if (!groups.has(week)) groups.set(week, []);
+    groups.get(week).push(entry);
+  });
+  return `<div class="journal-timeline">
+    ${[...groups.entries()].map(([week, rows]) => `
+      <section class="journal-week" aria-labelledby="journal-week-${escapeHtml(week)}">
+        <header><h4 id="journal-week-${escapeHtml(week)}">${escapeHtml(week)} 起</h4><span>${formatInteger(rows.length)} 条</span></header>
+        ${rows.map(journalEntry).join("")}
+      </section>`).join("")}
+    ${summary?.truncated ? `<p class="journal-truncated" role="status">当前只显示最近 ${formatInteger(summary.returned)} 条匹配记录；收窄筛选条件可继续查找。</p>` : ""}
+  </div>`;
+}
+
+function journalEntry(entry) {
+  const market = entry.evidence?.market_snapshot || {};
+  const strategy = entry.evidence?.strategy || {};
+  const decision = JOURNAL_DECISION_LABELS[entry.decision] || entry.decision || "未记录观点";
+  const confidence = entry.confidence === null || entry.confidence === undefined
+    ? decision
+    : `${decision} · ${formatInteger(entry.confidence)}%`;
+  const corrected = entry.correction_of
+    ? `<span class="journal-reference">修正自 <code>${escapeHtml(shortCandidateId(entry.correction_of))}</code></span>`
+    : "";
+  return `
+    <article class="journal-entry" id="${escapeHtml(entry.entry_id)}">
+      <div class="journal-entry-head">
+        <div>
+          <div class="journal-entry-labels">
+            ${statusChip(JOURNAL_CATEGORY_LABELS[entry.category] || entry.category, journalCategoryKind(entry.category))}
+            ${statusChip(confidence, journalDecisionKind(entry.decision))}
+            ${entry.symbol ? `<span class="journal-symbol">${escapeHtml(entry.symbol)} · ${escapeHtml(instrumentName(entry.symbol))}</span>` : '<span class="journal-symbol">组合 / 全市场</span>'}
+          </div>
+          <h4>${escapeHtml(entry.title)}</h4>
+        </div>
+        <time datetime="${escapeHtml(entry.research_date)}">${escapeHtml(entry.research_date)}</time>
+      </div>
+      <p class="journal-entry-note">${escapeHtml(entry.note).replaceAll("\n", "<br>")}</p>
+      <div class="journal-entry-meta">
+        <span>记录人 ${escapeHtml(entry.actor || "本地所有者")}</span>
+        <span>写入 ${escapeHtml(formatDate(entry.created_at, true))}</span>
+        ${corrected}
+      </div>
+      <details class="journal-evidence">
+        <summary>证据指纹与权限边界</summary>
+        <dl>
+          <div><dt>行情快照</dt><dd>${market.available ? `${escapeHtml(market.date)}<code>${escapeHtml(market.fingerprint)}</code>` : '<span>写入时不可用</span>'}</dd></div>
+          <div><dt>策略版本</dt><dd>${strategy.available ? `${escapeHtml(strategy.candidate_id ? shortCandidateId(strategy.candidate_id) : "默认配置")} · ${escapeHtml(strategy.lifecycle_state)}<code>${escapeHtml(strategy.fingerprint)}</code>` : '<span>写入时不可用</span>'}</dd></div>
+          <div><dt>日志完整性</dt><dd><code>${escapeHtml(entry.entry_fingerprint)}</code></dd></div>
+          <div><dt>执行权限</dt><dd><span>未授权；不改变策略、账户、订单或券商权限</span></dd></div>
+        </dl>
+      </details>
+      <div class="journal-entry-actions">
+        <code>${escapeHtml(entry.entry_id)}</code>
+        <button class="button ghost compact" type="button" data-journal-correct="${escapeHtml(entry.entry_id)}">追加修正</button>
+      </div>
+    </article>`;
+}
+
 function renderResearch(data) {
   const metrics = data.backtest?.metrics || {};
   const benchmark = data.backtest?.benchmark || {};
@@ -1836,6 +2198,8 @@ function renderResearch(data) {
       ${pageIntro("研究证据", "回测、滚动样本外、区块自助法与压力测试使用同一份可审计报告", [actionButton("backtest", "secondary"), actionButton("walk-forward", "secondary"), actionButton("validate", "primary")].join(""))}
 
       ${researchFreshness(data.reports)}
+
+      ${researchJournal(data.journal)}
 
       <section class="metric-strip" aria-label="研究指标">
         ${metric("策略年化收益", formatPercent(metrics.cagr), `基准 ${formatPercent(benchmark.cagr)}`, tone(metrics.cagr))}
@@ -4456,6 +4820,21 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const journalCorrect = event.target.closest("[data-journal-correct]");
+  if (journalCorrect) {
+    selectJournalCorrection(journalCorrect.dataset.journalCorrect);
+    return;
+  }
+  const journalCorrectionCancel = event.target.closest("[data-journal-correction-cancel]");
+  if (journalCorrectionCancel) {
+    cancelJournalCorrection();
+    return;
+  }
+  const journalFilterClear = event.target.closest("[data-journal-filter-clear]");
+  if (journalFilterClear) {
+    clearJournalFilters();
+    return;
+  }
   const universeSubmit = event.target.closest("[data-universe-submit]");
   if (universeSubmit) {
     const form = universeSubmit.closest("#universe-date-form");
@@ -4665,10 +5044,15 @@ document.addEventListener("change", (event) => {
     return;
   }
   const confirmation = event.target.closest(".strategy-confirmation-form input[name='confirmed']");
-  if (!confirmation) return;
-  const form = confirmation.closest("form");
-  const submit = form?.querySelector("button[type='submit']");
-  if (submit) submit.disabled = !confirmation.checked || state.strategyActionBusy;
+  if (confirmation) {
+    const form = confirmation.closest("form");
+    const submit = form?.querySelector("button[type='submit']");
+    if (submit) submit.disabled = !confirmation.checked || state.strategyActionBusy;
+    return;
+  }
+  if (event.target.closest("[data-journal-decision]")) {
+    syncJournalDecisionControl();
+  }
 });
 
 document.addEventListener("submit", (event) => {
@@ -4713,6 +5097,12 @@ document.addEventListener("submit", (event) => {
   } else if (event.target.id === "shadow-import-form") {
     event.preventDefault();
     importShadowAccount(event.target);
+  } else if (event.target.id === "research-journal-form") {
+    event.preventDefault();
+    appendResearchJournal(event.target);
+  } else if (event.target.id === "research-journal-filter-form") {
+    event.preventDefault();
+    applyJournalFilterForm(event.target);
   } else if (event.target.id === "strategy-approval-form") {
     event.preventDefault();
     const values = new FormData(event.target);

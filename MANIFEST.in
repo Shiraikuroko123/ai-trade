@@ -15,6 +15,7 @@ include docs/CLOUD_STORAGE.md
 include docs/ECOSYSTEM.md
 include docs/PAPER_TRADING.md
 include docs/RESEARCH_METHODOLOGY.md
+include docs/RESEARCH_JOURNAL.md
 include docs/UNIVERSE.md
 include docs/UNIVERSE_SCREENING.md
 include docs/assets/workstation-overview.png

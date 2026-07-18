@@ -22,6 +22,18 @@ from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
 from ..json_utils import loads_unique_json
+from ..research_journal import (
+    JOURNAL_CATEGORIES,
+    JOURNAL_DECISIONS,
+    JOURNAL_DEFAULT_LIMIT,
+    JOURNAL_MAX_LIMIT,
+    MAX_JOURNAL_RECORD_BYTES,
+    MAX_JOURNAL_NOTE_LENGTH,
+    MAX_JOURNAL_QUERY_LENGTH,
+    MAX_JOURNAL_TITLE_LENGTH,
+    JournalDraft,
+    JournalQuery,
+)
 from ..strategy_lab import StrategyLabConflictError
 from .auth import (
     AuthManager,
@@ -51,6 +63,7 @@ ASSISTANT_SYMBOL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:=+-]{0,63}\Z")
 ASSISTANT_MODES = frozenset({"local", "model"})
 ASSISTANT_MIN_LOOKBACK = 60
 ASSISTANT_MAX_LOOKBACK = 500
+JOURNAL_ENTRY_ID_PATTERN = re.compile(r"journal_[0-9a-f]{32}\Z")
 MARKET_CHART_PERIODS = frozenset({"day", "week", "month"})
 MARKET_CHART_MIN_LIMIT = 60
 MARKET_CHART_MAX_LIMIT = 1500
@@ -250,7 +263,13 @@ def _handler_factory(
                 elif parsed.path == "/api/overview":
                     self._json(service.overview())
                 elif parsed.path == "/api/research":
-                    self._json(service.research())
+                    journal_query = _parse_research_journal_query(parsed.query)
+                    self._json(
+                        service.research(
+                            owner_id=_assistant_user_id(context),
+                            journal_query=journal_query,
+                        )
+                    )
                 elif parsed.path == "/api/portfolio":
                     self._json(service.portfolio())
                 elif parsed.path == "/api/trading":
@@ -377,6 +396,22 @@ def _handler_factory(
                             mode=mode,
                             user_id=_assistant_user_id(context),
                         )
+                    )
+                elif parsed.path == "/api/research/journal":
+                    if parsed.query:
+                        raise ValueError(
+                            "Research journal append does not accept query parameters"
+                        )
+                    draft = _parse_research_journal_payload(
+                        self._read_json(maximum_bytes=MAX_JOURNAL_RECORD_BYTES)
+                    )
+                    self._json(
+                        service.append_research_journal(
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                            draft=draft,
+                        ),
+                        HTTPStatus.CREATED,
                     )
                 elif parsed.path == "/api/shadow-account/import":
                     if parsed.query:
@@ -899,6 +934,141 @@ def _strategy_lab_actor(context: tuple[str, Session | None] | None) -> str:
     if context is None or context[1] is None:
         return "local-owner"
     return context[1].username
+
+
+def _parse_research_journal_query(query: str) -> JournalQuery:
+    if len(query) > 1024:
+        raise ValueError("Research journal query is too long")
+    if not query:
+        return JournalQuery()
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=4,
+        )
+    except ValueError as exc:
+        raise ValueError("Research journal query is invalid") from exc
+    unsupported = sorted(set(values) - {"category", "symbol", "q", "limit"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported research journal query parameters: "
+            + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+
+    category = values.get("category", [None])[0]
+    if category is not None and category not in JOURNAL_CATEGORIES:
+        raise ValueError("category is not a supported research journal category")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is not None and (
+        symbol != symbol.strip()
+        or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
+    ):
+        raise ValueError("symbol must be a valid instrument identifier")
+    text_query = values.get("q", [None])[0]
+    if text_query is not None:
+        text_query = _bounded_text(
+            text_query,
+            "q",
+            MAX_JOURNAL_QUERY_LENGTH,
+        )
+    raw_limit = values.get("limit", [str(JOURNAL_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= JOURNAL_MAX_LIMIT:
+        raise ValueError(
+            f"limit must be between 1 and {JOURNAL_MAX_LIMIT}"
+        )
+    return JournalQuery(
+        category=category,
+        symbol=symbol,
+        query=text_query,
+        limit=limit,
+    )
+
+
+def _parse_research_journal_payload(payload: dict[str, object]) -> JournalDraft:
+    _reject_unknown_fields(
+        payload,
+        {
+            "research_date",
+            "category",
+            "symbol",
+            "title",
+            "note",
+            "decision",
+            "confidence",
+            "correction_of",
+        },
+        "research journal",
+    )
+    raw_date = payload.get("research_date")
+    if not isinstance(raw_date, str) or raw_date != raw_date.strip():
+        raise ValueError("research_date must be an ISO calendar date")
+    try:
+        research_date = date.fromisoformat(raw_date)
+    except ValueError as exc:
+        raise ValueError("research_date must be an ISO calendar date") from exc
+    if research_date.isoformat() != raw_date:
+        raise ValueError("research_date must use YYYY-MM-DD format")
+
+    category = payload.get("category")
+    if not isinstance(category, str) or category not in JOURNAL_CATEGORIES:
+        raise ValueError("category is not a supported research journal category")
+    raw_symbol = payload.get("symbol")
+    if raw_symbol in (None, ""):
+        symbol = None
+    elif (
+        not isinstance(raw_symbol, str)
+        or raw_symbol != raw_symbol.strip()
+        or not ASSISTANT_SYMBOL_PATTERN.fullmatch(raw_symbol)
+    ):
+        raise ValueError("symbol must be a valid instrument identifier")
+    else:
+        symbol = raw_symbol
+
+    decision = payload.get("decision", "not_recorded")
+    if not isinstance(decision, str) or decision not in JOURNAL_DECISIONS:
+        raise ValueError("decision is not a supported research journal decision")
+    confidence = payload.get("confidence")
+    if decision == "not_recorded":
+        if confidence is not None:
+            raise ValueError(
+                "confidence must be omitted when no research decision is recorded"
+            )
+    elif (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, int)
+        or not 0 <= confidence <= 100
+    ):
+        raise ValueError(
+            "confidence must be an integer between 0 and 100 for a research decision"
+        )
+
+    correction_of = payload.get("correction_of")
+    if correction_of in (None, ""):
+        correction_of = None
+    elif not isinstance(correction_of, str) or not JOURNAL_ENTRY_ID_PATTERN.fullmatch(
+        correction_of
+    ):
+        raise ValueError("correction_of must be a valid research journal entry id")
+    return JournalDraft(
+        research_date=research_date,
+        category=category,
+        symbol=symbol,
+        title=_bounded_text(
+            payload.get("title"), "title", MAX_JOURNAL_TITLE_LENGTH
+        ),
+        note=_bounded_text(payload.get("note"), "note", MAX_JOURNAL_NOTE_LENGTH),
+        decision=decision,
+        confidence=confidence,
+        correction_of=correction_of,
+    )
 
 
 def _parse_shadow_import_payload(

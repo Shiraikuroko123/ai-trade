@@ -23,6 +23,19 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Added an immutable, per-owner research journal for manual observations,
+  decision rationale, trade reviews, risk notes, strategy notes, and corrections.
+  Each record binds the authenticated actor to the market snapshot and active
+  strategy evidence available at write time, carries a content fingerprint, and
+  remains `research_only`; it cannot mutate strategies, paper ledgers, orders,
+  broker permissions, or live gates.
+- Added the Research view journal workflow with category/symbol/text filters,
+  bounded results, ISO-week timeline grouping, explicit empty/unavailable/running
+  states, and an append-linked correction flow. Daily and weekly automatic archive
+  generation remains partial; grouping is not a generated report.
+- Documented the journal storage and trust boundary in
+  `docs/RESEARCH_JOURNAL.md`, including owner-hashed Git-ignored state and the
+  explicit exclusion from the Cloudflare R2 market-cache backup allowlist.
 - Added a shared daily market-data provider boundary with explicit Eastmoney
   and Tencent registrations. The configured primary and fallback can now be
   selected independently, while unsupported providers fail at startup instead

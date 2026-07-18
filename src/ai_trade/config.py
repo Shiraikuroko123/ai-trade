@@ -24,6 +24,7 @@ DEFAULT_AUTH_MAX_FAILED_ATTEMPTS = 5
 DEFAULT_AUTH_FAILURE_WINDOW_MINUTES = 15
 DEFAULT_AUTH_LOCKOUT_MINUTES = 15
 MAX_CONFIG_FILE_BYTES = 5 * 1024 * 1024
+DEFAULT_RESEARCH_JOURNAL_DIR = "state/research_journal"
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,13 @@ class AppConfig:
     def paper_rejections_file(self) -> Path:
         return self.resolve(
             self.raw["paper"].get("rejections_file", "state/paper_rejections.csv")
+        )
+
+    @property
+    def research_journal_dir(self) -> Path:
+        """Return the local, git-ignored root for immutable research notes."""
+        return _research_journal_path(
+            self.raw.get("research_journal", {}), self.project_root
         )
 
     @property
@@ -350,6 +358,9 @@ def _validate(
     _validate_auth(raw.get("auth", {}))
     _validate_broker(raw.get("broker", {}), project_root=project_root)
     _validate_shadow_account(raw.get("shadow_account", {}))
+    _validate_research_journal(
+        raw.get("research_journal", {}), project_root=project_root
+    )
 
 
 def _validate_data_transport(data: dict[str, Any]) -> None:
@@ -592,3 +603,41 @@ def _validate_shadow_account(value: dict[str, Any]) -> None:
         if normalized in configured:
             raise ValueError("shadow account ledger paths must be different")
         configured.add(normalized)
+
+
+def _validate_research_journal(
+    value: Any,
+    *,
+    project_root: Path,
+) -> None:
+    _research_journal_path(value, project_root)
+
+
+def _research_journal_path(value: Any, project_root: Path) -> Path:
+    if not isinstance(value, dict):
+        raise ValueError("research_journal must be an object")
+    raw_path = value.get("root_dir", DEFAULT_RESEARCH_JOURNAL_DIR)
+    if (
+        not isinstance(raw_path, str)
+        or not raw_path
+        or raw_path != raw_path.strip()
+    ):
+        raise ValueError("research_journal.root_dir must be a non-empty path")
+    candidate = Path(raw_path)
+    try:
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (project_root / candidate).resolve()
+        )
+        state_root = (project_root / "state").resolve()
+        relative = resolved.relative_to(state_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError(
+            "research_journal.root_dir must resolve inside the workspace state directory"
+        ) from exc
+    if not relative.parts:
+        raise ValueError(
+            "research_journal.root_dir must be a child of the workspace state directory"
+        )
+    return resolved

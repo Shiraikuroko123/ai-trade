@@ -29,6 +29,14 @@ from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
+from ..research_journal import (
+    JOURNAL_CATEGORIES,
+    JOURNAL_DECISIONS,
+    JournalDraft,
+    JournalQuery,
+    ResearchJournalStore,
+    unavailable_journal,
+)
 from ..strategy_lab import StrategyLabConflictError, StrategyLabEngine
 from ..strategy import MomentumTrendStrategy
 from .screener import ScreeningFilters, screen_rows
@@ -88,6 +96,7 @@ class DashboardService:
         self._market_signature: tuple[tuple[str, int], ...] | None = None
         self._assistant: AssistantEngine | None = None
         self._strategy_lab: StrategyLabEngine | None = None
+        self._research_journal: ResearchJournalStore | None = None
 
     def overview(self) -> dict[str, Any]:
         backtest = self._json_report("backtest_summary.json") or {}
@@ -188,7 +197,12 @@ class DashboardService:
             "live": live,
         }
 
-    def research(self) -> dict[str, Any]:
+    def research(
+        self,
+        *,
+        owner_id: str = "local-owner",
+        journal_query: JournalQuery | None = None,
+    ) -> dict[str, Any]:
         backtest = self._json_report("backtest_summary.json") or {}
         walk = self._json_report("walk_forward.json") or {}
         validation = self._json_report("validation_report.json") or {}
@@ -207,6 +221,13 @@ class DashboardService:
             },
             market,
         )
+        try:
+            journal = self.research_journal(
+                owner_id=owner_id,
+                journal_query=journal_query,
+            )
+        except (OSError, RuntimeError, ValueError, KeyError) as exc:
+            journal = unavailable_journal(str(exc))
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
@@ -233,7 +254,49 @@ class DashboardService:
                 "research_gates": validation.get("research_gates"),
                 "selection_disclosure": validation.get("selection_disclosure"),
             },
+            "journal": journal,
         }
+
+    def research_journal(
+        self,
+        *,
+        owner_id: str = "local-owner",
+        journal_query: JournalQuery | None = None,
+    ) -> dict[str, Any]:
+        query = journal_query or JournalQuery()
+        result = self._research_journal_store().list(owner_id, query)
+        result["options"] = {
+            "categories": list(JOURNAL_CATEGORIES),
+            "decisions": list(JOURNAL_DECISIONS),
+            "symbols": [
+                str(item.symbol)
+                for item in getattr(self.config, "instruments", ())
+                if getattr(item, "symbol", None)
+            ],
+        }
+        return result
+
+    def append_research_journal(
+        self,
+        *,
+        owner_id: str,
+        actor: str,
+        draft: JournalDraft,
+    ) -> dict[str, Any]:
+        configured_symbols = {
+            str(item.symbol)
+            for item in getattr(self.config, "instruments", ())
+            if getattr(item, "symbol", None)
+        }
+        if draft.symbol is not None and configured_symbols and draft.symbol not in configured_symbols:
+            raise ValueError("symbol is not part of the configured instrument universe")
+        return self._research_journal_store().append(
+            owner_id,
+            draft,
+            actor=actor,
+            market_evidence=self._journal_market_evidence(),
+            strategy_evidence=self._journal_strategy_evidence(owner_id),
+        )
 
     def portfolio(self) -> dict[str, Any]:
         state = self._paper_state()
@@ -1113,6 +1176,57 @@ class DashboardService:
                 self._strategy_lab = StrategyLabEngine(self.config)
             return self._strategy_lab
 
+    def _research_journal_store(self) -> ResearchJournalStore:
+        with self._lock:
+            if self._research_journal is None:
+                root = getattr(self.config, "research_journal_dir", None)
+                if root is None:
+                    project_root = getattr(self.config, "project_root", None)
+                    if project_root is not None:
+                        root = Path(project_root) / "state" / "research_journal"
+                    else:
+                        reports_dir = Path(getattr(self.config, "reports_dir"))
+                        root = reports_dir.parent / "state" / "research_journal"
+                self._research_journal = ResearchJournalStore(root)
+            return self._research_journal
+
+    def _journal_market_evidence(self) -> dict[str, Any]:
+        try:
+            market = self.market()
+            metadata = market.snapshot_metadata()
+            if not isinstance(metadata, dict):
+                raise ValueError("market snapshot metadata is unavailable")
+            selected_date = metadata.get("latest_common_session") or metadata.get(
+                "latest_benchmark_session"
+            )
+            if selected_date is None:
+                selected_date = market.latest_date().isoformat()
+            selected_date = date.fromisoformat(str(selected_date)).isoformat()
+            return {
+                "available": True,
+                "date": selected_date,
+                "fingerprint": _journal_evidence_fingerprint(metadata),
+            }
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            return {"available": False, "date": None, "fingerprint": None}
+
+    def _journal_strategy_evidence(self, owner_id: str) -> dict[str, Any]:
+        try:
+            active = self._strategy_lab_engine().summary(owner_id)["active"]
+            return {
+                "available": True,
+                "candidate_id": active.get("candidate_id"),
+                "fingerprint": active["fingerprint"],
+                "lifecycle_state": active["lifecycle_state"],
+            }
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            return {
+                "available": False,
+                "candidate_id": None,
+                "fingerprint": None,
+                "lifecycle_state": None,
+            }
+
     def _signal(
         self, market: MarketData, state: dict[str, Any] | None
     ) -> dict[str, Any]:
@@ -1891,6 +2005,20 @@ def _sample(rows: list[dict[str, Any]], maximum: int) -> list[dict[str, Any]]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _journal_evidence_fingerprint(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        default=lambda item: item.isoformat()
+        if isinstance(item, (date, datetime))
+        else str(item),
+    ).encode("ascii")
+    return sha256(encoded).hexdigest()
 
 
 def _public_live_readiness(

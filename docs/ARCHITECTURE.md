@@ -102,6 +102,59 @@ Assistant conclusions are a closed enum. `REVIEW_CANDIDATE` requests human resea
 
 Per-user assistant records are stored under `state/assistant/`. The repository-wide `state/*` ignore rule excludes them from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history is therefore local operational state rather than a portable report or cloud backup.
 
+## Append-only Research Journal Boundary
+
+```text
+completed market snapshot + active strategy metadata
+                         |
+                         v
+                 human journal draft
+                         |
+                         v
+             server-bound owner and actor
+                         |
+                         v
+            immutable local journal record
+                         |
+                         X  no strategy mutation, paper-account write,
+                            order intent, broker call, or live authority
+```
+
+The research journal is a parallel evidence layer for human observations,
+decision rationale, trade reviews, risk notes, strategy notes, and weekly review
+notes. It is not an input stage of the signal or order pipeline. The append route
+accepts only an allowlisted draft; the server supplies the authenticated owner
+identity and human-readable actor. `authority` is fixed to `research_only`, with
+`execution_authorized`, `strategy_changed`, `paper_account_changed`, and
+`broker_permissions_changed` all set to `false`. A journal conclusion therefore
+cannot create an order, alter a strategy candidate, write a paper or shadow
+ledger, consume a mandate approval, or change a kill switch.
+
+Each record captures the research date and ISO week start, a category, optional
+configured symbol, bounded title/note, optional closed decision enum, and a
+content-bound SHA-256 fingerprint. It also records the market snapshot date and
+fingerprint when a completed snapshot is available, and the active strategy
+candidate/fingerprint/lifecycle state when strategy evidence is available. An
+explicit `available=false` object is stored when either evidence source cannot be
+read; missing evidence is never silently represented as a current or zero value.
+
+Records use create-once JSON files under
+`state/research_journal/users/<sha256-owner>/entries/`. Per-owner in-process and
+operating-system locks serialize writes; the file is staged, flushed, and
+atomically created, and duplicate JSON keys, unknown fields, owner mismatches,
+or fingerprint changes fail closed on read. There is no edit or delete API. A
+correction appends a new record with `correction_of` pointing to the original,
+leaving the original evidence intact. The store caps one owner at 2,000 records
+and keeps the browser query bounded; the UI groups records by week but does not
+generate an automated daily/weekly archive or report.
+
+The journal root is Git-ignored local state and is excluded from release
+artifacts. The optional R2 exporter has an explicit market-cache allowlist and
+cannot read `state/research_journal/` (or any other `state/` member). Consequently
+R2 capacity and operation counters do not include journal records, and a cloud
+cache restore cannot restore or mutate a user's journal. See
+`docs/RESEARCH_JOURNAL.md` for the user workflow and request contract.
+
 ## Strategy Lab Boundary
 
 ```text
@@ -182,6 +235,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/live_guard.py`: paper, configuration, adapter capability, reconciliation, kill-switch, mandate, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
 - `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
+- `research_journal.py`: per-owner immutable human notes, decision rationale, correction links, evidence fingerprints, and fixed research-only authority.
 - `strategy_lab/`: allowlisted strategy/risk parameters, immutable per-user candidates and monitoring evidence, same-snapshot validation, human approval, isolated paper export, activation lifecycle, retirement registry, and rollback.
 - `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
 - `web/`: loopback-only authenticated HTTP server, non-mutating market-chart projection, background job manager, dashboard service, and packaged static application with pinned local KLineChart assets.
@@ -194,7 +248,7 @@ Before a future sandbox or live writer creates evidence, an atomically published
 
 Formal sandbox reconciliation is a separate authority-bearing ledger. New rows bind adapter, account, date, configuration, cash values, complete canonical expected/broker position maps, and automatically reproduced issue details into a `v3_` content fingerprint. The auditor validates the exact schema and every row before selecting the active account; duplicate nested JSON keys, duplicate logical sessions, malformed rows, reordered dates, fingerprint mismatches, and issue/snapshot disagreement fail closed. Updates use the same in-process/operating-system locking and atomic same-directory publication as lifecycle ledgers. Legacy 24-character identity-only and `v2_` cash-only rows remain readable for operational continuity but are excluded from the consecutive clean-session gate because they do not bind the compared position snapshots.
 
-Provider fallback, cloud backup, shadow CSV review, and broker routing are separate trust boundaries. A successful data refresh, R2 backup, or shadow comparison does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision. Shadow review has no broker object and cannot call submission or cancellation methods.
+Provider fallback, cloud backup, research-journal append, shadow CSV review, and broker routing are separate trust boundaries. A successful data refresh, R2 backup, journal entry, or shadow comparison does not satisfy a paper-promotion gate, authorize live trading, or establish that the data is suitable for an order decision. The journal and shadow review have no broker object and cannot call submission or cancellation methods.
 
 The security-master schema removes a fixed instrument-count assumption, but the default master remains a curated ETF universe. A professional stock universe additionally requires licensed or independently verified point-in-time constituent and corporate-action data; the architecture does not treat a current constituent list as historical truth.
 
@@ -205,7 +259,7 @@ validated data/cache allowlist -> ZIP + snapshot manifest + SHA-256 -> private R
 private R2 namespace -> size/hash/schema/path verification -> local/cloud-restore staging
 ```
 
-R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/` (including `state/assistant/`), `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.
+R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/` (including `state/assistant/` and `state/research_journal/`), `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.
 
 ## Clean-room Reference Boundary
 
