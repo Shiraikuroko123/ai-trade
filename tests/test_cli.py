@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from ai_trade.cli import _maybe_automatic_cloud_backup, build_parser, main
 from ai_trade.config import _validate_auth, load_config
+from ai_trade.research_digest import ResearchDigestCapacityError
 from ai_trade.web.auth import UserStore
 
 
@@ -108,6 +109,232 @@ class CliTests(unittest.TestCase):
             mode="model",
             user_id="local-owner",
         )
+
+    def test_archive_generate_parser_has_bounded_audit_trigger(self):
+        args = build_parser().parse_args(["archive-generate"])
+        self.assertEqual(args.trigger, "manual")
+        self.assertFalse(args.all_profiles)
+
+        scheduled = build_parser().parse_args(
+            ["archive-generate", "--all-profiles", "--trigger", "scheduled"]
+        )
+        self.assertTrue(scheduled.all_profiles)
+        self.assertEqual(scheduled.trigger, "scheduled")
+
+        for invalid in ("web", "backfill", "rebuild"):
+            with (
+                self.subTest(trigger=invalid),
+                self.assertRaises(SystemExit),
+                redirect_stderr(io.StringIO()),
+            ):
+                build_parser().parse_args(
+                    ["archive-generate", "--trigger", invalid]
+                )
+
+    def test_archive_generate_passes_scheduled_trigger_to_every_profile(self):
+        config = MagicMock()
+        service = MagicMock()
+        service.generate_research_digests.return_value = {
+            "available": True,
+            "status": "current",
+            "summary": {"written": 1, "reused": 0},
+            "errors": [],
+        }
+        users = MagicMock()
+        users.enabled_account_ids.return_value = (
+            "acct_" + "a" * 32,
+            "acct_" + "b" * 32,
+        )
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.web.service.DashboardService", return_value=service
+            ),
+            patch("ai_trade.web.auth.UserStore", return_value=users),
+            redirect_stdout(output),
+        ):
+            status = main(
+                ["archive-generate", "--all-profiles", "--trigger", "scheduled"]
+            )
+
+        self.assertEqual(status, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["scope"], "all_profiles")
+        self.assertEqual(payload["trigger"], "scheduled")
+        self.assertEqual(payload["profiles_processed"], 3)
+        self.assertEqual(service.generate_research_digests.call_count, 3)
+        for call in service.generate_research_digests.call_args_list:
+            self.assertEqual(call.kwargs["trigger"], "scheduled")
+            self.assertEqual(call.kwargs["actor"], "scheduled-archive")
+
+    def test_archive_all_profiles_reports_enumeration_failure(self):
+        config = MagicMock()
+        service = MagicMock()
+        service.generate_research_digests.return_value = {
+            "available": True,
+            "status": "current",
+            "summary": {"written": 1, "reused": 0},
+            "errors": [],
+        }
+        users = MagicMock()
+        users.enabled_account_ids.side_effect = ValueError("invalid beta store")
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.logging.getLogger"),
+            patch(
+                "ai_trade.web.service.DashboardService", return_value=service
+            ),
+            patch("ai_trade.web.auth.UserStore", return_value=users),
+            redirect_stdout(output),
+        ):
+            status = main(["archive-generate", "--all-profiles"])
+
+        self.assertEqual(status, 1)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["profiles_processed"], 1)
+        self.assertEqual(payload["profile_warning"], "invalid beta store")
+        service.generate_research_digests.assert_called_once()
+
+    def test_archive_all_profiles_isolates_expected_profile_failures(self):
+        account_ids = ("acct_" + "a" * 32, "acct_" + "b" * 32)
+        success = {
+            "available": True,
+            "status": "current",
+            "summary": {"written": 1, "reused": 0},
+            "errors": [],
+        }
+        expected = (
+            (OSError("disk unavailable"), "research_digest_generation_failed"),
+            (RuntimeError("ledger unavailable"), "research_digest_generation_failed"),
+            (ValueError("invalid evidence"), "research_digest_generation_failed"),
+            (
+                ResearchDigestCapacityError("digest capacity reached"),
+                "research_digest_capacity",
+            ),
+        )
+        for failure, error_code in expected:
+            with self.subTest(error=type(failure).__name__):
+                config = MagicMock()
+                service = MagicMock()
+                service.generate_research_digests.side_effect = [
+                    success,
+                    failure,
+                    success,
+                ]
+                users = MagicMock()
+                users.enabled_account_ids.return_value = account_ids
+                output = io.StringIO()
+                with (
+                    patch("ai_trade.cli.load_config", return_value=config),
+                    patch("ai_trade.cli._configure_logging"),
+                    patch("ai_trade.cli.logging.getLogger"),
+                    patch(
+                        "ai_trade.web.service.DashboardService",
+                        return_value=service,
+                    ),
+                    patch("ai_trade.web.auth.UserStore", return_value=users),
+                    redirect_stdout(output),
+                ):
+                    status = main(["archive-generate", "--all-profiles"])
+
+                self.assertEqual(status, 1)
+                self.assertEqual(service.generate_research_digests.call_count, 3)
+                payload = json.loads(output.getvalue())
+                self.assertEqual(payload["profiles_processed"], 3)
+                failed = payload["profiles"][1]
+                self.assertFalse(failed["available"])
+                self.assertEqual(failed["status"], "unavailable")
+                self.assertEqual(failed["errors"][0]["code"], error_code)
+                self.assertTrue(payload["profiles"][2]["available"])
+
+    def test_archive_all_profiles_does_not_swallow_unknown_base_exception(self):
+        class FatalArchiveError(BaseException):
+            pass
+
+        config = MagicMock()
+        service = MagicMock()
+        service.generate_research_digests.side_effect = FatalArchiveError(
+            "stop immediately"
+        )
+        users = MagicMock()
+        users.enabled_account_ids.return_value = ("acct_" + "a" * 32,)
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.web.service.DashboardService", return_value=service
+            ),
+            patch("ai_trade.web.auth.UserStore", return_value=users),
+            self.assertRaises(FatalArchiveError),
+        ):
+            main(["archive-generate", "--all-profiles"])
+
+        service.generate_research_digests.assert_called_once()
+
+    def test_archive_partial_profile_is_nonzero_even_after_prefix_commit(self):
+        config = MagicMock()
+        service = MagicMock()
+        service.generate_research_digests.return_value = {
+            "available": True,
+            "status": "partial",
+            "summary": {"written": 1, "reused": 0},
+            "errors": [{"code": "partial", "message": "second period failed"}],
+        }
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.web.service.DashboardService", return_value=service
+            ),
+            redirect_stdout(output),
+        ):
+            status = main(["archive-generate"])
+
+        self.assertEqual(status, 1)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["profiles"][0]["status"], "partial")
+
+    def test_archive_partial_evidence_without_write_error_is_successful(self):
+        config = MagicMock()
+        service = MagicMock()
+        service.generate_research_digests.return_value = {
+            "available": True,
+            "status": "partial",
+            "summary": {"written": 2, "reused": 0},
+            "errors": [],
+        }
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.web.service.DashboardService", return_value=service
+            ),
+            redirect_stdout(io.StringIO()),
+        ):
+            status = main(["archive-generate"])
+
+        self.assertEqual(status, 0)
+
+    def test_archive_scheduler_scripts_declare_scheduled_scope(self):
+        scripts = Path(__file__).resolve().parents[1] / "scripts"
+        paper = (scripts / "run_daily_paper.ps1").read_text(encoding="utf-8")
+        archive = (scripts / "run_daily_archive.ps1").read_text(encoding="utf-8")
+        installer = (scripts / "install_archive_task.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("archive-generate --trigger scheduled", paper)
+        self.assertIn(
+            "archive-generate --all-profiles --trigger scheduled", archive
+        )
+        self.assertIn("-WindowStyle Hidden", installer)
+        self.assertIn("-MultipleInstances IgnoreNew", installer)
+        self.assertIn("[string]$RunAt = '18:30'", installer)
 
     def test_broker_probe_commands_are_read_only_cli_surfaces(self):
         self.assertEqual(build_parser().parse_args(["broker-list"]).command, "broker-list")

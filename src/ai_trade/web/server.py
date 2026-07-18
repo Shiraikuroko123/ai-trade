@@ -29,6 +29,12 @@ from ..monitoring import (
     RULE_SEVERITIES,
     RULE_TYPE_METADATA,
 )
+from ..research_digest import (
+    DIGEST_KINDS,
+    DIGEST_MAX_LIMIT,
+    ResearchDigestCapacityError,
+    ResearchDigestQuery,
+)
 from ..research_archive import (
     ARCHIVE_DEFAULT_LIMIT,
     ARCHIVE_KINDS,
@@ -296,6 +302,14 @@ def _handler_factory(
                             query=archive_query,
                         )
                     )
+                elif parsed.path == "/api/research/digests":
+                    digest_query = _parse_research_digest_query(parsed.query)
+                    self._json(
+                        service.research_digests(
+                            owner_id=_assistant_user_id(context),
+                            query=digest_query,
+                        )
+                    )
                 elif parsed.path == "/api/portfolio":
                     self._json(service.portfolio())
                 elif parsed.path == "/api/trading":
@@ -447,6 +461,24 @@ def _handler_factory(
                         ),
                         HTTPStatus.CREATED,
                     )
+                elif parsed.path == "/api/research/digests/generate":
+                    kind, on_date, week_start, trigger = (
+                        _parse_research_digest_generate_payload(self._read_json())
+                    )
+                    result = service.generate_research_digests(
+                        owner_id=_assistant_user_id(context),
+                        actor=_strategy_lab_actor(context),
+                        trigger=trigger,
+                        kind=kind,
+                        on_date=on_date,
+                        week_start=week_start,
+                    )
+                    status = (
+                        HTTPStatus.CREATED
+                        if result.get("summary", {}).get("written", 0)
+                        else HTTPStatus.OK
+                    )
+                    self._json(result, status)
                 elif parsed.path == "/api/monitoring/watchlist":
                     (
                         action,
@@ -694,7 +726,11 @@ def _handler_factory(
                 self._json_error(HTTPStatus.NOT_FOUND, str(exc).strip("'"))
             except FileExistsError as exc:
                 self._json_error(HTTPStatus.CONFLICT, str(exc))
-            except (MonitoringConflictError, MonitoringCapacityError) as exc:
+            except (
+                MonitoringConflictError,
+                MonitoringCapacityError,
+                ResearchDigestCapacityError,
+            ) as exc:
                 self._json_error(HTTPStatus.CONFLICT, str(exc))
             except StrategyLabConflictError as exc:
                 self._json_error(HTTPStatus.CONFLICT, str(exc))
@@ -1162,6 +1198,100 @@ def _parse_research_archive_query(query: str) -> ResearchArchiveQuery:
         week_start=week_start,
         limit=limit,
     )
+
+
+def _parse_research_digest_query(query: str) -> ResearchDigestQuery:
+    if len(query) > 1024:
+        raise ValueError("Research digest query is too long")
+    if not query:
+        return ResearchDigestQuery()
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=5,
+        )
+    except ValueError as exc:
+        raise ValueError("Research digest query is invalid") from exc
+    unsupported = sorted(set(values) - {"kind", "date", "week", "limit", "revisions"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported research digest query parameters: " + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    kind_provided = "kind" in values
+    kind = values.get("kind", ["all"])[0]
+    if kind not in {"all", *DIGEST_KINDS}:
+        raise ValueError("kind must be all, daily, or weekly")
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    week_start = _parse_archive_date(values.get("week", [None])[0], "week")
+    if week_start is not None and week_start.weekday() != 0:
+        raise ValueError("week must be an ISO Monday")
+    if on_date is not None and week_start is not None:
+        raise ValueError("date and week cannot be combined")
+    if on_date is not None:
+        if kind_provided and kind != "daily":
+            raise ValueError("kind must be daily when date is provided")
+        kind = "daily"
+    elif week_start is not None:
+        if kind_provided and kind != "weekly":
+            raise ValueError("kind must be weekly when week is provided")
+        kind = "weekly"
+    raw_limit = values.get("limit", ["52"])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= DIGEST_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {DIGEST_MAX_LIMIT}")
+    raw_revisions = values.get("revisions", ["0"])[0].casefold()
+    if raw_revisions not in {"0", "1", "true", "false"}:
+        raise ValueError("revisions must be 0, 1, true, or false")
+    return ResearchDigestQuery(
+        kind=kind,
+        period_start=on_date or week_start,
+        limit=limit,
+        include_revisions=raw_revisions in {"1", "true"},
+    )
+
+
+def _parse_research_digest_generate_payload(
+    payload: dict[str, object],
+) -> tuple[str, date | None, date | None, str]:
+    _reject_unknown_fields(
+        payload,
+        {"kind", "date", "week"},
+        "research digest generation",
+    )
+    kind_provided = "kind" in payload
+    kind = payload.get("kind", "all")
+    if kind not in {"all", *DIGEST_KINDS}:
+        raise ValueError("kind must be all, daily, or weekly")
+    raw_date = payload.get("date")
+    raw_week = payload.get("week")
+    if raw_date is not None and not isinstance(raw_date, str):
+        raise ValueError("date must be an ISO calendar date")
+    if raw_week is not None and not isinstance(raw_week, str):
+        raise ValueError("week must be an ISO calendar date")
+    on_date = _parse_archive_date(raw_date, "date")
+    week_start = _parse_archive_date(raw_week, "week")
+    if week_start is not None and week_start.weekday() != 0:
+        raise ValueError("week must be an ISO Monday")
+    if on_date is not None and week_start is not None:
+        raise ValueError("date and week cannot be combined")
+    if on_date is not None:
+        if kind_provided and kind != "daily":
+            raise ValueError("kind must be daily when date is provided")
+        kind = "daily"
+    elif week_start is not None:
+        if kind_provided and kind != "weekly":
+            raise ValueError("kind must be weekly when week is provided")
+        kind = "weekly"
+    # HTTP requests are always interactive and receive a server-controlled
+    # manual label. The CLI's scheduled label is operator-supplied metadata.
+    return str(kind), on_date, week_start, "manual"
 
 
 def _parse_archive_date(value: str | None, field: str) -> date | None:

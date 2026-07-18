@@ -126,10 +126,19 @@ GET /api/research/archive
 文件和当前用户日志：不会刷新行情、重跑策略、写入 `reports/` 或 `state/`、
 调用券商、改变权限或创建订单。
 
-当前实现**没有**按用户落盘的归档文件、定时自动生成任务、版本化周报、
-`supersedes` 修订链、独立归档审计或云端日志同步。页面刷新会从原始日报、净值
-账本和日志重新计算；这些原始文件仍是权威来源。不要把该投影的响应当作新账本，
-也不要通过手工改写响应来修正证据。
+投影自身仍然不写文件；页面刷新会从原始日报、净值账本和日志重新计算，这些
+原始文件始终是权威来源。独立的 `archive-generate` 命令和研究页生成操作可以把
+投影结果追加到 `state/research_digests/`：相同来源证据会幂等复用，变化证据会
+新增带 `supersedes` 与父指纹的不可变 revision。该持久化层按登录所有者和模拟
+账户账期隔离，仍固定为 `research_only`，不会使投影或日志获得交易权限。完整
+命令、18:30 全用户计划任务、接口、容量和恢复边界见
+[日报/周报归档](RESEARCH_DIGESTS.md)。
+
+持久化 digest、对应 HTTP 接口和计划任务属于 `main` / **Unreleased**，公开
+`v0.12.1` wheel 不包含这些入口。不带周期过滤器的单次生成最多处理最近 52 个
+日报和最近 52 个周报；更早周期必须分别用 `--date` 或 `--week` 单期回填。
+18:10、18:20 和 18:30 是三个独立任务的错峰时间，不保证前序任务已经完成；
+`scheduled` 也只是本地操作者可提供的审计标签和 runner 约定，不是认证来源。
 
 ## 记录内容和证据
 
@@ -185,6 +194,8 @@ state/research_journal/
 GET  /api/research?category=<category>&symbol=<symbol>&q=<text>&limit=<1..200>
 POST /api/research/journal
 GET  /api/research/archive?kind=<all|daily|weekly>&date=<YYYY-MM-DD>&week=<YYYY-MM-DD>&limit=<1..52>
+GET  /api/research/digests?kind=<all|daily|weekly>&date=<YYYY-MM-DD>&week=<YYYY-MM-DD>&limit=<1..200>&revisions=<0|1>
+POST /api/research/digests/generate
 ```
 
 `GET` 返回研究页数据和 `journal` 对象，包含筛选条件、总数、匹配数、周分组、
@@ -193,8 +204,13 @@ GET  /api/research/archive?kind=<all|daily|weekly>&date=<YYYY-MM-DD>&week=<YYYY-
 所有者注入和执行授权字段会被拒绝。启用内测登录时，写入需要已认证会话和
 会话绑定的 CSRF 令牌；`--owner-local` 只适用于可信的回环地址所有者。
 
-接口错误、损坏记录和目录不可用都会失败关闭。服务端会返回明确错误，前端
-显示“不可用”或“失败”状态，不会把错误吞掉后生成一条伪造的研究记录。
+digest 生成请求只接受有界的 `kind`、`date` 与 `week`，服务器继续从会话绑定
+所有者和记录人，并把 HTTP 来源固定记录为 `manual`；浏览器提交 `trigger` 会被
+拒绝。本机 CLI 可由操作者提供 `manual` 或 `scheduled` 标签，内置任务 runner
+约定使用后者；该值不是认证过的 Task Scheduler 来源证明。写入需要 CSRF，容量
+冲突返回 HTTP 409。接口错误、损坏记录和目录不可用都会失败关闭。服务端会返回明确
+错误，前端显示“不可用”或“失败”状态，不会把错误吞掉后生成一条伪造的研究
+记录或日报。
 
 ## Git、R2 和备份边界
 
@@ -203,26 +219,34 @@ GET  /api/research/archive?kind=<all|daily|weekly>&date=<YYYY-MM-DD>&week=<YYYY-
 不要把日志 JSON、截图中的日志内容或内测导出包提交到公共仓库。
 
 Cloudflare R2 的上传白名单只包含已经校验的 `data/cache/*.csv` 和行情
-`manifest.json`。`state/research_journal/`（以及模拟账户、助理历史、内测
-用户、券商账本和日志）不会进入 R2 行情快照。存储页显示的容量和 A/B 类
-预算因此不包含研究日志对象；R2 连接失败也不会影响本地日志读写。
+`manifest.json`。`state/research_journal/` 与 `state/research_digests/`
+（以及模拟账户、助理历史、内测用户、券商账本和日志）不会进入 R2 行情
+快照。存储页显示的容量和 A/B 类预算因此不包含研究日志或归档对象；R2 连接
+失败也不会影响本地日志及归档读写。
 
-当前没有把研究日志同步到云端的接口。若需要长期留存，应在停止工作台后
-对整个工作区的 `state/research_journal/` 做受控、加密的本地备份，并保留
-原始目录权限；不要把它放进 R2 行情命名空间，也不要在备份中混入凭据。恢复
-后应先让工作台只读检查指纹，再继续追加记录。
+当前没有把研究日志或 digest 同步到云端的接口。若需要长期留存，应在停止
+工作台后对整个工作区的 `state/research_journal/`、`state/research_digests/`
+以及匹配的模拟账期证据做受控、加密的本地备份，并保留原始目录权限；不要把
+它们放进 R2 行情命名空间，也不要在备份中混入凭据。恢复后应先让工作台只读
+检查当前活动账期的指纹，再继续追加记录。页面、HTTP API 和 CLI 当前没有旧
+模拟账期选择器；旧账期 digest 只能与匹配证据一起离线保留，不能通过替换或
+手改活动状态来打开，专用的旧账期查看/导出校验器尚未实现。
 
 ## 相关实现和验证
 
 - `src/ai_trade/research_journal.py`：记录 schema、指纹、锁、容量和查询；
 - `src/ai_trade/research_archive.py`：严格读取账本/日报、按用户合并日志并生成
   只读逐日、周度和持仓数量投影；
+- `src/ai_trade/research_digest.py`：按用户和模拟账户账期隔离的日报/周报 revision
+  链、来源绑定、幂等追加、容量和完整性校验；
 - `src/ai_trade/web/service.py`：绑定行情与策略证据、所有者和记录人；
 - `src/ai_trade/web/server.py`：认证、CSRF、研究日志和归档查询边界；
 - `tests/test_research_journal.py`、`tests/test_web_research_journal.py`：
   记录不可变性、修正、过滤、损坏检测和 HTTP 输入边界。
 - `tests/test_research_archive.py`、`tests/test_web_research_archive.py`：
   账本/日报交叉校验、所有者隔离、损坏和缺失状态、只读保证及接口边界。
+- `tests/test_research_digest.py`、`tests/test_web_research_digest.py`：
+  幂等复用、`supersedes` 修订链、跨用户/账期隔离、篡改检测、容量和 HTTP 边界。
 
 研究日志的存在不改变 AI Trade 的核心结论：历史收益不代表未来结果，日志也
 不构成投资建议或实盘授权。

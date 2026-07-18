@@ -11,7 +11,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [RQAlpha](https://github.com/ricequant/rqalpha) | China-market simulation rules | Dated stock fees, lot size, suspension and price-limit rules |
 | [vectorbt](https://github.com/polakowo/vectorbt) | Fast parameter and signal research | Useful future research backend, not the accounting authority |
 | [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Shared daily-provider boundary is implemented; independent cross-checks and additional licensed adapters remain planned |
-| [kimi-stock-agent](https://github.com/dbbbbm/kimi-stock-agent) | Daily research cadence, historical review, and human operation notes | Immutable per-user research notes plus an on-demand, read-only closing-archive projection are implemented; scheduled/versioned archives remain partial |
+| [kimi-stock-agent](https://github.com/dbbbbm/kimi-stock-agent) | Daily research cadence, historical review, and human operation notes | Immutable per-user research notes, persistent daily/weekly digest revisions, idempotent generation, and Windows scheduled archive runs are implemented; source accounting remains authoritative |
 | [PyPortfolioOpt](https://github.com/PyPortfolio/PyPortfolioOpt) | Efficient frontier, Black-Litterman and HRP | Research candidates after simple risk budgets pass forward tests |
 | [cvxportfolio](https://github.com/cvxgrp/cvxportfolio) | Multi-period optimization with costs and constraints | Reference for future institutional portfolio construction |
 | [Riskfolio-Lib](https://github.com/dcajasn/Riskfolio-Lib) | Broad portfolio-risk optimization | Reference for CVaR and hierarchical risk research |
@@ -38,8 +38,8 @@ authoritative paper and broker ledgers.
 |---|---|---|
 | Manual research notes and decision rationale | Complete | The Research page appends immutable, per-user notes with category, symbol, date, decision, confidence, actor, and evidence fingerprints. Corrections append a linked record; the original is retained. |
 | Manual holdings, fills, and cash accounting | Separate authoritative layer | Paper and shadow-account ledgers remain the source of positions, fills, cash, and fees. The research journal can describe a review but cannot edit those ledgers. |
-| Daily analysis archive | Partial | Existing daily reports and immutable research entries are joined on demand with explicit account/date/fingerprint statuses; there is no independent persisted digest, scheduler, or notification. |
-| Weekly analysis/archive | Partial | Available evidence is aggregated by ISO week with expected-session coverage and source fingerprints; a versioned weekly report, revision chain, and cloud archive are still planned. |
+| Daily analysis archive | Complete within the local trust boundary | `archive-generate` materializes owner/account-scoped daily digests from validated paper reports, equity rows, and journal evidence. Repeated evidence is reused; changed evidence appends a `supersedes` revision. |
+| Weekly analysis/archive | Complete within the local trust boundary | ISO-week digests expose expected versus included sessions, source fingerprints, and immutable revisions. The 18:30 Windows task can process all enabled profiles; there is no R2 digest sync. |
 | Historical holdings snapshot | Partial | The Research page exposes recent ledger quantities by date; it deliberately does not reconstruct historical prices, market value, or weights, and does not create a separate snapshot ledger. |
 
 ## Research Monitoring Status
@@ -71,7 +71,7 @@ operator thought at that time, not a signal, order, or promotion fact.
 8. Eastmoney is a bounded primary data route and Tencent Finance is an auditable network fallback; neither public endpoint is treated as exchange-certified or guaranteed.
 9. The market workstation renders only local validated completed snapshots. Indicator and chart controls are observations, not strategy mutations or order signals.
 10. Research notes are append-only, owner-scoped evidence. They can explain a decision, but cannot mutate strategy, accounting, broker permissions, or live authority.
-11. Closing archives are read-time evidence projections. The paper equity ledger and daily reports remain accounting authority; archive rows cannot promote a strategy or authorize an order.
+11. Closing archives have two layers: `/api/research/archive` is a read-time evidence projection, while `ResearchDigestStore` persists a derivative, append-only daily/weekly revision chain. The paper equity ledger and daily reports remain accounting authority; digest rows cannot promote a strategy or authorize an order.
 12. Monitoring alerts are owner-scoped research prompts. Partial and failed scans remain explicit attempts, and no alert or review action changes strategy, paper accounting, broker permissions, or order authority.
 
 ## What Is Deliberately Not Adopted

@@ -25,6 +25,7 @@ DEFAULT_AUTH_FAILURE_WINDOW_MINUTES = 15
 DEFAULT_AUTH_LOCKOUT_MINUTES = 15
 MAX_CONFIG_FILE_BYTES = 5 * 1024 * 1024
 DEFAULT_RESEARCH_JOURNAL_DIR = "state/research_journal"
+DEFAULT_RESEARCH_DIGEST_DIR = "state/research_digests"
 DEFAULT_MONITORING_DIR = "state/monitoring"
 
 
@@ -80,6 +81,16 @@ class AppConfig:
         """Return the local, git-ignored root for immutable research notes."""
         return _research_journal_path(
             self.raw.get("research_journal", {}), self.project_root
+        )
+
+    @property
+    def research_digest_dir(self) -> Path:
+        """Return the local, git-ignored root for immutable research digests."""
+        return _state_child_path(
+            self.raw.get("research_digest", {}),
+            project_root=self.project_root,
+            section="research_digest",
+            default=DEFAULT_RESEARCH_DIGEST_DIR,
         )
 
     @property
@@ -372,6 +383,9 @@ def _validate(
     _validate_research_journal(
         raw.get("research_journal", {}), project_root=project_root
     )
+    _validate_research_digest(
+        raw.get("research_digest", {}), project_root=project_root
+    )
     _state_child_path(
         raw.get("monitoring", {}),
         project_root=project_root,
@@ -628,6 +642,19 @@ def _validate_research_journal(
     project_root: Path,
 ) -> None:
     _research_journal_path(value, project_root)
+
+
+def _validate_research_digest(
+    value: Any,
+    *,
+    project_root: Path,
+) -> None:
+    _state_child_path(
+        value,
+        project_root=project_root,
+        section="research_digest",
+        default=DEFAULT_RESEARCH_DIGEST_DIR,
+    )
 
 
 def _research_journal_path(value: Any, project_root: Path) -> Path:

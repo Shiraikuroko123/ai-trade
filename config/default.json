@@ -121,6 +121,15 @@
     "imports_file": "state/shadow_imports.csv",
     "max_import_bytes": 1000000
   },
+  "research_journal": {
+    "root_dir": "state/research_journal"
+  },
+  "research_digest": {
+    "root_dir": "state/research_digests"
+  },
+  "monitoring": {
+    "root_dir": "state/monitoring"
+  },
   "reports_dir": "reports",
   "logs_dir": "logs"
 }

@@ -273,12 +273,67 @@ they do not reconstruct historical prices, market value, or weights from today's
 cache. The browser renders the same limitations and keeps wide tables internally
 scrollable.
 
-This is an on-demand projection, not persistence. It does not write archive files,
-generate scheduled daily digests, version weekly reports, maintain a `supersedes`
-revision chain, or synchronize journal data to R2. The original paper reports,
-equity ledger, and owner-scoped journal remain the authoritative evidence. A future
-automated archive must introduce its own append-only storage and audit contract
-without allowing the projection to gain execution authority.
+This projection is still computed on demand and is not itself persistence. The
+`DashboardService.generate_research_digests` path is the separate materialization
+boundary: it reads one validated projection, then appends owner/account-scoped
+daily and weekly digest records. It never refreshes providers, invokes strategy,
+writes paper or shadow accounting, calls a broker, changes a strategy or permission,
+or creates an order intent. The original paper reports, equity ledger, and
+owner-scoped journal remain authoritative; digests are derivative, fingerprinted
+research evidence.
+
+### Persistent digest ledger
+
+This surface is implemented on `main` under Unreleased. It is not present in
+the public `v0.12.1` wheel.
+
+```text
+validated archive projection
+            |
+            v
+owner + paper account epoch + config fingerprint
+            |
+            v
+state/research_digests/users/<owner-sha256>/accounts/<account-sha256>/digests/
+            |
+            +--> daily/<date>/revision_N.json
+            +--> weekly/<iso-monday>/revision_N.json
+```
+
+`ResearchDigestStore` validates canonical JSON, source and account bindings,
+periods, revision numbering, parent `supersedes` links, and SHA-256 fingerprints
+on every read. An unchanged canonical payload/source tuple is idempotently reused;
+an evidence change creates the next revision and links it to the previous record.
+The actor and trigger (`manual` or `scheduled`) are audit metadata and cannot
+change authority. HTTP generation is fixed to `manual`; the local CLI accepts
+either operator-supplied value, and `scheduled` is only the bundled runner's
+convention, not authenticated scheduler provenance. Per-account locks, atomic
+create-once files, bounded 2,000-chain/2,000-revision limits, and fail-closed
+handling prevent ambiguous concurrent writes. Revision bytes are flushed in a
+ledger-external, same-volume `.staging` directory; a first revision publishes
+the complete chain directory atomically, while later revisions use create-once
+file publication. A pre-publication interruption therefore cannot leave an
+empty chain or temporary member in the verified ledger. If publication is
+visible but a later verification or directory durability barrier fails, the
+batch result includes that revision in its committed prefix and still returns
+an explicit partial failure. Local hashes detect many accidental edits but are
+not signatures or WORM storage; no built-in cloud sync or compaction exists.
+
+An unfiltered materialization reads at most the newest 52 daily and newest 52
+weekly projection rows. Older periods require explicit one-period `--date` or
+`--week` generation; the default command is not a full-history backfill.
+
+The default Windows schedule staggers paper refresh/audit and the local-owner
+digest at 18:10, monitoring at 18:20, and `archive-generate --all-profiles
+--trigger scheduled` at 18:30. These are independent tasks with no completion
+dependency; a later task may start while an earlier task is running or retrying.
+A missed run can be retried safely because the append operation is idempotent.
+Revisions are isolated by the paper `account_id` epoch, so a new
+`paper-init --overwrite` cannot inherit or mutate an old account's digest chain.
+Current browser, HTTP, and CLI reads always bind to the active epoch and expose
+no old-epoch selector. Old namespaces are retained offline with their matching
+paper evidence; directly browsing or exporting them requires a future dedicated
+verifier, not replacement of the active paper state.
 
 ## Strategy Lab Boundary
 
@@ -361,6 +416,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
 - `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
 - `research_journal.py`: per-owner immutable human notes, decision rationale, correction links, evidence fingerprints, and fixed research-only authority.
+- `research_digest.py`: per-owner/per-paper-epoch immutable daily and weekly digest chains, source bindings, revisions, and fail-closed storage checks.
 - `monitoring.py`: owner-scoped watchlists, deterministic rules, immutable scan and alert evidence, append-only review actions, and research-only scheduled scans.
 - `strategy_lab/`: allowlisted strategy/risk parameters, immutable per-user candidates and monitoring evidence, same-snapshot validation, human approval, isolated paper export, activation lifecycle, retirement registry, and rollback.
 - `web/auth.py`: atomic PBKDF2 user records, portable whitelist validation, login throttling, and in-memory sessions.
@@ -391,7 +447,7 @@ validated data/cache allowlist -> ZIP + snapshot manifest + SHA-256 -> private R
 private R2 namespace -> size/hash/schema/path verification -> local/cloud-restore staging
 ```
 
-R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/` (including `state/assistant/` and `state/research_journal/`), `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.
+R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/` (including `state/assistant/`, `state/research_journal/`, and `state/research_digests/`), `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.
 
 ## Clean-room Reference Boundary
 

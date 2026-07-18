@@ -217,6 +217,9 @@ const state = {
   },
   journalBusy: false,
   journalCorrectionOf: "",
+  researchDigestBusy: false,
+  researchDigestStatus: "",
+  researchDigestStatusKind: "",
   marketSymbol: "510300",
   marketPeriod: "day",
   marketLimit: 240,
@@ -947,6 +950,15 @@ function renderRoute(payload) {
   });
 }
 
+function restoreFocusAfterRender(selector, route = state.route) {
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      if (state.route !== route) return;
+      document.querySelector(selector)?.focus({ preventScroll: true });
+    });
+  });
+}
+
 function updateRouteDate(payload) {
   let value = "";
   let label = "数据日期";
@@ -1190,6 +1202,9 @@ async function appendResearchJournal(form) {
     syncJournalDecisionControl();
     try {
       await reloadResearch();
+      document.querySelector("[data-research-digest-generate]")?.focus({
+        preventScroll: true,
+      });
     } catch {
       const message = "研究日志已写入，但列表刷新失败；请刷新视图确认，避免重复提交。";
       if (status?.isConnected) {
@@ -1221,6 +1236,89 @@ async function reloadResearch() {
   const payload = await api(researchPath());
   state.data.set("research", payload);
   if (state.route === "research") renderRoute(payload);
+}
+
+async function generateResearchDigests(button) {
+  if (state.researchDigestBusy) return;
+  state.researchDigestBusy = true;
+  state.researchDigestStatus = "正在从本地日报、账本和研究日志建立不可变版本";
+  state.researchDigestStatusKind = "pending";
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "正在写入归档";
+  }
+  const status = document.getElementById("research-digest-status");
+  if (status) {
+    status.textContent = state.researchDigestStatus;
+    status.className = "form-status pending";
+  }
+  try {
+    const result = await api("/api/research/digests/generate", {
+      method: "POST",
+      headers: { "X-AI-Trade-Token": state.token },
+      body: JSON.stringify({ kind: "all" }),
+    });
+    const written = Number(result.summary?.written || 0);
+    const reused = Number(result.summary?.reused || 0);
+    const partial = result.available === false
+      || (Array.isArray(result.errors) && result.errors.length > 0);
+    const evidencePartial = !partial && result.status === "partial";
+    const detail = result.errors?.[0]?.message || "部分证据未能写入";
+    const message = partial
+      ? `归档仅部分完成：写入 ${formatInteger(written)} 个新版本，复用 ${formatInteger(reused)} 个已有版本；${detail}`
+      : evidencePartial
+      ? `归档写入完成：新增 ${formatInteger(written)} 个版本，复用 ${formatInteger(reused)} 个已有版本；其中包含不完整证据，请复核状态`
+      : written
+      ? `已写入 ${formatInteger(written)} 个新版本，复用 ${formatInteger(reused)} 个未变化版本`
+      : `证据没有变化，复用 ${formatInteger(reused)} 个已有版本`;
+    state.researchDigestStatus = message;
+    state.researchDigestStatusKind = partial
+      ? "error"
+      : evidencePartial
+      ? "warning"
+      : "success";
+    if (status) {
+      status.textContent = message;
+      status.className = `form-status ${state.researchDigestStatusKind}`;
+    }
+    // The refreshed view must not inherit the transient disabled state.
+    state.researchDigestBusy = false;
+    try {
+      await reloadResearch();
+    } catch {
+      const refreshMessage = `${message}；列表刷新失败，请重新读取页面确认，避免重复操作`;
+      state.researchDigestStatus = refreshMessage;
+      state.researchDigestStatusKind = "error";
+      if (status?.isConnected) {
+        status.textContent = refreshMessage;
+        status.className = "form-status error";
+      }
+      notify(refreshMessage, true);
+      return;
+    }
+    notify(message, partial);
+  } catch (error) {
+    const message = friendlyError(error.message);
+    state.researchDigestStatus = message;
+    state.researchDigestStatusKind = "error";
+    if (status) {
+      status.textContent = message;
+      status.className = "form-status error";
+    }
+    notify(message, true);
+  } finally {
+    state.researchDigestBusy = false;
+    const currentButton = button?.isConnected
+      ? button
+      : document.querySelector("[data-research-digest-generate]");
+    if (currentButton) {
+      currentButton.disabled = false;
+      currentButton.setAttribute("aria-busy", "false");
+      currentButton.textContent = "生成收盘归档";
+    }
+    restoreFocusAfterRender("[data-research-digest-generate]", "research");
+  }
 }
 
 function marketProviderLabel(value) {
@@ -2336,6 +2434,7 @@ function journalEntry(entry) {
 
 const RESEARCH_ARCHIVE_STATUS = {
   current: ["证据一致", "success"],
+  provisional: ["本周未收完", "warning"],
   partial: ["部分可用", "warning"],
   missing_report: ["缺少日报", "warning"],
   unbound_report: ["日报未绑定账本", "danger"],
@@ -2352,6 +2451,139 @@ function researchArchiveStatus(value) {
 function researchArchiveStatusChip(value) {
   const [label, kind] = researchArchiveStatus(value);
   return statusChip(label, kind);
+}
+
+function researchDigestKindLabel(value) {
+  return value === "weekly" ? "周报" : "日报";
+}
+
+function researchDigestTriggerLabel(value) {
+  return {
+    manual: "人工生成",
+    scheduled: "标记为定时",
+    backfill: "历史补录",
+    rebuild: "证据重建",
+  }[value] || value || "来源待确认";
+}
+
+function researchDigestLedgerStatus(digests) {
+  if (!digests.length) return ["尚未生成", "neutral"];
+  if (digests.some((item) => ["unavailable", "unbound_report", "evidence_mismatch"].includes(item.status))) {
+    return ["含异常证据", "danger"];
+  }
+  if (digests.some((item) => ["partial", "missing_report"].includes(item.status))) {
+    return ["含不完整证据", "warning"];
+  }
+  if (digests.some((item) => item.status === "provisional")) {
+    return ["含周内暂存", "warning"];
+  }
+  return ["归档可审计", "success"];
+}
+
+function researchDigests(data) {
+  const available = Boolean(data?.available);
+  const digests = Array.isArray(data?.digests) ? data.digests : [];
+  const summary = data?.summary || {};
+  const error = data?.errors?.[0] || {};
+  const busy = state.researchDigestBusy;
+  const command = `
+    <button class="button primary" type="button" data-research-digest-generate aria-describedby="research-digest-boundary research-digest-status"${busy || !available ? " disabled" : ""} aria-busy="${busy}">
+      ${busy ? "正在写入归档" : "生成收盘归档"}
+    </button>`;
+  if (!available) {
+    const recovery = error.recovery_action && state.actions.includes(error.recovery_action)
+      ? actionButton(error.recovery_action, "secondary")
+      : '<button class="button secondary" type="button" data-retry>重新读取</button>';
+    return `
+      <section class="digest-panel" aria-labelledby="research-digest-heading">
+        <header class="digest-heading">
+          <div><h2 id="research-digest-heading">版本化研究归档</h2><p>按用户和模拟账户账期隔离的不可变日报与周报</p></div>
+          ${researchArchiveStatusChip("unavailable")}
+        </header>
+        <div class="empty-state digest-empty" role="alert">
+          <h3>暂时无法读取持久化归档</h3>
+          <p>${escapeHtml(error.message || "模拟账户尚未初始化，或归档证据无法通过完整性校验。")}</p>
+          <div class="action-row">${recovery}</div>
+        </div>
+      </section>`;
+  }
+  const latestRevision = digests.reduce(
+    (maximum, item) => Math.max(maximum, Number(item.revision || 0)),
+    0,
+  );
+  const [ledgerLabel, ledgerKind] = researchDigestLedgerStatus(digests);
+  const statusKind = ["pending", "success", "warning", "error"].includes(state.researchDigestStatusKind)
+    ? ` ${state.researchDigestStatusKind}`
+    : "";
+  return `
+    <section class="digest-panel" aria-labelledby="research-digest-heading">
+      <header class="digest-heading">
+        <div>
+          <h2 id="research-digest-heading">版本化研究归档</h2>
+          <p>证据未变化时复用原版本；日报、日志或交易日历变化时追加修订并保留旧版</p>
+        </div>
+        <div class="digest-heading-actions">
+          ${statusChip(ledgerLabel, ledgerKind)}
+          ${command}
+        </div>
+      </header>
+      <dl class="digest-summary" aria-label="归档摘要">
+        <div><dt>归档周期</dt><dd>${formatInteger(summary.total_chains || 0)}</dd></div>
+        <div><dt>保留版本</dt><dd>${formatInteger(summary.total_revisions || 0)}</dd></div>
+        <div><dt>最高修订</dt><dd>${latestRevision ? `r${formatInteger(latestRevision)}` : "—"}</dd></div>
+        <div><dt>账户账期</dt><dd><code>${escapeHtml(shortFingerprint(data.account_fingerprint))}</code></dd></div>
+      </dl>
+      <p id="research-digest-status" class="form-status${statusKind}" role="status" aria-live="polite">${escapeHtml(state.researchDigestStatus || "")}</p>
+      ${digests.length ? `
+        <ol class="digest-timeline" aria-label="日报和周报版本时间线">
+          ${digests.map(researchDigestEntry).join("")}
+        </ol>
+        ${summary.truncated ? `<p class="digest-truncated" role="status">当前只显示最近 ${formatInteger(summary.returned || digests.length)} 个版本；可通过归档接口按周期查询完整修订链。</p>` : ""}
+      ` : `
+        <div class="empty-state digest-empty" role="status">
+          <h3>尚无持久化日报或周报</h3>
+          <p>生成一次收盘归档后，系统会把当前账本、日报、研究日志和交易日历指纹绑定为第一个版本。</p>
+        </div>`}
+      <p id="research-digest-boundary" class="digest-boundary"><strong>权限边界：</strong>归档只追加研究证据，不刷新行情、不改策略、不写模拟账本，也不会创建订单或开放实盘权限。</p>
+    </section>`;
+}
+
+function researchDigestEntry(item) {
+  const payload = item.payload || {};
+  const isWeekly = item.kind === "weekly";
+  const periodLabel = isWeekly
+    ? `${item.period_start || "—"} 至 ${item.period_end || "—"}`
+    : item.period_start || "—";
+  const performance = isWeekly
+    ? `周收益 ${formatPercent(payload.period_return, true)} · ${formatInteger(payload.included_sessions || 0)} 个账本交易日`
+    : `日收益 ${formatPercent(payload.daily_return, true)} · 权益 ${formatMoney(payload.equity)}`;
+  const journalCount = isWeekly
+    ? Number(payload.journal_count || 0)
+    : Number(payload.journal?.entry_count || 0);
+  return `
+    <li class="digest-entry">
+      <div class="digest-entry-main">
+        <div class="digest-entry-title">
+          <span class="digest-kind">${researchDigestKindLabel(item.kind)}</span>
+          <strong>${escapeHtml(periodLabel)}</strong>
+          ${researchArchiveStatusChip(item.status)}
+        </div>
+        <p>${escapeHtml(performance)} · ${formatInteger(journalCount)} 条研究日志</p>
+      </div>
+      <dl class="digest-entry-meta">
+        <div><dt>修订</dt><dd><strong>r${formatInteger(item.revision)}</strong>${item.supersedes ? "，追加修订" : "，首版"}</dd></div>
+        <div><dt>生成</dt><dd>${escapeHtml(formatDate(item.created_at, true))} · ${escapeHtml(researchDigestTriggerLabel(item.trigger))}</dd></div>
+      </dl>
+      <details class="digest-evidence">
+        <summary>来源指纹与修订链</summary>
+        <dl>
+          <div><dt>归档指纹</dt><dd><code>${escapeHtml(item.digest_fingerprint || "—")}</code></dd></div>
+          <div><dt>来源绑定</dt><dd><code>${escapeHtml(item.source_binding_fingerprint || "—")}</code></dd></div>
+          <div><dt>日历指纹</dt><dd><code>${escapeHtml(item.source?.calendar_fingerprint || "未绑定")}</code></dd></div>
+          <div><dt>上个版本</dt><dd><code>${escapeHtml(item.supersedes || "首版，无上级修订")}</code></dd></div>
+        </dl>
+      </details>
+    </li>`;
 }
 
 function researchArchives(data) {
@@ -2485,6 +2717,8 @@ function renderResearch(data) {
       ${researchFreshness(data.reports)}
 
       ${researchArchives(data.archives)}
+
+      ${researchDigests(data.digests)}
 
       ${researchJournal(data.journal)}
 
@@ -5676,6 +5910,11 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const researchDigestGenerate = event.target.closest("[data-research-digest-generate]");
+  if (researchDigestGenerate) {
+    generateResearchDigests(researchDigestGenerate);
+    return;
+  }
   const journalCorrect = event.target.closest("[data-journal-correct]");
   if (journalCorrect) {
     selectJournalCorrection(journalCorrect.dataset.journalCorrect);

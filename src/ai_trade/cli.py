@@ -135,6 +135,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the existing verified cache without contacting a provider",
     )
 
+    archive_generate = subparsers.add_parser(
+        "archive-generate",
+        help="Persist daily and weekly research digests from local evidence",
+    )
+    archive_scope = archive_generate.add_mutually_exclusive_group()
+    archive_scope.add_argument(
+        "--all-profiles",
+        action="store_true",
+        help="Generate owner-isolated digests for the local owner and enabled beta accounts",
+    )
+    archive_scope.add_argument(
+        "--owner-local",
+        action="store_true",
+        help="Generate the loopback owner digest (the default scope)",
+    )
+    archive_scope.add_argument(
+        "--username",
+        help="Generate a digest for one enabled local beta account",
+    )
+    archive_generate.add_argument(
+        "--kind",
+        choices=("all", "daily", "weekly"),
+        default="all",
+        help="Digest kinds to materialize",
+    )
+    archive_generate.add_argument(
+        "--trigger",
+        choices=("manual", "scheduled"),
+        default="manual",
+        help="Operator-supplied audit label; bundled runners use scheduled",
+    )
+    archive_period = archive_generate.add_mutually_exclusive_group()
+    archive_period.add_argument("--date", help="Limit daily evidence to YYYY-MM-DD")
+    archive_period.add_argument("--week", help="Limit weekly evidence to an ISO Monday")
+
     paper_init = subparsers.add_parser(
         "paper-init", help="Initialize the paper account"
     )
@@ -523,6 +558,136 @@ def main(argv: list[str] | None = None) -> int:
                 any(item.get("status") == "failed" for item in result["scans"])
                 or bool(result.get("profile_warning"))
             ) else 0
+        if args.command == "archive-generate":
+            from .research_digest import ResearchDigestCapacityError
+            from .web.service import DashboardService
+
+            on_date = _parse_cli_archive_date(args.date, "date")
+            week_start = _parse_cli_archive_date(args.week, "week")
+            if week_start is not None and week_start.weekday() != 0:
+                raise ValueError("week must be an ISO Monday")
+            if args.kind == "daily" and week_start is not None:
+                raise ValueError("daily generation accepts date, not week")
+            if args.kind == "weekly" and on_date is not None:
+                raise ValueError("weekly generation accepts week, not date")
+            service = DashboardService(config)
+            scheduled_actor = (
+                "scheduled-archive" if args.trigger == "scheduled" else None
+            )
+            profile_warning = None
+            requests: list[tuple[str, str]] = [
+                ("local-owner", scheduled_actor or "local-owner")
+            ]
+            if args.username:
+                from .web.auth import UserStore, normalize_username
+
+                actor = normalize_username(args.username)
+                account_id = UserStore(
+                    config.auth_users_file
+                ).enabled_account_id_for(actor)
+                if account_id is None:
+                    raise ValueError("Beta user does not exist or is disabled")
+                requests = [(account_id, scheduled_actor or actor)]
+            elif args.all_profiles:
+                from .web.auth import UserStore
+
+                batch_actor = scheduled_actor or "archive-cli"
+                requests = [("local-owner", batch_actor)]
+                try:
+                    requests.extend(
+                        (account_id, batch_actor)
+                        for account_id in UserStore(
+                            config.auth_users_file
+                        ).enabled_account_ids()
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    profile_warning = str(exc)
+                    logging.getLogger(__name__).warning(
+                        "Could not enumerate enabled archive profiles: %s", exc
+                    )
+            writes: list[dict[str, object]] = []
+            for owner, actor in requests:
+                try:
+                    item = service.generate_research_digests(
+                        owner_id=owner,
+                        actor=actor,
+                        trigger=args.trigger,
+                        kind=args.kind,
+                        on_date=on_date,
+                        week_start=week_start,
+                    )
+                except (
+                    ResearchDigestCapacityError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                ) as exc:
+                    if not args.all_profiles:
+                        raise
+                    logging.getLogger(__name__).warning(
+                        "Research archive profile generation failed (%s): %s",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    writes.append(
+                        {
+                            "scope": (
+                                "local_owner"
+                                if owner == "local-owner"
+                                else "beta_user"
+                            ),
+                            "status": "unavailable",
+                            "available": False,
+                            "summary": {},
+                            "errors": [
+                                {
+                                    "code": (
+                                        "research_digest_capacity"
+                                        if isinstance(
+                                            exc, ResearchDigestCapacityError
+                                        )
+                                        else "research_digest_generation_failed"
+                                    ),
+                                    "message": str(exc),
+                                }
+                            ],
+                        }
+                    )
+                    continue
+                writes.append(
+                    {
+                        "scope": "local_owner" if owner == "local-owner" else "beta_user",
+                        "status": item.get("status"),
+                        "available": item.get("available", False),
+                        "summary": item.get("summary", {}),
+                        "errors": item.get("errors", []),
+                    }
+                )
+            result = {
+                "schema_version": 1,
+                "scope": "all_profiles" if args.all_profiles else writes[0]["scope"],
+                "trigger": args.trigger,
+                "profiles_processed": len(writes),
+                "profiles": writes,
+                "profile_warning": profile_warning,
+                "authority": {
+                    "research_only": True,
+                    "execution_authorized": False,
+                },
+            }
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return (
+                0
+                if all(
+                    item["available"]
+                    and item["status"]
+                    in {"current", "provisional", "partial", "empty"}
+                    and not item["errors"]
+                    for item in writes
+                )
+                and not profile_warning
+                else 1
+            )
         if args.command == "paper-init":
             state = initialize_paper(config, args.cash, args.overwrite)
             print(json.dumps(state, ensure_ascii=False, indent=2))
@@ -613,6 +778,18 @@ def _monitor_status_counts(scans: list[dict[str, object]]) -> dict[str, int]:
         status = str(scan.get("status") or "unknown")
         counts[status] = counts.get(status, 0) + 1
     return counts
+
+
+def _parse_cli_archive_date(value: str | None, field: str) -> date | None:
+    if value is None:
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO calendar date") from exc
+    if parsed.isoformat() != value:
+        raise ValueError(f"{field} must use YYYY-MM-DD format")
+    return parsed
 
 
 def _monitor_allowed_profiles(

@@ -23,6 +23,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+This section describes the current `main` branch, not the public `v0.12.1`
+wheel. The persistent research-digest commands, HTTP routes, and Windows task
+scripts below will remain source-only until a later release is explicitly cut.
+
 - Added owner-scoped research monitoring with versioned watchlists and rules,
   one-snapshot scans, immutable alert evidence, append-only review actions, and
   a Windows scheduled-task runner. Monitoring remains `research_only` and has
@@ -67,9 +71,8 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   broker permissions, or live gates.
 - Added the Research view journal workflow with category/symbol/text filters,
   bounded results, ISO-week timeline grouping, explicit empty/unavailable/running
-  states, and an append-linked correction flow. Scheduled/versioned daily and
-  weekly archive generation remains partial; grouping alone is not a generated
-  report, while the separate read-time projection is documented below.
+  states, and an append-linked correction flow. Grouping alone remains distinct
+  from the persistent daily/weekly digest ledger described below.
 - Documented the journal storage and trust boundary in
   `docs/RESEARCH_JOURNAL.md`, including owner-hashed Git-ignored state and the
   explicit exclusion from the Cloudflare R2 market-cache backup allowlist.
@@ -84,11 +87,44 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
   evidence-status text, bounded table scrolling, and a fixed `research_only`
   authority declaration; the API retains source fingerprints for audit tooling.
   The projection is computed on demand and does not refresh providers, write
-  ledgers, create archive files, schedule reports, maintain version/revision
-  chains, upload journal data, or change execution gates.
-- Added archive release-surface checks for the wheel and source distribution and
-  documented the distinction between authoritative paper evidence and the read-only
-  projection in the architecture, ecosystem, README, and research-journal guides.
+  ledgers, call a broker, upload journal data, or change execution gates.
+- Added owner- and paper-account-epoch-scoped persistent daily/weekly research
+  digests. Unchanged canonical evidence is idempotently reused; changed evidence
+  appends an immutable revision with `supersedes` ID/fingerprint links and
+  independently validated source, payload, content, account, and configuration
+  fingerprints.
+- Added bounded `GET /api/research/digests` and CSRF-protected
+  `POST /api/research/digests/generate` routes, explicit empty/running/failure
+  states, revision history, source details, and HTTP 409 capacity handling. The
+  server binds owner and actor from the authenticated session; request bodies
+  cannot select another owner or obtain execution authority.
+- Added `archive-generate` for the local owner, one enabled beta user, or all
+  enabled profiles, including daily/weekly period filters and audited
+  `manual` and `scheduled` CLI labels. Browser generation rejects trigger
+  injection and is always recorded as `manual`; CLI `scheduled` is an
+  operator-supplied label used by the bundled runner, not authenticated scheduler
+  provenance. Unfiltered generation materializes at most the newest 52 daily and
+  52 weekly periods; older periods require explicit single-period `--date` or
+  `--week` backfill. The Windows tasks stagger paper/audit plus local-owner digest
+  at 18:10, research monitoring at 18:20, and all-profile digest generation at
+  18:30, but remain independent and do not guarantee predecessor completion.
+- Retained old paper-epoch digest namespaces after `paper-init --overwrite` without
+  joining them to the new account. Current browser, HTTP, and CLI queries bind to
+  the active paper epoch and provide no old-epoch selector, so those records are
+  offline retention evidence rather than a directly browsable archive.
+- Added digest release-surface checks for the wheel and source distribution and
+  documented the distinction between authoritative paper evidence, the read-only
+  projection, and derivative persistent digests in the architecture, ecosystem,
+  README, paper operations, and research guides.
+- Hardened digest publication with ledger-external same-volume staging, atomic
+  first-chain publication, and explicit committed-prefix reporting when a
+  post-publication verification or durability barrier fails. A pre-publication
+  interruption no longer leaves an empty or temporary member that locks the
+  account ledger. Top-level query status now aggregates the newest period
+  revisions, and `date`/`week` queries reject conflicting kind semantics.
+- Isolated expected capacity, I/O, integrity, and input failures per profile in
+  `archive-generate --all-profiles`; one failed account is reported and makes
+  the command non-zero without preventing later enabled profiles from running.
 - Hardened archive edge cases: post-run journal notes remain visible, invalid journal
   input preserves valid paper evidence with a partial state, unbound reports cannot
   become holdings or weekly accounting, weekly returns include the first session,

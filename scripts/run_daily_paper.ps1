@@ -31,6 +31,10 @@ try {
         & $Python -m ai_trade.cli --config config/default.json paper-audit *>> $Log
         $PythonExitCode = $LASTEXITCODE
     }
+    if ($PythonExitCode -eq 0) {
+        & $Python -m ai_trade.cli --config config/default.json archive-generate --trigger scheduled *>> $Log
+        $PythonExitCode = $LASTEXITCODE
+    }
     $ErrorActionPreference = $PreviousErrorActionPreference
     if ($PythonExitCode -ne 0) {
         throw "AI Trade paper run failed with exit code $PythonExitCode. See $Log"

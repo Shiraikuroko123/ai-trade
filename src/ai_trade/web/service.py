@@ -7,7 +7,7 @@ import statistics
 import threading
 from collections import Counter, deque
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -30,6 +30,14 @@ from ..data.market import MarketData
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
 from ..monitoring import MonitoringEngine
+from ..research_digest import (
+    DIGEST_KINDS,
+    ResearchDigestBatchError,
+    ResearchDigestDraft,
+    ResearchDigestQuery,
+    ResearchDigestStore,
+    unavailable_research_digests,
+)
 from ..research_archive import (
     ResearchArchiveProjection,
     ResearchArchiveQuery,
@@ -104,6 +112,7 @@ class DashboardService:
         self._strategy_lab: StrategyLabEngine | None = None
         self._research_journal: ResearchJournalStore | None = None
         self._research_archive: ResearchArchiveProjection | None = None
+        self._research_digests: ResearchDigestStore | None = None
         self._monitoring: MonitoringEngine | None = None
 
     def overview(self) -> dict[str, Any]:
@@ -240,6 +249,10 @@ class DashboardService:
             archives = self.research_archive(owner_id=owner_id)
         except (AttributeError, OSError, RuntimeError, ValueError, KeyError) as exc:
             archives = unavailable_research_archive(str(exc))
+        try:
+            digests = self.research_digests(owner_id=owner_id)
+        except (AttributeError, OSError, RuntimeError, ValueError, KeyError) as exc:
+            digests = unavailable_research_digests(str(exc))
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
@@ -268,6 +281,7 @@ class DashboardService:
             },
             "journal": journal,
             "archives": archives,
+            "digests": digests,
         }
 
     def research_archive(
@@ -307,6 +321,223 @@ class DashboardService:
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return unavailable_research_archive(str(exc), query=query)
+
+    def research_digests(
+        self,
+        *,
+        owner_id: str = "local-owner",
+        query: ResearchDigestQuery | None = None,
+    ) -> dict[str, Any]:
+        """Read the immutable daily/weekly digest ledger for one owner epoch."""
+
+        query = query or ResearchDigestQuery()
+        try:
+            account_id, _config_fingerprint = self._research_account_context()
+            if not account_id:
+                return unavailable_research_digests(
+                    "Paper account is not initialized. Run paper-init before generating "
+                    "persistent research digests.",
+                    code="paper_account_unavailable",
+                    recovery_action="paper-init",
+                    query=query,
+                )
+            return self._research_digest_store().list(owner_id, account_id, query)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return unavailable_research_digests(str(exc), query=query)
+
+    def generate_research_digests(
+        self,
+        *,
+        owner_id: str = "local-owner",
+        actor: str = "local-owner",
+        trigger: str = "manual",
+        kind: str = "all",
+        on_date: date | None = None,
+        week_start: date | None = None,
+    ) -> dict[str, Any]:
+        """Materialize the current read-only archive projection as revisions.
+
+        This method only reads the authoritative paper/report/journal evidence
+        and appends immutable digest records. It never refreshes providers or
+        invokes strategy, accounting, broker, or order code.
+        """
+
+        if kind not in {"all", *DIGEST_KINDS}:
+            raise ValueError("Research digest kind must be all, daily, or weekly")
+        if on_date is not None and week_start is not None:
+            raise ValueError("Research digest date and week cannot be combined")
+        query_kind = "daily" if kind == "daily" else "weekly" if kind == "weekly" else "all"
+        projection_query = ResearchArchiveQuery(
+            kind=query_kind,
+            on_date=on_date,
+            week_start=week_start,
+            limit=52,
+        )
+        account_id, config_fingerprint = self._research_account_context()
+        if not account_id:
+            return unavailable_research_digests(
+                "Paper account is not initialized. Run paper-init before generating "
+                "persistent research digests.",
+                code="paper_account_unavailable",
+                recovery_action="paper-init",
+                query=ResearchDigestQuery(
+                    kind=kind if kind in {"all", *DIGEST_KINDS} else "all",
+                    period_start=on_date or week_start,
+                ),
+            )
+        projection = self._research_archive_projection()
+        calendar = None
+        try:
+            market = self.market(recover_snapshot=False)
+            calendar = getattr(market, "calendar", None)
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            calendar = None
+        projected = projection.build(
+            owner_id,
+            account_id=account_id,
+            config_fingerprint=config_fingerprint,
+            query=projection_query,
+            market_calendar=calendar,
+        )
+        if not projected.get("available"):
+            return unavailable_research_digests(
+                str(
+                    (projected.get("errors") or [{}])[0].get(
+                        "message", "Research archive projection is unavailable."
+                    )
+                ),
+                code="research_archive_unavailable",
+                query=ResearchDigestQuery(
+                    kind=kind,
+                    period_start=on_date or week_start,
+                ),
+            )
+
+        store = self._research_digest_store()
+        account_fingerprint = store.account_id(account_id)
+        generated_on = datetime.now(timezone(timedelta(hours=8))).date()
+        prepared: list[tuple[str, date, dict[str, Any], ResearchDigestDraft]] = []
+        projected_items = (
+            *(("daily", item) for item in projected.get("daily", [])),
+            *(("weekly", item) for item in projected.get("weekly", [])),
+        )
+        for item_kind, raw_item in projected_items:
+            if not isinstance(raw_item, dict):
+                raise ValueError("Research archive projection item is invalid")
+            period = _research_digest_period(raw_item, item_kind)
+            item = _research_digest_payload(
+                raw_item,
+                item_kind,
+                period_start=period,
+                generated_on=generated_on,
+            )
+            source_fingerprint, evidence = _digest_source_fingerprints(
+                item, item_kind
+            )
+            source = {
+                "fingerprint": source_fingerprint,
+                "evidence_fingerprints": evidence,
+                "calendar_fingerprint": _research_calendar_fingerprint(
+                    calendar,
+                    kind=item_kind,
+                    period_start=period,
+                ),
+                "config_fingerprint": config_fingerprint,
+                "account_fingerprint": account_fingerprint,
+            }
+            prepared.append(
+                (
+                    item_kind,
+                    period,
+                    item,
+                    ResearchDigestDraft(
+                        kind=item_kind,
+                        period_start=period,
+                        payload=item,
+                        source=source,
+                        config_fingerprint=config_fingerprint,
+                        actor=actor,
+                        trigger=trigger,
+                    ),
+                )
+            )
+
+        write_results = []
+        batch_error: ResearchDigestBatchError | None = None
+        if prepared:
+            try:
+                write_results = store.append_many_with_results(
+                    owner_id,
+                    account_id,
+                    [item[3] for item in prepared],
+                )
+            except ResearchDigestBatchError as exc:
+                write_results = list(exc.results)
+                batch_error = exc
+        writes = [
+            {
+                "kind": item_kind,
+                "period_start": period.isoformat(),
+                "created": result.created,
+                "reused": result.reused,
+                "digest": result.digest,
+            }
+            for (item_kind, period, _payload, _draft), result in zip(
+                prepared[: len(write_results)], write_results
+            )
+        ]
+        errors = (
+            [
+                {
+                    "code": "research_digest_batch_partial",
+                    "message": str(batch_error),
+                    "recovery_action": "archive-generate",
+                }
+            ]
+            if batch_error is not None
+            else []
+        )
+        has_provisional = any(
+            payload.get("status") == "provisional"
+            for _kind, _period, payload, _draft in prepared
+        )
+        projected_status = projected.get("status", "empty")
+        response_status = (
+            "partial"
+            if batch_error is not None
+            else "provisional"
+            if has_provisional and projected_status == "current"
+            else projected_status
+        )
+        return {
+            "schema_version": 1,
+            "available": bool(writes) or not prepared or batch_error is None,
+            "status": response_status,
+            "generated_at": _now(),
+            "errors": errors,
+            "projection": {
+                "status": projected.get("status"),
+                "errors": projected.get("errors", []),
+                "summary": projected.get("summary", {}),
+                "filters": projected.get("filters", {}),
+            },
+            "summary": {
+                "requested": len(prepared),
+                "completed": len(writes),
+                "written": sum(1 for item in writes if item["created"]),
+                "reused": sum(1 for item in writes if item["reused"]),
+                "daily": sum(1 for item in writes if item["kind"] == "daily"),
+                "weekly": sum(1 for item in writes if item["kind"] == "weekly"),
+            },
+            "writes": writes,
+            "authority": {
+                "research_only": True,
+                "execution_authorized": False,
+                "strategy_changed": False,
+                "paper_account_changed": False,
+                "broker_permissions_changed": False,
+            },
+        }
 
     def research_journal(
         self,
@@ -1376,6 +1607,27 @@ class DashboardService:
                 )
             return self._research_archive
 
+    def _research_digest_store(self) -> ResearchDigestStore:
+        with self._lock:
+            if self._research_digests is None:
+                root = getattr(self.config, "research_digest_dir", None)
+                if root is None:
+                    project_root = getattr(self.config, "project_root", None)
+                    if project_root is not None:
+                        root = Path(project_root) / "state" / "research_digests"
+                    else:
+                        reports_dir = Path(getattr(self.config, "reports_dir"))
+                        root = reports_dir.parent / "state" / "research_digests"
+                self._research_digests = ResearchDigestStore(root)
+            return self._research_digests
+
+    def _research_account_context(self) -> tuple[str, str]:
+        state = self._paper_state()
+        return (
+            str((state or {}).get("account_id") or ""),
+            str((state or {}).get("config_fingerprint") or ""),
+        )
+
     def _monitoring_engine(self) -> MonitoringEngine:
         with self._lock:
             if self._monitoring is None:
@@ -2211,6 +2463,110 @@ def _journal_evidence_fingerprint(value: Any) -> str:
         else str(item),
     ).encode("ascii")
     return sha256(encoded).hexdigest()
+
+
+def _research_calendar_fingerprint(
+    value: Any,
+    *,
+    kind: str,
+    period_start: date,
+) -> str | None:
+    if kind == "daily" or value is None:
+        return None
+    period_end = period_start + timedelta(days=6)
+    dates: list[str] = []
+    try:
+        for item in value:
+            if isinstance(item, date) and not isinstance(item, datetime):
+                parsed = item
+            elif isinstance(item, str):
+                parsed = date.fromisoformat(item)
+            else:
+                return None
+            if period_start <= parsed <= period_end:
+                dates.append(parsed.isoformat())
+    except (TypeError, ValueError):
+        return None
+    normalized = sorted(set(dates))
+    if not normalized:
+        return None
+    return _journal_evidence_fingerprint(normalized)
+
+
+def _research_digest_period(item: dict[str, Any], kind: str) -> date:
+    field = "as_of_date" if kind == "daily" else "week_start"
+    other = "week_start" if kind == "daily" else "as_of_date"
+    value = item.get(field)
+    if other in item or not isinstance(value, str):
+        raise ValueError("Research archive projection period is ambiguous")
+    try:
+        period = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("Research archive projection period is invalid") from exc
+    if period.isoformat() != value:
+        raise ValueError("Research archive projection period is not canonical")
+    if kind == "weekly":
+        if period.weekday() != 0:
+            raise ValueError("Research archive weekly period must be an ISO Monday")
+        expected_end = (period + timedelta(days=6)).isoformat()
+        if item.get("week_end") != expected_end:
+            raise ValueError("Research archive weekly period end is invalid")
+    return period
+
+
+def _research_digest_payload(
+    item: dict[str, Any],
+    kind: str,
+    *,
+    period_start: date,
+    generated_on: date,
+) -> dict[str, Any]:
+    payload = dict(item)
+    if (
+        kind == "weekly"
+        and payload.get("status") == "current"
+        and period_start + timedelta(days=6) >= generated_on
+    ):
+        payload["status"] = "provisional"
+        payload["status_detail"] = (
+            "The ISO week is still open; a later generation will append the "
+            "finalized revision."
+        )
+    return payload
+
+
+def _digest_source_fingerprints(
+    item: dict[str, Any], kind: str
+) -> tuple[str, list[str]]:
+    nested = item.get("source")
+    key = "evidence_fingerprint" if kind == "daily" else "weekly_fingerprint"
+    candidate = nested.get(key) if isinstance(nested, dict) else None
+    if not _is_sha256(candidate):
+        candidate = None
+    if candidate is None:
+        candidate = _journal_evidence_fingerprint(
+            {key: nested, "period": item.get("as_of_date") or item.get("week_start")}
+        )
+    evidence: list[str] = []
+    if kind == "weekly" and isinstance(nested, dict):
+        raw_evidence = nested.get("evidence_fingerprints")
+        if isinstance(raw_evidence, list):
+            for value in raw_evidence:
+                if _is_sha256(value) and value not in evidence:
+                    evidence.append(value)
+    if not evidence:
+        evidence = [candidate]
+    return candidate, evidence
+
+
+def _is_sha256(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return value == value.lower()
 
 
 def _public_live_readiness(
