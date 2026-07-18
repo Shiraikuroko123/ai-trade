@@ -66,6 +66,8 @@ The market-chart route accepts only configured instruments, `day`/`week`/`month`
 
 KLineChart 10.0.0 is a pinned local distribution asset, not a CDN dependency. Its minified bundle, license, notices, provenance record, and fixed SHA-256 are checked by release verification. Price, volume, overlays, oscillators, crosshair state, zoom, and paper markers are browser projections of returned evidence; changing them is not a strategy or trading action.
 
+The read-only `/api/universe/screen` projection derives liquidity, momentum, annualized volatility, trend, and history readiness for every configured instrument from the same completed snapshot. Its bounded query contract returns a filter fingerprint, snapshot ID, data-status counts, source route, and explicit empty/unavailable states. It never refreshes providers, changes strategy settings, writes paper ledgers, or grants broker authority. The UI keeps the base security-master eligibility separate from the screen result so a research filter cannot silently redefine the tradable universe.
+
 ## Research-only Assistant Boundary
 
 ```text

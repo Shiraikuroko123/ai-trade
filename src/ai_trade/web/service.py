@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
+import statistics
 import threading
 from collections import deque
 from dataclasses import asdict, is_dataclass
@@ -29,6 +31,7 @@ from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
 from ..strategy_lab import StrategyLabConflictError, StrategyLabEngine
 from ..strategy import MomentumTrendStrategy
+from .screener import ScreeningFilters, screen_rows
 
 
 _STRATEGY_VALIDATION_LOCK = threading.Lock()
@@ -469,7 +472,177 @@ class DashboardService:
             item["latest_bar_date"] = bar.date.isoformat() if bar else None
         snapshot["market_available"] = market is not None
         snapshot["errors"] = [market_issue] if market_issue else []
+        snapshot["generated_at"] = _now()
         return snapshot
+
+    def screen_universe(
+        self,
+        on_date: date | None = None,
+        filters: ScreeningFilters | None = None,
+    ) -> dict[str, Any]:
+        """Return a deterministic multi-instrument research screen.
+
+        The base universe snapshot and all derived metrics come from the same
+        completed-session cache.  This route is deliberately read-only: a
+        missing or stale cache is represented in the response instead of
+        triggering a refresh or silently filling values.
+        """
+
+        selected_filters = filters or ScreeningFilters()
+        snapshot = self.universe(on_date)
+        selected_date = date.fromisoformat(str(snapshot["date"]))
+        market = None
+        if snapshot.get("market_available"):
+            try:
+                market = self.market(recover_snapshot=False)
+            except (OSError, RuntimeError, ValueError):
+                # Keep the original universe response and expose unavailable
+                # metrics rather than making the screen non-deterministic.
+                market = None
+
+        rows: list[dict[str, Any]] = []
+        for item in snapshot.get("instruments", []):
+            row = dict(item)
+            if market is None:
+                row.update(_unavailable_screen_metrics(item))
+            else:
+                row.update(self._screen_metrics(item, market, selected_date))
+            rows.append(row)
+
+        screened, counts = screen_rows(rows, selected_filters)
+        quality_counts = {
+            status: sum(1 for row in rows if row.get("data_status") == status)
+            for status in ("complete", "stale", "insufficient_history", "missing")
+        }
+        if market is None:
+            status = "unavailable"
+        elif not screened:
+            status = "empty"
+        elif quality_counts["complete"] < len(rows):
+            status = "partial"
+        else:
+            status = "ok"
+        empty_reason = None
+        if not screened:
+            empty_reason = (
+                "market_data_unavailable"
+                if market is None
+                else "no_instruments_match_filters"
+            )
+        snapshot_id = _screen_snapshot_id(self, selected_date, market)
+        return {
+            **snapshot,
+            "instruments": screened,
+            "screen": {
+                "status": status,
+                "filters": selected_filters.as_dict(),
+                "counts": counts,
+                "quality_counts": quality_counts,
+                "minimum_history_bars": _screen_required_history(self.config),
+                "snapshot_id": snapshot_id,
+                "filter_fingerprint": _screen_filter_fingerprint(
+                    selected_filters
+                ),
+                "data_date": selected_date.isoformat(),
+                "empty_reason": empty_reason,
+                "warnings": _screen_warnings(rows, snapshot),
+            },
+        }
+
+    def _screen_metrics(
+        self,
+        item: dict[str, Any],
+        market: MarketData,
+        selected_date: date,
+    ) -> dict[str, Any]:
+        symbol = str(item["symbol"])
+        settings = self.config.strategy
+        required = _screen_required_history(self.config)
+        history_limit = min(max(required + 20, 20), 2500)
+        try:
+            history = list(market.history(symbol, selected_date, history_limit))
+        except (AttributeError, KeyError, RuntimeError, ValueError):
+            history = []
+        latest = history[-1] if history else None
+        closes = [
+            float(value.close)
+            for value in history
+            if _positive_finite(getattr(value, "close", None))
+        ]
+        latest_close = _positive_finite(getattr(latest, "close", None))
+        latest_date = getattr(latest, "date", None)
+        if latest is None:
+            data_status = "missing"
+        elif latest_date != selected_date:
+            data_status = "stale"
+        elif len(history) < required:
+            data_status = "insufficient_history"
+        else:
+            data_status = "complete"
+
+        momentum = None
+        lookback = int(settings.lookback_days)
+        skip = int(settings.skip_days)
+        momentum_end = len(closes) - 1 - skip
+        momentum_start = momentum_end - lookback
+        if momentum_start >= 0 and momentum_end >= 0 and closes[momentum_start] > 0:
+            momentum = closes[momentum_end] / closes[momentum_start] - 1.0
+
+        trend_sma = None
+        trend = "MIXED"
+        trend_days = int(settings.trend_sma_days)
+        if latest_close is not None and len(closes) >= trend_days:
+            trend_sma = statistics.fmean(closes[-trend_days:])
+            if latest_close > trend_sma:
+                trend = "UP"
+            elif latest_close < trend_sma:
+                trend = "DOWN"
+
+        volatility = None
+        volatility_days = int(settings.volatility_days)
+        volatility_closes = closes[-(volatility_days + 1) :]
+        returns = _screen_returns(volatility_closes)
+        if len(returns) > 1:
+            volatility = statistics.stdev(returns) * math.sqrt(252.0)
+
+        amount_values = [
+            float(value.amount)
+            for value in history[-min(20, len(history)) :]
+            if _nonnegative_finite(getattr(value, "amount", None))
+        ]
+        average_amount = statistics.fmean(amount_values) if amount_values else None
+        coverage = item.get("coverage") or {}
+        coverage_rows = coverage.get("rows")
+        try:
+            coverage_rows = int(coverage_rows)
+        except (TypeError, ValueError):
+            coverage_rows = len(history)
+        coverage_percent = min(100.0, max(0.0, coverage_rows / required * 100.0))
+        manifest_file = _screen_manifest_file(market, symbol)
+        lag_days = (
+            max(0, (selected_date - latest_date).days)
+            if latest_date is not None
+            else None
+        )
+        return {
+            "data_status": data_status,
+            "history_bars": len(history),
+            "history_ready": len(history) >= required,
+            "coverage_percent": round(coverage_percent, 1),
+            "data_lag_days": lag_days,
+            "momentum": momentum,
+            "trend": trend,
+            "trend_sma": trend_sma,
+            "annual_volatility": volatility,
+            "average_amount": average_amount,
+            "source": _bounded_manifest_text(manifest_file.get("source")),
+            "source_provider": _bounded_manifest_text(
+                manifest_file.get("source_provider")
+            ),
+            "file_sha256": _bounded_manifest_text(
+                (getattr(market, "file_hashes", {}) or {}).get(symbol)
+            ),
+        }
 
     def market_chart(
         self, *, symbol: str, period: str = "day", limit: int = 240
@@ -1300,6 +1473,125 @@ class DashboardService:
         except (OSError, csv.Error):
             return []
         return rows[-limit:] if limit else rows
+
+
+def _screen_required_history(config: AppConfig) -> int:
+    settings = config.strategy
+    return max(
+        int(settings.lookback_days) + int(settings.skip_days) + 1,
+        int(settings.trend_sma_days),
+        int(settings.volatility_days) + 1,
+        21,
+    )
+
+
+def _screen_returns(values: list[float]) -> list[float]:
+    return [
+        values[index] / values[index - 1] - 1.0
+        for index in range(1, len(values))
+        if values[index - 1] > 0 and values[index] > 0
+    ]
+
+
+def _positive_finite(value: Any) -> float | None:
+    parsed = _finite_float(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
+def _nonnegative_finite(value: Any) -> float | None:
+    parsed = _finite_float(value)
+    return parsed if parsed is not None and parsed >= 0 else None
+
+
+def _unavailable_screen_metrics(item: dict[str, Any]) -> dict[str, Any]:
+    coverage = item.get("coverage") or {}
+    rows = coverage.get("rows")
+    try:
+        rows = max(0, int(rows))
+    except (TypeError, ValueError):
+        rows = 0
+    return {
+        "data_status": "missing",
+        "history_bars": rows,
+        "history_ready": False,
+        "coverage_percent": 0.0,
+        "data_lag_days": None,
+        "momentum": None,
+        "trend": "MIXED",
+        "trend_sma": None,
+        "annual_volatility": None,
+        "average_amount": None,
+        "source": None,
+        "source_provider": None,
+        "file_sha256": None,
+    }
+
+
+def _screen_manifest_file(market: Any, symbol: str) -> dict[str, Any]:
+    manifest = getattr(market, "manifest", None)
+    if not isinstance(manifest, dict):
+        return {}
+    return _manifest_symbol_entry(manifest, symbol)
+
+
+def _screen_snapshot_id(
+    service: DashboardService, selected_date: date, market: MarketData | None
+) -> str:
+    values = {
+        "date": selected_date.isoformat(),
+        "security_master_sha256": service.config.security_master.fingerprint(),
+        "manifest_sha256": getattr(market, "manifest_sha256", None)
+        if market is not None
+        else None,
+        "files": sorted(
+            (getattr(market, "file_hashes", {}) or {}).items()
+            if market is not None
+            else []
+        ),
+    }
+    digest = sha256(
+        json.dumps(values, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return f"screen-{selected_date.isoformat()}-{digest[:16]}"
+
+
+def _screen_filter_fingerprint(filters: ScreeningFilters) -> str:
+    digest = sha256(
+        json.dumps(
+            filters.as_dict(),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"filter-{digest[:16]}"
+
+
+def _screen_warnings(
+    rows: list[dict[str, Any]], snapshot: dict[str, Any]
+) -> list[str]:
+    warnings: list[str] = []
+    errors = snapshot.get("errors")
+    if isinstance(errors, list):
+        warnings.extend(
+            str(value.get("message"))
+            for value in errors
+            if isinstance(value, dict) and value.get("message")
+        )
+    stale = sum(row.get("data_status") == "stale" for row in rows)
+    missing = sum(row.get("data_status") == "missing" for row in rows)
+    insufficient = sum(
+        row.get("data_status") == "insufficient_history" for row in rows
+    )
+    if stale:
+        warnings.append(f"{stale} instruments are behind the selected completed session")
+    if missing:
+        warnings.append(f"{missing} instruments have no validated bars")
+    if insufficient:
+        warnings.append(f"{insufficient} instruments lack the minimum research history")
+    return warnings
 
 
 def _aggregate_market_chart_bars(

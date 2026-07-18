@@ -10,7 +10,7 @@ import re
 import secrets
 import threading
 import webbrowser
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from http import HTTPStatus
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +32,15 @@ from .auth import (
     UserStore,
 )
 from .jobs import JobManager
+from .screener import (
+    SCREEN_COVERAGE,
+    SCREEN_LIMIT_DEFAULT,
+    SCREEN_LIMIT_MAX,
+    SCREEN_LIMIT_MIN,
+    SCREEN_SORT_FIELDS,
+    SCREEN_TRENDS,
+    ScreeningFilters,
+)
 from .service import DashboardService
 
 
@@ -46,6 +55,7 @@ MARKET_CHART_PERIODS = frozenset({"day", "week", "month"})
 MARKET_CHART_MIN_LIMIT = 60
 MARKET_CHART_MAX_LIMIT = 1500
 MARKET_CHART_DEFAULT_LIMIT = 240
+SCREEN_GROUP_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 STRATEGY_LAB_CANDIDATE_PATH = re.compile(
     r"/api/strategy-lab/candidates/(cand_[0-9a-f]{32})(?:/(validate|approve|export|activate))?\Z"
 )
@@ -249,13 +259,14 @@ def _handler_factory(
                     self._json(
                         service.trading(owner_id=_assistant_user_id(context))
                     )
+                elif parsed.path == "/api/universe/screen":
+                    selected, filters = _parse_universe_screen_query(parsed.query)
+                    self._json(service.screen_universe(selected, filters))
                 elif parsed.path == "/api/universe":
                     query = parse_qs(parsed.query)
                     raw_date = query.get("date", [None])[0]
                     selected = None
                     if raw_date:
-                        from datetime import date
-
                         selected = date.fromisoformat(raw_date)
                     self._json(service.universe(selected))
                 elif parsed.path == "/api/system":
@@ -945,6 +956,109 @@ def _parse_assistant_analyze_payload(
     if not isinstance(mode, str) or mode not in ASSISTANT_MODES:
         raise ValueError("mode must be local or model")
     return symbol, lookback, mode
+
+
+def _parse_universe_screen_query(
+    query: str,
+) -> tuple[date | None, ScreeningFilters]:
+    if len(query) > 1024:
+        raise ValueError("Universe screen query is too long")
+    if not query:
+        values = {}
+    else:
+        try:
+            values = parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=20,
+            )
+        except ValueError as exc:
+            raise ValueError("Universe screen query is invalid") from exc
+    supported = {
+        "date",
+        "asset_class",
+        "sector",
+        "trend",
+        "coverage",
+        "min_average_amount",
+        "max_annual_volatility",
+        "active_only",
+        "sort",
+        "direction",
+        "limit",
+    }
+    unsupported = sorted(set(values) - supported)
+    if unsupported:
+        raise ValueError(
+            "Unsupported universe screen query parameters: "
+            + ", ".join(unsupported)
+        )
+    for field in supported:
+        if field in values and len(values[field]) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+
+    selected: date | None = None
+    raw_date = values.get("date", [""])[0]
+    if raw_date:
+        try:
+            selected = date.fromisoformat(raw_date)
+        except ValueError as exc:
+            raise ValueError("date must be an ISO calendar date") from exc
+
+    def group_value(name: str) -> str:
+        value = values.get(name, [""])[0]
+        if value and not SCREEN_GROUP_PATTERN.fullmatch(value):
+            raise ValueError(f"{name} contains unsupported characters")
+        return value
+
+    trend = values.get("trend", ["any"])[0]
+    if trend not in SCREEN_TRENDS:
+        raise ValueError("trend is not supported")
+    coverage = values.get("coverage", ["all"])[0]
+    if coverage not in SCREEN_COVERAGE:
+        raise ValueError("coverage is not supported")
+    sort = values.get("sort", ["momentum"])[0]
+    if sort not in SCREEN_SORT_FIELDS:
+        raise ValueError("sort is not supported")
+    direction = values.get("direction", ["desc"])[0]
+    if direction not in {"asc", "desc"}:
+        raise ValueError("direction must be asc or desc")
+
+    def nonnegative_number(name: str, maximum: float) -> float | None:
+        raw = values.get(name, [""])[0]
+        if not raw:
+            return None
+        if len(raw) > 32 or not re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", raw):
+            raise ValueError(f"{name} must be a non-negative decimal")
+        parsed = float(raw)
+        if not math.isfinite(parsed) or parsed > maximum:
+            raise ValueError(f"{name} is outside the supported range")
+        return parsed
+
+    raw_active = values.get("active_only", ["false"])[0]
+    if raw_active not in {"true", "false"}:
+        raise ValueError("active_only must be true or false")
+    raw_limit = values.get("limit", [str(SCREEN_LIMIT_DEFAULT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not SCREEN_LIMIT_MIN <= limit <= SCREEN_LIMIT_MAX:
+        raise ValueError(
+            f"limit must be between {SCREEN_LIMIT_MIN} and {SCREEN_LIMIT_MAX}"
+        )
+    return selected, ScreeningFilters(
+        asset_class=group_value("asset_class"),
+        sector=group_value("sector"),
+        trend=trend,
+        coverage=coverage,
+        min_average_amount=nonnegative_number("min_average_amount", 1e15),
+        max_annual_volatility=nonnegative_number("max_annual_volatility", 10.0),
+        active_only=raw_active == "true",
+        sort=sort,
+        direction=direction,
+        limit=limit,
+    )
 
 
 def _parse_market_chart_query(query: str) -> tuple[str, str, int]:

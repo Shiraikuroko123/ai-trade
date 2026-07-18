@@ -15,6 +15,7 @@ include docs/ECOSYSTEM.md
 include docs/PAPER_TRADING.md
 include docs/RESEARCH_METHODOLOGY.md
 include docs/UNIVERSE.md
+include docs/UNIVERSE_SCREENING.md
 include docs/assets/workstation-overview.png
 include scripts/bootstrap.ps1
 include scripts/configure_ai.ps1

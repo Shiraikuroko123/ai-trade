@@ -164,6 +164,18 @@ const state = {
   tradingTab: "paper",
   shadowImportBusy: false,
   universeDate: "",
+  universeFilters: {
+    asset_class: "",
+    sector: "",
+    trend: "any",
+    coverage: "all",
+    min_average_amount: "",
+    max_annual_volatility: "",
+    active_only: false,
+    sort: "momentum",
+    direction: "desc",
+    limit: "200",
+  },
   assistantResult: null,
   assistantBusy: false,
   strategyLabMode: "manual",
@@ -381,25 +393,49 @@ function updateMarketPulse(payload = null, failure = "") {
   const portfolio = pulsePortfolio(payload);
   const trading = pulseTrading(payload);
   const routeChart = state.route === "market" ? payload?.chart || {} : {};
+  const routeUniverse = state.route === "universe" ? payload || {} : {};
   const diagnostics = routeChart.diagnostics || {};
   const market = overview.market || {};
   const marketFreshness = market.freshness || {};
   const marketWarnings = Array.isArray(market.warnings) ? market.warnings : [];
   const fallbackUsed = marketWarnings.some((item) => String(item).includes("network fallback"));
+  const marketEvidenceLoaded = Object.keys(market).length > 0
+    || Object.prototype.hasOwnProperty.call(routeChart, "available")
+    || Object.prototype.hasOwnProperty.call(routeUniverse, "market_available");
   const marketDateValue = routeChart.data_date
     || marketFreshness.latest_common_market_date
     || market.date
+    || routeUniverse.screen?.data_date
+    || routeUniverse.date
     || "不可用";
-  const marketMissing = routeChart.available === false || diagnostics.missing || market.available === false;
-  const marketStale = diagnostics.stale === true || marketFreshness.current === false;
-  const marketState = marketMissing
-    ? "数据缺失"
-    : marketStale
-      ? "快照滞后"
-      : fallbackUsed
-        ? "备用源"
-        : "完整收盘";
-  const marketKind = marketMissing ? "danger" : marketStale || fallbackUsed ? "warning" : "success";
+  const marketMissing = marketEvidenceLoaded && (
+    routeChart.available === false
+    || diagnostics.missing
+    || market.available === false
+    || routeUniverse.market_available === false
+    || routeUniverse.screen?.status === "unavailable"
+  );
+  const marketStale = marketEvidenceLoaded && (
+    diagnostics.stale === true
+    || marketFreshness.current === false
+    || routeUniverse.screen?.status === "partial"
+  );
+  const marketState = !marketEvidenceLoaded
+    ? "状态未加载"
+    : marketMissing
+      ? "数据缺失"
+      : marketStale
+        ? "快照滞后"
+        : fallbackUsed
+          ? "备用源"
+          : "完整收盘";
+  const marketKind = !marketEvidenceLoaded
+    ? "neutral"
+    : marketMissing
+      ? "danger"
+      : marketStale || fallbackUsed
+        ? "warning"
+        : "success";
 
   const signal = overview.signal || {};
   const targetCount = Object.keys(signal.target_weights || {}).length;
@@ -655,6 +691,31 @@ function setRouteChrome(route) {
   }
 }
 
+function universeScreenPath() {
+  const params = new URLSearchParams();
+  if (state.universeDate) params.set("date", state.universeDate);
+  const filters = state.universeFilters || {};
+  for (const name of [
+    "asset_class",
+    "sector",
+    "trend",
+    "coverage",
+    "min_average_amount",
+    "max_annual_volatility",
+    "sort",
+    "direction",
+    "limit",
+  ]) {
+    const value = String(filters[name] ?? "");
+    if (value && !((name === "trend" || name === "coverage") && value === "any")) {
+      params.set(name, value);
+    }
+  }
+  if (filters.active_only) params.set("active_only", "true");
+  const query = params.toString();
+  return `/api/universe/screen${query ? `?${query}` : ""}`;
+}
+
 async function loadRoute() {
   state.controller?.abort();
   destroyMarketChart();
@@ -708,7 +769,7 @@ async function loadRoute() {
         "strategy-lab": "/api/strategy-lab",
         portfolio: "/api/portfolio",
         trading: "/api/trading",
-        universe: `/api/universe${state.universeDate ? `?date=${encodeURIComponent(state.universeDate)}` : ""}`,
+        universe: universeScreenPath(),
         storage: "/api/storage",
       };
       payload = await api(endpoints[requestedRoute], { signal });
@@ -3436,52 +3497,109 @@ function authorizationReasonLabel(value) {
 }
 
 function renderUniverse(data) {
-  const instruments = data.instruments || [];
+  const instruments = Array.isArray(data.instruments) ? data.instruments : [];
+  const screen = data.screen || {};
+  const filters = screen.filters || state.universeFilters || {};
   const active = instruments.filter((item) => item.active).length;
-  const complete = instruments.filter((item) => item.coverage?.last === data.date).length;
+  const complete = instruments.filter((item) => item.data_status === "complete").length;
+  const ready = instruments.filter((item) => item.history_ready).length;
+  const counts = screen.counts || {};
+  const assetClasses = [...new Set([
+    "equity",
+    "fixed_income",
+    "commodity",
+    ...instruments.map((item) => item.asset_class).filter(Boolean),
+  ])].sort();
+  const sectors = [...new Set(instruments.map((item) => item.sector).filter(Boolean))].sort();
   const filter = `
-    <form class="filter-form" id="universe-date-form">
-      <div class="field"><label for="universe-date">历史截面日期</label><input id="universe-date" name="date" type="date" value="${escapeHtml(data.date || "")}"></div>
-      <button class="button secondary" type="submit">查看截面</button>
-    </form>`;
+    <form class="filter-form universe-filter-form" id="universe-date-form" aria-describedby="universe-filter-help">
+      <div class="field"><label for="universe-date">截面日期</label><input id="universe-date" name="date" type="date" value="${escapeHtml(data.date || "")}"></div>
+      <div class="field"><label for="universe-asset-class">资产类别</label><select id="universe-asset-class" name="asset_class"><option value="">全部</option>${assetClasses.map((value) => `<option value="${escapeHtml(value)}"${filters.asset_class === value ? " selected" : ""}>${escapeHtml(assetClassLabel(value))}</option>`).join("")}</select></div>
+      <div class="field"><label for="universe-sector">板块/分组</label><input id="universe-sector" name="sector" list="universe-sector-options" value="${escapeHtml(filters.sector || "")}" placeholder="例如 china_large_cap"><datalist id="universe-sector-options">${sectors.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}</datalist></div>
+      <div class="field"><label for="universe-trend">趋势</label><select id="universe-trend" name="trend"><option value="any"${filters.trend === "any" ? " selected" : ""}>全部</option><option value="up"${filters.trend === "up" ? " selected" : ""}>上行</option><option value="mixed"${filters.trend === "mixed" ? " selected" : ""}>混合</option><option value="down"${filters.trend === "down" ? " selected" : ""}>下行</option><option value="not_down"${filters.trend === "not_down" ? " selected" : ""}>排除下行</option></select></div>
+      <div class="field"><label for="universe-coverage">数据要求</label><select id="universe-coverage" name="coverage"><option value="all"${filters.coverage === "all" ? " selected" : ""}>全部</option><option value="ready"${filters.coverage === "ready" ? " selected" : ""}>历史长度达标</option><option value="complete"${filters.coverage === "complete" ? " selected" : ""}>当日完整</option></select></div>
+      <div class="field"><label for="universe-min-amount">最低 20 日成交额</label><input id="universe-min-amount" name="min_average_amount" type="number" min="0" step="100000" inputmode="decimal" value="${escapeHtml(filters.min_average_amount ?? "")}" placeholder="不限制"></div>
+      <div class="field"><label for="universe-max-volatility">最高年化波动</label><input id="universe-max-volatility" name="max_annual_volatility" type="number" min="0" max="10" step="0.01" inputmode="decimal" value="${escapeHtml(filters.max_annual_volatility ?? "")}" placeholder="例如 0.35"></div>
+      <div class="field"><label for="universe-sort">排序指标</label><select id="universe-sort" name="sort"><option value="momentum"${filters.sort === "momentum" ? " selected" : ""}>动量</option><option value="average_amount"${filters.sort === "average_amount" ? " selected" : ""}>成交额</option><option value="annual_volatility"${filters.sort === "annual_volatility" ? " selected" : ""}>年化波动</option><option value="latest_close"${filters.sort === "latest_close" ? " selected" : ""}>最新收盘</option><option value="coverage"${filters.sort === "coverage" ? " selected" : ""}>数据覆盖</option><option value="symbol"${filters.sort === "symbol" ? " selected" : ""}>代码</option></select></div>
+      <div class="field"><label for="universe-direction">顺序</label><select id="universe-direction" name="direction"><option value="desc"${filters.direction !== "asc" ? " selected" : ""}>从高到低</option><option value="asc"${filters.direction === "asc" ? " selected" : ""}>从低到高</option></select></div>
+      <label class="check-field" for="universe-active-only"><input id="universe-active-only" name="active_only" type="checkbox"${filters.active_only ? " checked" : ""}><span>仅显示当日有效</span></label>
+      <div class="filter-actions"><button class="button primary" type="submit">应用筛选</button><button class="button secondary" type="button" data-universe-reset>清除条件</button></div>
+    </form>
+    <p id="universe-filter-help" class="section-note">指标只来自同一份已校验的收盘快照；空值表示历史不足或数据不可用，不会用零填充。</p>`;
+  const status = screenStatusLabel(screen.status, data.market_available);
+  const statusKind = screen.status === "ok" ? "success" : screen.status === "partial" ? "warning" : screen.status === "empty" ? "warning" : "danger";
   return `
     <div class="page-stack">
-      ${pageIntro("证券与数据覆盖", "投资池资格、交易状态和缓存覆盖按日期复原", filter)}
-      <section class="metric-strip" aria-label="数据摘要">
-        ${metric("候选记录", formatInteger(data.candidate_records), `投资池 ${data.universe || "—"}`)}
-        ${metric("当日有效", formatInteger(active), `最少上市 ${data.minimum_listing_days || 0} 日`)}
-        ${metric("覆盖至截面", `${complete} / ${instruments.length}`, "各证券最近日线")}
-        ${metric("选择方法", translateSelection(data.selection_method), "主数据指纹已记录")}
+      ${pageIntro("证券池筛选", "按时间点、资产、流动性和风险特征比较全部候选证券", filter)}
+      <section class="metric-strip" aria-label="筛选摘要">
+        ${metric("返回证券", `${formatInteger(counts.returned ?? instruments.length)} / ${formatInteger(counts.input ?? data.candidate_records)}`, `匹配 ${formatInteger(counts.matched ?? instruments.length)}，排除 ${formatInteger(counts.excluded ?? 0)}`)}
+        ${metric("数据状态", status, `${complete} 条当日完整，${ready} 条历史长度达标`, statusKind === "success" ? "tone-positive" : "tone-negative")}
+        ${metric("最低研究历史", `${formatInteger(screen.minimum_history_bars)} 日`, `截面 ${data.date || "—"}`)}
+        ${metric("排序口径", screenSortLabel(filters.sort, filters.direction), `快照 ${screen.snapshot_id ? String(screen.snapshot_id).slice(-16) : "—"}`)}
       </section>
 
+      ${screen.empty_reason ? `<aside class="callout warning"><strong>${screen.empty_reason === "market_data_unavailable" ? "行情快照不可用" : "没有证券符合当前条件"}</strong><p>${screen.empty_reason === "market_data_unavailable" ? "先刷新已完成收盘数据，再重新运行筛选。" : "放宽资产、趋势、覆盖或数值条件；筛选不会改变投资池或策略配置。"}</p></aside>` : ""}
+      ${Array.isArray(screen.warnings) && screen.warnings.length ? `<aside class="callout warning"><strong>数据边界</strong><ul>${screen.warnings.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul></aside>` : ""}
+
       <section class="panel">
-        ${panelHeader("证券主数据", `${data.date || "—"} 的时间点快照`)}
-        <div class="table-wrap"><table class="data-table">
-          <thead><tr><th>证券</th><th>资产类别</th><th>分组</th><th>上市日期</th><th>资格</th><th>交易状态</th><th class="numeric">最新收盘</th><th>覆盖区间</th></tr></thead>
+        ${panelHeader("横向研究结果", `${data.date || "—"} 的同一快照 · ${screenSortLabel(filters.sort, filters.direction)}`)}
+        <div class="table-wrap"><table class="data-table universe-screen-table">
+          <thead><tr><th>证券</th><th>资产/分组</th><th class="numeric">最新收盘</th><th class="numeric">动量</th><th class="numeric">年化波动</th><th class="numeric">20 日成交额</th><th>趋势</th><th>历史</th><th>数据状态</th><th>资格</th><th>覆盖</th></tr></thead>
           <tbody>${instruments.length ? instruments.map((item) => `<tr>
             <td class="symbol-cell"><strong>${escapeHtml(item.symbol)}</strong><span>${escapeHtml(instrumentName(item.symbol, item.name))}</span></td>
-            <td>${escapeHtml(assetClassLabel(item.asset_class))}</td>
-            <td>${escapeHtml(item.sector || "—")}</td>
-            <td>${escapeHtml(item.listing_date || "—")}</td>
-            <td>${booleanChip(Boolean(item.active), "有效", eligibilityLabel(item.eligibility_reasons))}</td>
-            <td>${booleanChip(Boolean(item.tradable), item.trading_status || "可交易", item.trading_status || "不可交易")}</td>
+            <td><span>${escapeHtml(assetClassLabel(item.asset_class))}</span><span class="table-subtext">${escapeHtml(item.sector || "—")}</span></td>
             <td class="numeric">${formatNumber(item.latest_close, 3)}</td>
-            <td class="mono">${escapeHtml(item.coverage?.first || "—")} → ${escapeHtml(item.latest_bar_date || item.coverage?.last || "—")}</td>
-          </tr>`).join("") : emptyRow(8, "该日期没有候选证券")}</tbody>
+            <td class="numeric ${tone(item.momentum)}">${formatPercent(item.momentum, true)}</td>
+            <td class="numeric">${formatPercent(item.annual_volatility)}</td>
+            <td class="numeric">${item.average_amount == null ? "—" : formatMoney(item.average_amount)}</td>
+            <td>${statusChip(trendLabel(item.trend), trendKind(item.trend))}</td>
+            <td>${statusChip(item.history_ready ? `达标 ${formatInteger(item.history_bars)} 日` : `${formatInteger(item.history_bars)} / ${formatInteger(screen.minimum_history_bars)} 日`, item.history_ready ? "success" : "warning")}</td>
+            <td>${statusChip(screenDataStatusLabel(item.data_status), screenDataStatusKind(item.data_status))}</td>
+            <td>${booleanChip(Boolean(item.active), "有效", eligibilityLabel(item.eligibility_reasons))}</td>
+            <td class="mono">${escapeHtml(item.latest_bar_date || item.coverage?.last || "—")}${item.data_lag_days ? ` · 滞后 ${formatInteger(item.data_lag_days)} 日` : ""}</td>
+          </tr>`).join("") : emptyRow(11, screen.empty_reason === "market_data_unavailable" ? "行情快照不可用，暂无可计算指标" : "没有证券符合当前筛选条件")}</tbody>
         </table></div>
       </section>
 
       <section class="equal-layout">
         <article class="panel">
-          ${panelHeader("主数据来源", translateSelection(data.selection_method))}
+          ${panelHeader("筛选证据", "条件与数据身份")}
           <div class="path-list">
-            <div class="path-row"><span>来源说明</span><code>${escapeHtml(data.provenance || "—")}</code></div>
+            <div class="path-row"><span>筛选条件</span><code>${escapeHtml(JSON.stringify(screen.filters || {}))}</code></div>
+            <div class="path-row"><span>条件指纹</span><code>${escapeHtml(screen.filter_fingerprint || "—")}</code></div>
+            <div class="path-row"><span>筛选快照</span><code>${escapeHtml(screen.snapshot_id || "—")}</code></div>
             <div class="path-row"><span>主数据指纹</span><code>${escapeHtml(data.master_sha256 || "—")}</code></div>
           </div>
         </article>
-        <aside class="callout warning"><strong>幸存者偏差提示</strong><p>静态人工投资池只记录证券何时具备资格，不等同于历史指数成分。研究结论必须保留这一限制。</p></aside>
+        <aside class="callout warning"><strong>研究边界</strong><p>筛选结果只是候选集合，不会自动生成订单、改变策略参数或绕过风险门禁。基本面和情绪数据仍需单独接入并标记覆盖范围。</p></aside>
       </section>
     </div>`;
+}
+
+function screenSortLabel(value, direction) {
+  const labels = { momentum: "动量", average_amount: "成交额", annual_volatility: "年化波动", latest_close: "最新收盘", coverage: "数据覆盖", symbol: "代码" };
+  return `${labels[value] || "代码"} · ${direction === "asc" ? "升序" : "降序"}`;
+}
+
+function screenStatusLabel(value, marketAvailable) {
+  if (!marketAvailable || value === "unavailable") return "行情不可用";
+  return { ok: "完整", partial: "部分可用", empty: "无匹配" }[value] || "待确认";
+}
+
+function screenDataStatusLabel(value) {
+  return { complete: "当日完整", stale: "快照滞后", insufficient_history: "历史不足", missing: "缺少数据" }[value] || "待确认";
+}
+
+function screenDataStatusKind(value) {
+  return { complete: "success", stale: "warning", insufficient_history: "warning", missing: "danger" }[value] || "neutral";
+}
+
+function trendLabel(value) {
+  return { UP: "上行", DOWN: "下行", MIXED: "混合" }[value] || "待确认";
+}
+
+function trendKind(value) {
+  return { UP: "success", DOWN: "danger", MIXED: "neutral" }[value] || "neutral";
 }
 
 function translateSelection(value) {
@@ -4161,6 +4279,24 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const universeReset = event.target.closest("[data-universe-reset]");
+  if (universeReset) {
+    state.universeDate = "";
+    state.universeFilters = {
+      asset_class: "",
+      sector: "",
+      trend: "any",
+      coverage: "all",
+      min_average_amount: "",
+      max_annual_volatility: "",
+      active_only: false,
+      sort: "momentum",
+      direction: "desc",
+      limit: "200",
+    };
+    loadRoute();
+    return;
+  }
   const shadowTemplate = event.target.closest("[data-shadow-template]");
   if (shadowTemplate) {
     downloadShadowTemplate();
@@ -4418,6 +4554,18 @@ document.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
     state.universeDate = String(form.get("date") || "");
+    state.universeFilters = {
+      asset_class: String(form.get("asset_class") || ""),
+      sector: String(form.get("sector") || "").trim(),
+      trend: String(form.get("trend") || "any"),
+      coverage: String(form.get("coverage") || "all"),
+      min_average_amount: String(form.get("min_average_amount") || "").trim(),
+      max_annual_volatility: String(form.get("max_annual_volatility") || "").trim(),
+      active_only: form.get("active_only") === "on",
+      sort: String(form.get("sort") || "momentum"),
+      direction: String(form.get("direction") || "desc"),
+      limit: String(form.get("limit") || "200"),
+    };
     loadRoute();
   } else if (event.target.id === "storage-preferences-form") {
     event.preventDefault();

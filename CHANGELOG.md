@@ -4,6 +4,11 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- The Data view now provides a bounded, read-only cross-sectional universe
+  screen for every configured instrument. Momentum, annualized volatility,
+  20-session average amount, trend, history readiness, freshness, provenance,
+  filter fingerprints, and snapshot identity remain explicit; missing metrics
+  sort last and never become zero-filled evidence.
 - Persisted `PENDING_SUBMIT` intents are now surfaced as explicit
   `submission_unconfirmed` warnings with a per-order flag and aggregate count.
   The Trading view explains the manual broker-side lookup required before any

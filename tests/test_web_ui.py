@@ -66,8 +66,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.12.0-ui10", self.html)
-        self.assertIn("app.js?v=0.12.0-ui10", self.html)
+        self.assertIn("app.css?v=0.12.0-ui12", self.html)
+        self.assertIn("app.js?v=0.12.0-ui12", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -117,6 +117,18 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("缺失数据不会被模型补写", self.javascript)
         self.assertIn("perspective-ledger", self.css)
         self.assertIn("perspective-unavailable", self.css)
+
+    def test_universe_screen_has_bounded_filters_and_auditable_states(self):
+        self.assertIn("/api/universe/screen", self.javascript)
+        self.assertIn("universe-filter-form", self.javascript)
+        self.assertIn("universe-filter-help", self.javascript)
+        self.assertIn("data-universe-reset", self.javascript)
+        self.assertIn("screenDataStatusLabel", self.javascript)
+        self.assertIn("snapshot_id", self.javascript)
+        self.assertIn("filter_fingerprint", self.javascript)
+        self.assertIn('"状态未加载"', self.javascript)
+        self.assertIn("universe-screen-table", self.css)
+        self.assertIn("min-width: 1180px", self.css)
 
     def test_shadow_review_is_a_read_only_auditable_workflow(self):
         self.assertIn('["shadow", "影子复盘"]', self.javascript)

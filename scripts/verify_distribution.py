@@ -54,6 +54,7 @@ WHEEL_REQUIRED = {
     "ai_trade/web/assets/vendor/klinecharts.SOURCE.txt",
     "ai_trade/web/assets/vendor/lightweight-charts.LICENSE.txt",
     "ai_trade/web/auth.py",
+    "ai_trade/web/screener.py",
 }
 
 SDIST_REQUIRED = {
@@ -76,6 +77,7 @@ SDIST_REQUIRED = {
     "docs/PAPER_TRADING.md",
     "docs/RESEARCH_METHODOLOGY.md",
     "docs/UNIVERSE.md",
+    "docs/UNIVERSE_SCREENING.md",
     "pyproject.toml",
     "scripts/bootstrap.ps1",
     "scripts/configure_ai.ps1",
@@ -126,6 +128,7 @@ SDIST_REQUIRED = {
     "src/ai_trade/web/assets/vendor/klinecharts.SOURCE.txt",
     "src/ai_trade/web/assets/vendor/lightweight-charts.LICENSE.txt",
     "src/ai_trade/web/auth.py",
+    "src/ai_trade/web/screener.py",
 }
 
 VENDORED_FILES_SHA256 = {
