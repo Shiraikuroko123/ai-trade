@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Reconciliation audits now expose a deterministic fingerprint and validated
+  row counts for the complete ledger. Formal evidence keeps one fixed CNY 0.01
+  cash tolerance so diagnostic comparisons cannot silently disagree with the
+  promotion ledger.
 - Broker lifecycle recovery now rejects contradictory snapshots that share an
   order timestamp and rejects any post-terminal change to filled quantity or
   average fill price. Concurrent polling therefore fails closed instead of

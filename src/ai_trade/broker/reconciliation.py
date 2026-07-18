@@ -77,6 +77,11 @@ def reconcile_account(
         or not math.isfinite(cash_tolerance)
     ):
         raise ValueError("cash_tolerance must be finite and non-negative")
+    if cash_tolerance != RECONCILIATION_CASH_TOLERANCE:
+        raise ValueError(
+            "Formal reconciliation uses the fixed cash tolerance "
+            f"{RECONCILIATION_CASH_TOLERANCE:.2f}"
+        )
     if not isinstance(expected_positions, dict):
         raise ValueError("Expected positions must be a dictionary")
     broker_account = validated_broker_account(broker_account)
@@ -103,7 +108,10 @@ def reconcile_account(
         )
     for symbol, quantity in expected_positions.items():
         if (
-            not symbol
+            not isinstance(symbol, str)
+            or not symbol
+            or symbol.strip() != symbol
+            or any(ord(character) < 32 for character in symbol)
             or isinstance(quantity, bool)
             or not isinstance(quantity, int)
             or quantity < 0
@@ -218,6 +226,9 @@ def audit_reconciliations(
             completed_through=completed_through,
         )
 
+    ledger_fingerprint = _validated_ledger_fingerprint(validated)
+    ledger_row_count = len(validated)
+
     future_dates = sorted({value.on_date for value in validated if value.on_date > today})
     if future_dates:
         return _empty_audit(
@@ -227,6 +238,8 @@ def audit_reconciliations(
                 + ", ".join(value.isoformat() for value in future_dates)
             ],
             completed_through=completed_through,
+            ledger_fingerprint=ledger_fingerprint,
+            ledger_row_count=ledger_row_count,
         )
 
     logical_key_prefix = (adapter, account_id)
@@ -268,6 +281,10 @@ def audit_reconciliations(
         "ignored_legacy_sessions": ignored_legacy_sessions,
         "ignored_incomplete_sessions": ignored_incomplete_sessions,
         "completed_through": completed_through.isoformat(),
+        "ledger_fingerprint": ledger_fingerprint,
+        "ledger_row_count": ledger_row_count,
+        "matching_row_count": len(matching_rows),
+        "qualifying_row_count": len(qualifying_rows),
     }
 
 
@@ -715,6 +732,8 @@ def _empty_audit(
     *,
     errors: list[str] | None = None,
     completed_through: date | None = None,
+    ledger_fingerprint: str | None = None,
+    ledger_row_count: int = 0,
 ) -> dict[str, object]:
     return {
         "eligible": False,
@@ -728,7 +747,31 @@ def _empty_audit(
         "completed_through": (
             completed_through.isoformat() if completed_through is not None else None
         ),
+        "ledger_fingerprint": ledger_fingerprint,
+        "ledger_row_count": ledger_row_count,
+        "matching_row_count": 0,
+        "qualifying_row_count": 0,
     }
+
+
+def _validated_ledger_fingerprint(
+    rows: list[_ValidatedReconciliation],
+) -> str:
+    payload = [
+        {
+            "reconciliation_id": row.reconciliation_id,
+            "logical_key": list(row.logical_key),
+            "content": list(row.content),
+        }
+        for row in rows
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _china_today() -> date:

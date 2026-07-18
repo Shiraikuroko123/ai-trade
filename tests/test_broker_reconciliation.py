@@ -78,6 +78,54 @@ class BrokerReconciliationTests(unittest.TestCase):
             self.assertIsNone(pending["last_date"])
             self.assertTrue(completed["eligible"])
             self.assertEqual(completed["last_date"], START.isoformat())
+            self.assertEqual(completed["ledger_row_count"], 1)
+            self.assertEqual(completed["matching_row_count"], 1)
+            self.assertEqual(completed["qualifying_row_count"], 1)
+            self.assertRegex(completed["ledger_fingerprint"], r"^[0-9a-f]{64}$")
+
+    def test_ledger_fingerprint_changes_when_a_valid_row_is_added(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reconciliation.csv"
+            append_reconciliation(path, **_arguments())
+            first = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                1,
+                "active-config",
+                completed_through=START,
+            )
+            append_reconciliation(
+                path,
+                **_arguments(on_date=START + timedelta(days=1)),
+            )
+            second = audit_reconciliations(
+                path,
+                "sandbox-adapter",
+                "sandbox-account",
+                2,
+                "active-config",
+                completed_through=START + timedelta(days=1),
+            )
+
+            self.assertNotEqual(
+                first["ledger_fingerprint"], second["ledger_fingerprint"]
+            )
+            self.assertEqual(second["ledger_row_count"], 2)
+
+    def test_formal_reconciliation_rejects_nonstandard_cash_tolerance(self):
+        from ai_trade.broker.base import BrokerAccount
+        from ai_trade.broker.reconciliation import reconcile_account
+
+        account = BrokerAccount("sandbox-account", "CNY", 1000.5, 1000.5, 1000.5)
+        with self.assertRaisesRegex(ValueError, "fixed cash tolerance"):
+            reconcile_account(
+                1000.0,
+                {},
+                account,
+                [],
+                cash_tolerance=1.0,
+            )
 
     def test_future_reconciliation_dates_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:

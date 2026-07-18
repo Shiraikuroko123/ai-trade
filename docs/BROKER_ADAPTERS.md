@@ -301,6 +301,14 @@ Different content for an existing logical session is atomically retained as a
 conflict before the writer raises, so the earlier clean row cannot silently keep
 its authority.
 
+Every successful reconciliation audit also returns a SHA-256 fingerprint of the
+entire validated ledger in physical row order, together with total, selected,
+and qualifying row counts. Operators can record that fingerprint when reviewing
+promotion evidence and detect a later replacement, deletion, or reorder. The
+formal cash comparison policy is fixed at CNY 0.01; callers cannot use a wider
+diagnostic tolerance to create a clean promotion row that the auditor would
+interpret differently.
+
 Reconciliation writers use the same in-process serialization, operating-system
 lock, flushed temporary file, and same-directory atomic replacement as broker
 lifecycle ledgers. Exact retries are idempotent and replacement failure preserves
