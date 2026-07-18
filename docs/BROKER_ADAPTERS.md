@@ -231,8 +231,11 @@ empty paths instead of fabricating a migration.
 
 Snapshots use the following state model:
 
-- `PENDING_SUBMIT` may advance to any broker-observed state because submission
-  can fail or polling can miss an intermediate acknowledgement;
+- `PENDING_SUBMIT` is a local submission intent, not a broker acknowledgement. It
+  may advance to any broker-observed state because submission can fail or polling
+  can miss an intermediate acknowledgement; while it is current, the recovery
+  report marks the order as `submission_unconfirmed` and requires manual
+  resolution;
 - `SUBMITTED` may become partially/fully filled, cancel-pending, cancelled,
   rejected, or expired;
 - `PARTIALLY_FILLED` may accumulate more fills, become cancel-pending, finish,
@@ -268,9 +271,15 @@ process start. It cross-checks each fill's client/broker IDs, symbol, side,
 aggregate quantity, and quantity-weighted average price against the latest
 order snapshot. The report explicitly distinguishes `EMPTY`, `VERIFIED`,
 `RECOVERED`, and `INTEGRITY_ERROR`; valid out-of-order recovery and a history
-that began mid-order remain visible warnings. Operating-system file locks are
-released automatically on process exit, so a leftover `.lock` file is not
-itself a blocker after a crash.
+that began mid-order remain visible warnings. A persisted `PENDING_SUBMIT`
+produces one `submission_unconfirmed` warning per order and increments
+`submission_unconfirmed_count`; it is never treated as a safe retry point. The
+operator must query the broker using the client order ID, then append the exact
+broker snapshot through the adapter's normal observation path before treating
+the intent as resolved. Do not delete the intent row, reuse its client order ID,
+or submit a replacement while the broker result is unknown. Operating-system
+file locks are released automatically on process exit, so a leftover `.lock`
+file is not itself a blocker after a crash.
 
 Lifecycle verification is local accounting evidence only. It never calls an
 adapter, submits or cancels an order, appends a qualifying sandbox
@@ -394,7 +403,8 @@ intent reservation, the router refreshes account identity, cash, sellable
 positions, and session health; authorization and the kill switch are then the
 last local gate before `submit_orders`. A failed refresh leaves the content-bound
 `PENDING_SUBMIT` reservation for manual resolution and blocks reuse of its client
-order ID.
+order ID. The Trading API exposes this condition as an explicit warning; it does
+not infer rejection from a timeout and does not automatically retry the batch.
 
 Account, position, and health annotations are not trusted as runtime
 validation. The router requires exact core model objects, real booleans for
@@ -406,7 +416,9 @@ before rendering or persistence. After submission, the router validates the comp
 collection and checks every client ID, broker ID, symbol, side, quantity, and
 limit price against the approved request before appending a response event. A
 malformed or changed response leaves the pre-I/O `PENDING_SUBMIT` reservation
-intact for manual recovery and cannot contaminate the lifecycle ledger.
+intact for manual recovery and cannot contaminate the lifecycle ledger. Resolve
+that reservation only after checking the broker's own order/query endpoint and
+recording the matching snapshot through the adapter's normal observation path.
 
 Adapters must still implement broker-specific validation and reconciliation. Core checks do not replace exchange or broker rules.
 

@@ -4,16 +4,17 @@ import json
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from ai_trade.broker.base import (
     BrokerFill,
+    BrokerOrderRequest,
     BrokerOrderSnapshot,
     OrderSide,
     OrderStatus,
 )
-from ai_trade.broker.ledger import append_broker_observation
+from ai_trade.broker.ledger import append_broker_observation, reserve_order_intents
 from ai_trade.config import load_config
 from ai_trade.web.service import DashboardService
 
@@ -110,6 +111,32 @@ class WebBrokerLifecycleTests(unittest.TestCase):
         self.assertEqual(payload["broker_fills"], [])
         self.assertFalse(lifecycle["qualifying_evidence"])
         self.assertFalse(lifecycle["execution_enabled"])
+
+    def test_trading_payload_keeps_unconfirmed_submission_visible(self):
+        reserve_order_intents(
+            self.config.broker_orders_file,
+            [
+                BrokerOrderRequest(
+                    "client-web-unconfirmed",
+                    "510300",
+                    OrderSide.BUY,
+                    100,
+                    4.0,
+                )
+            ],
+            date(2026, 7, 18),
+            10_000.0,
+        )
+
+        lifecycle = DashboardService(self.config).trading()["broker_lifecycle"]
+
+        self.assertEqual(lifecycle["status"], "RECOVERED")
+        self.assertEqual(lifecycle["submission_unconfirmed_count"], 1)
+        self.assertTrue(lifecycle["orders"][0]["submission_unconfirmed"])
+        self.assertEqual(
+            lifecycle["recovery_warnings"][0]["code"],
+            "submission_unconfirmed",
+        )
 
     def test_invalid_fill_rows_are_not_returned_to_the_browser(self):
         self.config.broker_fills_file.parent.mkdir(parents=True, exist_ok=True)

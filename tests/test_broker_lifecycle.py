@@ -139,6 +139,76 @@ class BrokerLifecycleTests(unittest.TestCase):
             self.assertIn(approval_id, event.message)
             self.assertIn(batch_fingerprint, event.message)
 
+    def test_unconfirmed_submission_is_explicit_and_requires_manual_resolution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orders = Path(temporary) / "orders.csv"
+            request = BrokerOrderRequest(
+                "unconfirmed-order",
+                "510300",
+                OrderSide.BUY,
+                100,
+                10.0,
+            )
+
+            reserve_order_intents(
+                orders,
+                [request],
+                date(2026, 7, 18),
+                10_000,
+            )
+
+            report = recover_order_lifecycle(orders, Path(temporary) / "fills.csv")
+
+            self.assertEqual(report["status"], "RECOVERED")
+            self.assertEqual(report["submission_unconfirmed_count"], 1)
+            self.assertTrue(report["orders"][0]["submission_unconfirmed"])
+            self.assertEqual(
+                [warning["code"] for warning in report["recovery_warnings"]],
+                ["submission_unconfirmed"],
+            )
+
+    def test_broker_acknowledgement_clears_unconfirmed_submission_warning(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            orders = root / "orders.csv"
+            request = BrokerOrderRequest(
+                "confirmed-order",
+                "510300",
+                OrderSide.BUY,
+                100,
+                10.0,
+            )
+            reserve_order_intents(
+                orders,
+                [request],
+                date(2026, 7, 18),
+                10_000,
+            )
+            append_order_events(
+                orders,
+                [
+                    BrokerOrderSnapshot(
+                        request.client_order_id,
+                        "broker-confirmed",
+                        request.symbol,
+                        request.side,
+                        request.quantity,
+                        0,
+                        request.limit_price,
+                        None,
+                        OrderStatus.SUBMITTED,
+                        START + timedelta(days=1, minutes=1),
+                    )
+                ],
+            )
+
+            report = recover_order_lifecycle(orders, root / "fills.csv")
+
+            self.assertEqual(report["status"], "VERIFIED")
+            self.assertEqual(report["submission_unconfirmed_count"], 0)
+            self.assertFalse(report["orders"][0]["submission_unconfirmed"])
+            self.assertEqual(report["recovery_warnings"], [])
+
     def test_intent_reservation_rejects_an_incomplete_approval_reference(self):
         with tempfile.TemporaryDirectory() as temporary:
             orders = Path(temporary) / "orders.csv"

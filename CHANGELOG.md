@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Persisted `PENDING_SUBMIT` intents are now surfaced as explicit
+  `submission_unconfirmed` warnings with a per-order flag and aggregate count.
+  The Trading view explains the manual broker-side lookup required before any
+  retry; no timeout is inferred as rejection and no automatic retry is added.
 - Scoped broker order events and fill fingerprints now carry the bound ledger
   scope ID. A copied or replaced scope manifest cannot silently reassign old
   order evidence, and unscoped writers cannot append into a scoped ledger.

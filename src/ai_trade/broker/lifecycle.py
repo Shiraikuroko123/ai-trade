@@ -342,6 +342,15 @@ def build_lifecycle_report(
                     f"Recovered {state.out_of_order_events} late event(s) by broker timestamp",
                 )
             )
+        submission_unconfirmed = current.status == OrderStatus.PENDING_SUBMIT
+        if submission_unconfirmed:
+            warnings.append(
+                _issue(
+                    "submission_unconfirmed",
+                    client_order_id,
+                    "A durable submission intent has no broker acknowledgement; query the broker before manual resolution or any retry",
+                )
+            )
         rows.append(
             {
                 "client_order_id": current.client_order_id,
@@ -364,6 +373,7 @@ def build_lifecycle_report(
                 "history_complete": state.history_complete,
                 "out_of_order_events": state.out_of_order_events,
                 "cancel_race_observed": state.cancel_race_observed,
+                "submission_unconfirmed": submission_unconfirmed,
                 "terminal": current.status in TERMINAL_ORDER_STATUSES,
                 "integrity_ok": not any(
                     value["client_order_id"] == client_order_id for value in errors
@@ -398,6 +408,9 @@ def build_lifecycle_report(
         reverse=True,
     )
     open_count = sum(not bool(value["terminal"]) for value in rows)
+    submission_unconfirmed_count = sum(
+        bool(value["submission_unconfirmed"]) for value in rows
+    )
     if errors:
         status = "INTEGRITY_ERROR"
     elif warnings:
@@ -418,6 +431,7 @@ def build_lifecycle_report(
         "cancel_pending_count": sum(
             value["status"] == OrderStatus.CANCEL_PENDING.value for value in rows
         ),
+        "submission_unconfirmed_count": submission_unconfirmed_count,
         "fill_count": len(unique_fills),
         "orders": rows,
         "fills": fill_rows,
@@ -437,6 +451,7 @@ def lifecycle_error_report(code: str, message: str) -> dict[str, object]:
         "terminal_order_count": 0,
         "partial_order_count": 0,
         "cancel_pending_count": 0,
+        "submission_unconfirmed_count": 0,
         "fill_count": 0,
         "orders": [],
         "fills": [],

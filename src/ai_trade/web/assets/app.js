@@ -126,6 +126,7 @@ const BROKER_LIFECYCLE_ISSUE_LABELS = {
   average_fill_price_mismatch: "成交明细无法复算订单最新平均成交价。",
   history_started_mid_lifecycle: "本地记录从订单中途开始，早期事件不可用。",
   out_of_order_events_recovered: "检测到延迟回报，已按券商时间归并且未回退当前状态。",
+  submission_unconfirmed: "提交意图已持久化但尚未收到券商确认；先查询券商订单，再人工收敛，禁止盲目重试。",
   ledger_scope_missing: "旧账本未绑定适配器、账户、环境和配置；只可复核，不可继续写入或作为权限证据。",
   ledger_scope_invalid: "账本作用域损坏或与当前券商配置不一致；继续前必须归档并核对本地证据。",
 };
@@ -3091,6 +3092,7 @@ function brokerLifecycleMarkup(data) {
         ? "warning"
         : "neutral";
   const latestUpdate = orders[0]?.updated_at ? formatDate(orders[0].updated_at, true) : "尚无更新时间";
+  const submissionUnconfirmedCount = Number(lifecycle.submission_unconfirmed_count) || 0;
   const scopeStatus = scope.status || "EMPTY";
   const scopeKind = scopeStatus === "BOUND"
     ? "success"
@@ -3110,7 +3112,7 @@ function brokerLifecycleMarkup(data) {
     <div class="broker-lifecycle-view">
       <dl class="broker-lifecycle-band" aria-label="券商订单账本摘要">
         <div><dt>恢复状态</dt><dd>${statusChip(BROKER_LIFECYCLE_STATUS_LABELS[lifecycleStatus] || lifecycleStatus, statusKind)}<span>依据本地订单与成交账本重建</span></dd></div>
-        <div><dt>订单</dt><dd><strong class="numeric">${formatInteger(lifecycle.open_order_count || 0)} / ${formatInteger(lifecycle.order_count || 0)}</strong><span>未终结 / 全部，最近 ${escapeHtml(latestUpdate)}</span></dd></div>
+        <div><dt>订单</dt><dd><strong class="numeric">${formatInteger(lifecycle.open_order_count || 0)} / ${formatInteger(lifecycle.order_count || 0)}</strong><span>未终结 / 全部，最近 ${escapeHtml(latestUpdate)}${submissionUnconfirmedCount ? `；${formatInteger(submissionUnconfirmedCount)} 笔提交未确认` : ""}</span></dd></div>
         <div><dt>执行中状态</dt><dd><strong class="numeric">${formatInteger(lifecycle.partial_order_count || 0)} / ${formatInteger(lifecycle.cancel_pending_count || 0)}</strong><span>部分成交 / 撤单处理中</span></dd></div>
         <div><dt>成交明细</dt><dd><strong class="numeric">${formatInteger(lifecycle.fill_count || 0)}</strong><span>按成交号与内容指纹校验</span></dd></div>
         <div><dt>证据作用域</dt><dd>${statusChip(BROKER_LEDGER_SCOPE_STATUS_LABELS[scopeStatus] || scopeStatus, scopeKind)}<span>${escapeHtml(scopeDetail)}</span></dd></div>
@@ -3121,6 +3123,11 @@ function brokerLifecycleMarkup(data) {
           <strong>订单生命周期未通过完整性校验</strong>
           <p>当前推导状态不能作为现金、持仓或权限依据。先核对本地账本，再继续沙箱复核。</p>
           <ul>${errors.map((issue) => `<li>${escapeHtml(brokerLifecycleIssueText(issue))}</li>`).join("")}</ul>
+        </aside>` : ""}
+      ${submissionUnconfirmedCount ? `
+        <aside class="callout danger broker-lifecycle-alert" role="alert">
+          <strong>存在 ${formatInteger(submissionUnconfirmedCount)} 笔提交结果未确认</strong>
+          <p>本地只证明提交意图已经落盘，不证明券商是否接收。请先在券商端按客户端订单号查询；确认前不要重复提交，也不要删除或改写账本行。</p>
         </aside>` : ""}
       ${warnings.length ? `
         <aside class="callout warning broker-lifecycle-alert">
@@ -3187,6 +3194,7 @@ function brokerOrderStatusKind(status) {
 
 function brokerRecoveryNote(row) {
   const notes = [`${formatInteger(row.event_count || 0)} 个事件`];
+  if (row.submission_unconfirmed) notes.unshift("提交结果未确认；禁止盲目重试");
   if (row.out_of_order_events) notes.push(`已归并 ${formatInteger(row.out_of_order_events)} 个延迟事件`);
   if (row.cancel_race_observed) notes.push("撤单期间发生成交");
   if (row.history_complete === false) notes.push("早期历史不完整");
