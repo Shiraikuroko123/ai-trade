@@ -121,6 +121,25 @@ class BrokerLifecycleModelTests(unittest.TestCase):
         self.assertEqual(recovered.event_count, 3)
         self.assertEqual(recovered.out_of_order_events, 1)
 
+    def test_same_timestamp_conflicting_snapshots_fail_closed(self):
+        submitted = _snapshot(OrderStatus.SUBMITTED, 0)
+        cancelled = _snapshot(OrderStatus.CANCELLED, 0)
+
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous broker order events"):
+            recover_order_states([submitted, cancelled])
+
+    def test_terminal_snapshot_cannot_change_after_completion(self):
+        submitted = _snapshot(OrderStatus.SUBMITTED, 0)
+        cancelled = _snapshot(OrderStatus.CANCELLED, 1)
+        changed_cancelled = _snapshot(
+            OrderStatus.CANCELLED,
+            2,
+            filled_quantity=10,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Terminal broker order snapshot"):
+            recover_order_states([submitted, cancelled, changed_cancelled])
+
 
 if __name__ == "__main__":
     unittest.main()

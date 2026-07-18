@@ -249,6 +249,11 @@ Persisted events are reduced by timezone-aware broker timestamp rather than CSV
 append position. A late event can therefore be inserted into its historical
 position without regressing the current state. A later stale regression, a
 filled-quantity decrease, or an illegal terminal transition is rejected.
+Two different snapshots for the same client order and the same instant are
+ambiguous when polling workers race; recovery rejects them rather than relying
+on append order. Terminal snapshots are immutable in their filled quantity and
+average price as well, so a late post-cancellation update cannot silently alter
+the recorded result.
 Physical duplicate/conflicting rows, malformed schemas, non-canonical values,
 or reused fill IDs also fail validation.
 

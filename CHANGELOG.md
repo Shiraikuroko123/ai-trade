@@ -4,6 +4,10 @@ AI Trade follows semantic versioning while the project remains experimental. `v0
 
 ## Unreleased
 
+- Broker lifecycle recovery now rejects contradictory snapshots that share an
+  order timestamp and rejects any post-terminal change to filled quantity or
+  average fill price. Concurrent polling therefore fails closed instead of
+  selecting a state from file order.
 - The workstation now separates the common completed market date from the
   server-generated page-read time, treats a missing signal as an explicit cash
   state instead of a date mismatch, and locks background-job controls while a

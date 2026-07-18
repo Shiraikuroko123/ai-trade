@@ -182,6 +182,7 @@ def recover_order_states(
 
     recovered: dict[str, RecoveredOrder] = {}
     for client_order_id, observed in grouped.items():
+        _reject_ambiguous_timestamps(client_order_id, observed)
         out_of_order = _out_of_order_count(observed)
         history = sorted(observed, key=lambda item: (item[1].updated_at, item[0]))
         baseline = history[0][1]
@@ -477,6 +478,60 @@ def _validate_transition(
         raise RuntimeError(
             f"Filled quantity moved backwards for client order {current.client_order_id}"
         )
+    if previous.status in TERMINAL_ORDER_STATUSES:
+        if (
+            current.filled_quantity != previous.filled_quantity
+            or not _same_price(
+                current.average_fill_price,
+                previous.average_fill_price,
+            )
+        ):
+            raise RuntimeError(
+                "Terminal broker order snapshot changed after completion for "
+                f"client order {current.client_order_id}"
+            )
+
+
+def _reject_ambiguous_timestamps(
+    client_order_id: str,
+    observed: list[tuple[int, BrokerOrderSnapshot]],
+) -> None:
+    by_timestamp: dict[datetime, set[tuple[object, ...]]] = {}
+    for _, event in observed:
+        key = event.updated_at
+        by_timestamp.setdefault(key, set()).add(_snapshot_state_key(event))
+    for timestamp, states in by_timestamp.items():
+        if len(states) > 1:
+            raise RuntimeError(
+                "Ambiguous broker order events share timestamp "
+                f"{timestamp.isoformat()} for client order {client_order_id}"
+            )
+
+
+def _snapshot_state_key(order: BrokerOrderSnapshot) -> tuple[object, ...]:
+    return (
+        order.broker_order_id,
+        order.symbol,
+        order.side.value,
+        order.quantity,
+        order.filled_quantity,
+        _price_key(order.limit_price),
+        _price_key(order.average_fill_price),
+        order.status.value,
+        order.message,
+    )
+
+
+def _price_key(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return 0.0 if value == 0.0 else float(value)
+
+
+def _same_price(left: float | None, right: float | None) -> bool:
+    if left is None or right is None:
+        return left is right
+    return math.isclose(left, right, rel_tol=0.0, abs_tol=1e-12)
 
 
 def _out_of_order_count(
