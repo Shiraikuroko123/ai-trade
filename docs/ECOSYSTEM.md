@@ -55,6 +55,18 @@ authoritative paper and broker ledgers.
 | Host-independent tamper evidence | Not implemented | Local SHA-256 and cross-record validation are not signatures or WORM storage. A local administrator can recalculate records or delete a newest chain tail; monitoring state is not included in the R2 market-cache backup. |
 | Minute/Tick/Level-2 monitoring and live execution | Not implemented | The current monitor uses completed daily data and remains `research_only`; it cannot change strategy, accounting, broker permissions, or orders. |
 
+## Market Intelligence Status
+
+| Reference capability | Status | AI Trade boundary |
+|---|---|---|
+| Dragon-Tiger List | Complete within one public-source trust boundary | The full Eastmoney daily report is page/count/date/schema validated and stored as immutable local revisions. It is not exchange-certified and remains `research_only`. |
+| Sector rankings and breadth | Not implemented | Existing `sector` values are point-in-time security-master risk groups; the default ETF universe must not be presented as whole-market industry breadth. |
+| Capital flow | Not implemented | No normalized provider, unit, adjustment, coverage, licensing, or cross-source contract is configured. |
+| Announcements, news, and hot lists | Not implemented | No traceable publication-time and correction-aware source is configured. |
+| Valuation temperature | Not implemented | Price history is not a substitute for PE/PB/cash-flow valuation evidence. |
+| Market sentiment | Not implemented | Dragon-Tiger List records remain event evidence and do not make assistant `sentiment_coverage` available. |
+| Push notification delivery | Not implemented | Monitoring provides local review states and scheduled scans, but no authenticated external delivery channel. |
+
 The matrix deliberately keeps human notes, accounting evidence, and strategy
 decisions separate. A note saying “hold” or “reduce risk” is a record of what the
 operator thought at that time, not a signal, order, or promotion fact.

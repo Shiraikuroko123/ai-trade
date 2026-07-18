@@ -6,7 +6,7 @@ import math
 import statistics
 import threading
 from collections import Counter, deque
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -27,6 +27,7 @@ from ..broker.scope import create_broker_ledger_scope
 from ..config import AppConfig
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
+from ..data.market_intelligence import DragonTigerQuery, DragonTigerStore
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
 from ..monitoring import MonitoringEngine
@@ -1178,6 +1179,29 @@ class DashboardService:
                 (getattr(market, "file_hashes", {}) or {}).get(symbol)
             ),
         }
+
+    def market_intelligence(
+        self,
+        query: DragonTigerQuery | None = None,
+    ) -> dict[str, Any]:
+        """Read the local dragon-tiger ledger without refreshing any provider."""
+
+        selected = query or DragonTigerQuery()
+        store_query = replace(selected, include_revisions=True)
+        cutoff = None
+        try:
+            market = self.market(recover_snapshot=False)
+            candidate = getattr(market, "completed_through", None)
+            if isinstance(candidate, date) and not isinstance(candidate, datetime):
+                cutoff = candidate
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            # The ledger remains useful when the ordinary market cache is absent or
+            # invalid; in that case the store reports freshness without a cutoff.
+            cutoff = None
+        return DragonTigerStore(self.config).list(
+            store_query,
+            completed_session_cutoff=cutoff,
+        )
 
     def market_chart(
         self, *, symbol: str, period: str = "day", limit: int = 240

@@ -74,6 +74,42 @@ KLineChart 10.0.0 is a pinned local distribution asset, not a CDN dependency. It
 
 The read-only `/api/universe/screen` projection derives liquidity, momentum, annualized volatility, trend, and history readiness for every configured instrument from the same completed snapshot. Its bounded query contract returns a filter fingerprint, snapshot ID, data-status counts, source route, and explicit empty/unavailable states. It never refreshes providers, changes strategy settings, writes paper ledgers, or grants broker authority. The UI keeps the base security-master eligibility separate from the screen result so a research filter cannot silently redefine the tradable universe.
 
+## Closing Market Intelligence Boundary
+
+```text
+explicit completed trade date + bounded Eastmoney report pages
+                          |
+                          v
+       date/schema/count/identity/amount validation
+                          |
+                          v
+        immutable Dragon-Tiger List revision chain
+                          |
+                          v
+              non-mutating filtered GET
+                          |
+                          X  no sentiment inference, strategy write,
+                             ledger write, order, promotion, or live authority
+```
+
+`data/market_intelligence.py` owns the first normalized event-data boundary. A
+refresh date comes from an explicit CLI argument or the latest locally validated
+market snapshot. The Eastmoney provider reads every bounded page of
+`RPT_DAILYBILLBOARD_DETAILSNEW` and rejects an incomplete envelope, mismatched
+date or count, duplicate source identity, missing field, non-finite value, or
+inconsistent buy/sell/net amount before publication. GET routes never invoke
+the provider.
+
+An identical normalized record set for the same date is idempotently reused.
+Changed normalized records are published as another immutable revision linked
+through `supersedes`; atomic
+publication preserves the previous complete revision on failure. Source,
+response, normalized evidence, and record fingerprints provide local integrity
+evidence, not signatures or exchange certification. Records live below
+Git-ignored `state/market_intelligence/`, outside the release and R2 market-cache
+allowlists. The UI and API retain fixed `research_only` authority, and this
+single event report does not change assistant fundamental or sentiment coverage.
+
 ## Research Monitoring Boundary
 
 ```text

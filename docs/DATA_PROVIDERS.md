@@ -35,6 +35,11 @@ was used. This is intentional: each adapter needs an explicit license review,
 field mapping, adjustment policy, rate-limit policy and independent fixtures
 before it can enter a release.
 
+The Unreleased Dragon-Tiger List adapter documented in
+`MARKET_INTELLIGENCE.md` is a separate event-report boundary. It does not
+implement `MarketDataProvider`, cannot supply or replace an OHLCV file, and is
+not counted as a third independent daily-bar source.
+
 ## Manifest evidence
 
 Each refresh records the normalized provider chain in

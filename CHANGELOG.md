@@ -27,6 +27,20 @@ This section describes the current `main` branch, not the public `v0.12.1`
 wheel. The persistent research-digest commands, HTTP routes, and Windows task
 scripts below will remain source-only until a later release is explicitly cut.
 
+- Added the first read-only closing-market intelligence dataset: Eastmoney's
+  daily Dragon-Tiger List. The bounded provider validates every page, requested
+  trade date, source identity, finite value, amount relationship, page count,
+  and total row count before publishing any local evidence.
+- Added immutable Dragon-Tiger List revisions with idempotent normalized-record
+  reuse, `supersedes` links for changed same-date normalized records, strict integrity
+  reads, and atomic publication below Git-ignored local state. A failed refresh
+  retains the previous complete snapshot.
+- Added `market-intelligence-refresh`, a fixed background job, bounded read-only
+  `GET /api/market-intelligence` filters, and a dedicated dense workstation
+  view with explicit unavailable, empty, stale, running, and failed states.
+  This single public source is not exchange-certified, does not make sentiment
+  coverage available, and has no strategy, accounting, order, promotion, or
+  live-trading authority.
 - Added owner-scoped research monitoring with versioned watchlists and rules,
   one-snapshot scans, immutable alert evidence, append-only review actions, and
   a Windows scheduled-task runner. Monitoring remains `research_only` and has

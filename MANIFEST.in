@@ -15,6 +15,7 @@ include docs/CLOUD_STORAGE.md
 include docs/ECOSYSTEM.md
 include docs/PAPER_TRADING.md
 include docs/MONITORING.md
+include docs/MARKET_INTELLIGENCE.md
 include docs/RESEARCH_METHODOLOGY.md
 include docs/RESEARCH_JOURNAL.md
 include docs/RESEARCH_DIGESTS.md
@@ -32,6 +33,7 @@ include scripts/install_archive_task.ps1
 include scripts/run_daily_archive.ps1
 include scripts/verify_distribution.py
 include src/ai_trade/monitoring.py
+include src/ai_trade/data/market_intelligence.py
 include src/ai_trade/research_archive.py
 include src/ai_trade/research_digest.py
 include src/ai_trade/web/assets/app.css

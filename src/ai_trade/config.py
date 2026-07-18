@@ -27,6 +27,7 @@ MAX_CONFIG_FILE_BYTES = 5 * 1024 * 1024
 DEFAULT_RESEARCH_JOURNAL_DIR = "state/research_journal"
 DEFAULT_RESEARCH_DIGEST_DIR = "state/research_digests"
 DEFAULT_MONITORING_DIR = "state/monitoring"
+DEFAULT_MARKET_INTELLIGENCE_DIR = "state/market_intelligence"
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,15 @@ class AppConfig:
             project_root=self.project_root,
             section="monitoring",
             default=DEFAULT_MONITORING_DIR,
+        )
+
+    @property
+    def market_intelligence_dir(self) -> Path:
+        """Return the local root for immutable market-intelligence evidence."""
+
+        return _market_intelligence_path(
+            self.raw.get("market_intelligence", {}),
+            project_root=self.project_root,
         )
 
     @property
@@ -392,6 +402,9 @@ def _validate(
         section="monitoring",
         default=DEFAULT_MONITORING_DIR,
     )
+    _market_intelligence_path(
+        raw.get("market_intelligence", {}), project_root=project_root
+    )
 
 
 def _validate_data_transport(data: dict[str, Any]) -> None:
@@ -663,6 +676,30 @@ def _research_journal_path(value: Any, project_root: Path) -> Path:
         project_root=project_root,
         section="research_journal",
         default=DEFAULT_RESEARCH_JOURNAL_DIR,
+    )
+
+
+def _market_intelligence_path(value: Any, *, project_root: Path) -> Path:
+    if not isinstance(value, dict):
+        raise ValueError("market_intelligence must be an object")
+    state_dir = value.get("state_dir")
+    root_dir = value.get("root_dir")
+    if state_dir is not None and root_dir is not None and state_dir != root_dir:
+        raise ValueError(
+            "market_intelligence.state_dir and root_dir must match when both are set"
+        )
+    selected = state_dir if state_dir is not None else root_dir
+    return _state_child_path(
+        {
+            "root_dir": (
+                DEFAULT_MARKET_INTELLIGENCE_DIR
+                if selected is None
+                else selected
+            )
+        },
+        project_root=project_root,
+        section="market_intelligence",
+        default=DEFAULT_MARKET_INTELLIGENCE_DIR,
     )
 
 

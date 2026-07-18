@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -109,6 +110,126 @@ class CliTests(unittest.TestCase):
             mode="model",
             user_id="local-owner",
         )
+
+    def test_market_intelligence_refresh_uses_explicit_iso_date(self):
+        parsed = build_parser().parse_args(
+            ["market-intelligence-refresh", "--date", "2024-01-05"]
+        )
+        self.assertEqual(parsed.command, "market-intelligence-refresh")
+        self.assertEqual(parsed.date, "2024-01-05")
+
+        config = object()
+        result = {
+            "schema_version": 1,
+            "date": "2024-01-05",
+            "status": "current",
+            "available": True,
+            "errors": [],
+        }
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.MarketData") as market_data,
+            patch("ai_trade.cli.download_universe") as download,
+            patch(
+                "ai_trade.data.market_intelligence.refresh_dragon_tiger",
+                return_value=result,
+            ) as refresh,
+            redirect_stdout(output),
+        ):
+            status = main(
+                ["market-intelligence-refresh", "--date", "2024-01-05"]
+            )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output.getvalue()), result)
+        refresh.assert_called_once_with(config, date(2024, 1, 5))
+        market_data.assert_not_called()
+        download.assert_not_called()
+
+    def test_market_intelligence_refresh_defaults_to_verified_cache_date(self):
+        parsed = build_parser().parse_args(["market-intelligence-refresh"])
+        self.assertIsNone(parsed.date)
+
+        config = object()
+        market = MagicMock()
+        market.latest_date.return_value = date(2024, 1, 8)
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.MarketData", return_value=market) as market_data,
+            patch("ai_trade.cli._ensure_cache") as ensure_cache,
+            patch("ai_trade.cli.download_universe") as download,
+            patch(
+                "ai_trade.data.market_intelligence.refresh_dragon_tiger",
+                return_value={
+                    "date": "2024-01-08",
+                    "status": "empty",
+                    "available": True,
+                    "errors": [],
+                },
+            ) as refresh,
+            redirect_stdout(output),
+        ):
+            status = main(["market-intelligence-refresh"])
+
+        self.assertEqual(status, 0)
+        market_data.assert_called_once_with(config)
+        market.latest_date.assert_called_once_with()
+        refresh.assert_called_once_with(config, date(2024, 1, 8))
+        ensure_cache.assert_not_called()
+        download.assert_not_called()
+
+    def test_market_intelligence_refresh_rejects_bad_date_and_reports_failure(self):
+        config = object()
+        refresh = MagicMock()
+        stderr = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.logging.getLogger"),
+            patch(
+                "ai_trade.data.market_intelligence.refresh_dragon_tiger",
+                refresh,
+            ),
+            redirect_stderr(stderr),
+        ):
+            status = main(
+                ["market-intelligence-refresh", "--date", "20240105"]
+            )
+
+        self.assertEqual(status, 1)
+        self.assertIn("YYYY-MM-DD", stderr.getvalue())
+        refresh.assert_not_called()
+
+        unavailable = {
+            "date": "2024-01-05",
+            "status": "unavailable",
+            "available": False,
+            "errors": [
+                {"code": "provider_unavailable", "message": "provider unavailable"}
+            ],
+        }
+        refresh.return_value = unavailable
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.data.market_intelligence.refresh_dragon_tiger",
+                refresh,
+            ),
+            redirect_stdout(output),
+        ):
+            status = main(
+                ["market-intelligence-refresh", "--date", "2024-01-05"]
+            )
+
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output.getvalue()), unavailable)
+        refresh.assert_called_once_with(config, date(2024, 1, 5))
 
     def test_archive_generate_parser_has_bounded_audit_trigger(self):
         args = build_parser().parse_args(["archive-generate"])

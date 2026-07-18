@@ -53,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="Overwrite existing cache"
     )
 
+    market_intelligence = subparsers.add_parser(
+        "market-intelligence-refresh",
+        help="Refresh Dragon Tiger List evidence for one completed market date",
+    )
+    market_intelligence.add_argument(
+        "--date",
+        help="YYYY-MM-DD; defaults to the latest verified local market date",
+    )
+
     cloud_status = subparsers.add_parser(
         "cloud-status", help="Inspect this user's optional Cloudflare R2 backup"
     )
@@ -412,6 +421,22 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.command == "market-intelligence-refresh":
+            on_date = _parse_cli_iso_date(args.date, "date")
+            if on_date is None:
+                on_date = MarketData(config).latest_date()
+
+            from .data.market_intelligence import refresh_dragon_tiger
+
+            result = refresh_dragon_tiger(config, on_date)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return (
+                0
+                if result.get("available") is True
+                and result.get("status") in {"current", "empty"}
+                and not result.get("errors")
+                else 1
+            )
         if args.command == "backtest":
             _ensure_cache(config)
             market = MarketData(config)
@@ -562,8 +587,8 @@ def main(argv: list[str] | None = None) -> int:
             from .research_digest import ResearchDigestCapacityError
             from .web.service import DashboardService
 
-            on_date = _parse_cli_archive_date(args.date, "date")
-            week_start = _parse_cli_archive_date(args.week, "week")
+            on_date = _parse_cli_iso_date(args.date, "date")
+            week_start = _parse_cli_iso_date(args.week, "week")
             if week_start is not None and week_start.weekday() != 0:
                 raise ValueError("week must be an ISO Monday")
             if args.kind == "daily" and week_start is not None:
@@ -780,13 +805,13 @@ def _monitor_status_counts(scans: list[dict[str, object]]) -> dict[str, int]:
     return counts
 
 
-def _parse_cli_archive_date(value: str | None, field: str) -> date | None:
+def _parse_cli_iso_date(value: str | None, field: str) -> date | None:
     if value is None:
         return None
     try:
         parsed = date.fromisoformat(value)
     except ValueError as exc:
-        raise ValueError(f"{field} must be an ISO calendar date") from exc
+        raise ValueError(f"{field} must use YYYY-MM-DD format") from exc
     if parsed.isoformat() != value:
         raise ValueError(f"{field} must use YYYY-MM-DD format")
     return parsed

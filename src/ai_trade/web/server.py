@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
+from ..data.market_intelligence import DragonTigerQuery
 from ..json_utils import loads_unique_json
 from ..monitoring import (
     ALERT_ACTIONS,
@@ -87,6 +88,11 @@ MARKET_CHART_PERIODS = frozenset({"day", "week", "month"})
 MARKET_CHART_MIN_LIMIT = 60
 MARKET_CHART_MAX_LIMIT = 1500
 MARKET_CHART_DEFAULT_LIMIT = 240
+MARKET_INTELLIGENCE_DEFAULT_LIMIT = 200
+MARKET_INTELLIGENCE_MAX_LIMIT = 500
+MARKET_INTELLIGENCE_MAX_QUERY_LENGTH = 1024
+MARKET_INTELLIGENCE_MAX_TEXT_LENGTH = 100
+MARKET_INTELLIGENCE_MARKETS = frozenset({"SH", "SZ", "BJ"})
 SCREEN_GROUP_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 STRATEGY_LAB_CANDIDATE_PATH = re.compile(
     r"/api/strategy-lab/candidates/(cand_[0-9a-f]{32})(?:/(validate|approve|export|activate))?\Z"
@@ -328,6 +334,9 @@ def _handler_factory(
                     if raw_date:
                         selected = date.fromisoformat(raw_date)
                     self._json(service.universe(selected))
+                elif parsed.path == "/api/market-intelligence":
+                    query = _parse_market_intelligence_query(parsed.query)
+                    self._json(service.market_intelligence(query))
                 elif parsed.path == "/api/monitoring":
                     if parsed.query:
                         raise ValueError(
@@ -1148,6 +1157,67 @@ def _parse_research_journal_query(query: str) -> JournalQuery:
         category=category,
         symbol=symbol,
         query=text_query,
+        limit=limit,
+    )
+
+
+def _parse_market_intelligence_query(query: str) -> DragonTigerQuery:
+    if len(query) > MARKET_INTELLIGENCE_MAX_QUERY_LENGTH:
+        raise ValueError("Market intelligence query is too long")
+    if not query:
+        return DragonTigerQuery()
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=5,
+        )
+    except ValueError as exc:
+        raise ValueError("Market intelligence query is invalid") from exc
+    unsupported = sorted(set(values) - {"date", "symbol", "market", "q", "limit"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported market intelligence query parameters: "
+            + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+
+    trade_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is not None and (
+        len(symbol) != 6
+        or not symbol.isascii()
+        or not symbol.isdigit()
+    ):
+        raise ValueError("symbol must be a six-digit security code")
+    market = values.get("market", [None])[0]
+    if market is not None and market not in MARKET_INTELLIGENCE_MARKETS:
+        raise ValueError("market must be SH, SZ, or BJ")
+    text_query = values.get("q", [None])[0]
+    if text_query is not None:
+        text_query = _bounded_text(
+            text_query,
+            "q",
+            MARKET_INTELLIGENCE_MAX_TEXT_LENGTH,
+        )
+    raw_limit = values.get(
+        "limit", [str(MARKET_INTELLIGENCE_DEFAULT_LIMIT)]
+    )[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= MARKET_INTELLIGENCE_MAX_LIMIT:
+        raise ValueError(
+            f"limit must be between 1 and {MARKET_INTELLIGENCE_MAX_LIMIT}"
+        )
+    return DragonTigerQuery(
+        trade_date=trade_date,
+        symbol=symbol,
+        market=market,
+        q=text_query,
         limit=limit,
     )
 

@@ -31,6 +31,10 @@ Every new analysis also returns five deterministic, evidence-bound views under
 | `sentiment_coverage` | `UNAVAILABLE` until traceable news, flow, or sentiment data is configured | Explicit coverage evidence; model prose cannot fill the gap |
 | `strategy_gate` | Available | Deterministic conclusion, research gate, and assessment evidence |
 
+The Unreleased Dragon-Tiger List market-intelligence dataset is a single-source
+closing event ledger. It is not a validated sentiment methodology and therefore
+does not change `sentiment_coverage` from `UNAVAILABLE`.
+
 Each view contains `status`, `stance`, `summary`, `limitation`, and
 `evidence_ids`. The engine rejects a result with an unknown view, duplicate
 view, missing evidence reference, or incomplete coverage. Model-enhanced mode

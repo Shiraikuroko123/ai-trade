@@ -130,6 +130,9 @@
   "monitoring": {
     "root_dir": "state/monitoring"
   },
+  "market_intelligence": {
+    "state_dir": "state/market_intelligence"
+  },
   "reports_dir": "reports",
   "logs_dir": "logs"
 }

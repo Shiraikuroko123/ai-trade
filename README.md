@@ -5,11 +5,11 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 `v0.12.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
-本 README 同时描述 `main` 分支中标记为 **Unreleased** 的后续能力。研究监控、持久化日报/周报、`archive-generate` 及其 Windows 任务脚本目前只在 `main` 源码中提供，不包含在公开的 `v0.12.1` wheel 中；安装公开 wheel 的用户应以该 Release 随附文档和 [更新记录](CHANGELOG.md) 的 `0.12.1` 小节为准。需要试用未发布研究归档时必须克隆 `main` 并完成源码初始化，不能把下面的未发布说明当作 `v0.12.1` Release 承诺。
+本 README 同时描述 `main` 分支中标记为 **Unreleased** 的后续能力。研究监控、持久化日报/周报、龙虎榜市场情报、`archive-generate` 及相关后台任务目前只在 `main` 源码中提供，不包含在公开的 `v0.12.1` wheel 中；安装公开 wheel 的用户应以该 Release 随附文档和 [更新记录](CHANGELOG.md) 的 `0.12.1` 小节为准。需要试用这些未发布能力时必须克隆 `main` 并完成源码初始化，不能把下面的未发布说明当作 `v0.12.1` Release 承诺。
 
 系统已经贯通以下流程：
 
@@ -30,6 +30,7 @@
 15. 用原子作用域清单把未来券商生命周期账本绑定到适配器、账户引用、环境、配置与账本路径，阻止跨账户或跨配置混写。
 16. 在每个登录用户隔离的研究日志中追加人工观察、判断和修正，并绑定当时的行情与策略证据；日志不会改变任何执行权限。
 17. 在研究页把模拟净值账本、不可覆盖的模拟日报和当前用户日志投影为逐日摘要、ISO 周度复盘与历史持仓数量快照，并可将该证据按用户和模拟账期追加为不可变日报/周报修订链；缺失或不一致证据始终显式披露。
+18. 把东方财富指定交易日的完整龙虎榜分页校验后固化为不可变修订，在独立市场情报页披露日期、来源、覆盖、指纹和筛选结果；该单源证据不等同情绪，也不进入策略或交易权限。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -207,6 +208,12 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 左侧 **行情** 视图使用随 wheel 本地分发的 KLineChart 10.0.0，不访问 CDN。后端只接受配置证券、`day/week/month` 周期和有界根数；周/月 OHLCV 由已验证日线按自然周期确定性聚合，日期使用该周期最后一个实际交易日，不补造交易会话。页面同时显示配置数据源、实际回退来源、复权口径、已完成交易日、manifest 与行情文件指纹。缓存缺失或陈旧时会明确显示恢复状态，不会在 GET 请求中下载或改写数据。
 
 图表操作只改变当前浏览器视图。指标切换、缩放、十字线和模拟成交标记不会修改策略候选、活动模拟配置、持仓账本、云端快照或券商权限。分钟线、分时、盘口和实时推送尚未接入；项目不会用日线伪造这些数据。
+
+## 收盘市场情报
+
+`main` / **Unreleased** 新增左侧 **市场情报** 视图。首个数据集只覆盖东方财富日频龙虎榜：后台任务抓取指定交易日的全部分页，校验交易日、唯一键、字段、有限数值、金额关系、分页数和总记录数后，才在 `state/market_intelligence/` 追加一份不可覆盖的本地 revision。相同的规范化记录集会幂等复用；同一交易日的规范化记录发生变化时，会追加带 `supersedes` 的新版本。失败或取消不会覆盖上一份完整快照。
+
+页面支持按交易日、市场、六位证券代码和上榜原因筛选，GET 请求只读本地证据且不会触网。它会区分尚未抓取、合法空集、快照滞后、运行中和刷新失败，并披露来源响应与证据指纹。东方财富是单一公开来源而不是交易所认证数据；龙虎榜不等同市场情绪，因此 AI 的 `sentiment_coverage` 仍保持 `UNAVAILABLE`。刷新命令、接口、存储和权限边界见 [市场情报证据](docs/MARKET_INTELLIGENCE.md)。
 
 ## 证券池批量筛选
 

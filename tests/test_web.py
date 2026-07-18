@@ -139,6 +139,10 @@ class WebTests(unittest.TestCase):
             self.assertEqual(COMMANDS[paper_init.action], ("paper-init",))
             cloud_backup = manager.submit("cloud-backup")
             self.assertEqual(COMMANDS[cloud_backup.action], ("cloud-backup",))
+            intelligence = manager.submit("refresh-market-intelligence")
+            self.assertEqual(
+                COMMANDS[intelligence.action], ("market-intelligence-refresh",)
+            )
             with self.assertRaisesRegex(ValueError, "Unsupported"):
                 manager.submit("delete-everything")
             cancelled = manager.cancel(first.id)
@@ -231,12 +235,14 @@ class WebTests(unittest.TestCase):
             finally:
                 manager.close()
 
-    def test_job_subprocess_does_not_inherit_assistant_credentials(self):
+    def test_market_intelligence_job_uses_fixed_command_without_ai_credentials(self):
         config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())
-        captured = []
+        captured_commands = []
+        captured_environments = []
 
         def start_process(*args, **kwargs):
-            captured.append(kwargs["env"])
+            captured_commands.append(args[0])
+            captured_environments.append(kwargs["env"])
             return _FakeProcess(output="done\n", return_code=0)
 
         sensitive = {
@@ -251,15 +257,23 @@ class WebTests(unittest.TestCase):
         ):
             manager = JobManager(config)
             try:
-                job = manager.submit("backtest")
+                job = manager.submit("refresh-market-intelligence")
                 _wait_for_job(job)
                 self.assertEqual(job.status, "succeeded", job.output)
             finally:
                 manager.close()
 
-        self.assertEqual(len(captured), 1)
+        self.assertEqual(len(captured_commands), 1)
+        self.assertEqual(
+            captured_commands[0][-3:],
+            ["--config", str(config.path), "market-intelligence-refresh"],
+        )
+        self.assertNotIn("--date", captured_commands[0])
         self.assertFalse(
-            any(name.startswith("AI_TRADE_AI_") for name in captured[0])
+            any(
+                name.startswith("AI_TRADE_AI_")
+                for name in captured_environments[0]
+            )
         )
 
     def test_close_stops_active_startup_and_never_runs_queued_job(self):

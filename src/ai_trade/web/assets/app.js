@@ -3,6 +3,7 @@
 const ROUTES = {
   overview: { title: "总览", context: "每日收盘复盘" },
   market: { title: "行情", context: "只读 K 线与行情证据" },
+  intelligence: { title: "市场情报", context: "可追溯的收盘事件证据" },
   monitoring: { title: "监控", context: "自选列表与收盘告警" },
   research: { title: "研究", context: "历史证据与稳健性" },
   assistant: { title: "AI 分析", context: "收盘 K 线诊断与风险复核" },
@@ -55,6 +56,7 @@ const JOB_LABELS = {
   "paper-run": "运行模拟日",
   "paper-audit": "审计模拟账户",
   "cloud-backup": "备份行情",
+  "refresh-market-intelligence": "刷新龙虎榜",
   "monitoring-scan": "运行收盘监控",
 };
 
@@ -220,6 +222,13 @@ const state = {
   researchDigestBusy: false,
   researchDigestStatus: "",
   researchDigestStatusKind: "",
+  intelligenceFilters: {
+    date: "",
+    symbol: "",
+    market: "",
+    query: "",
+    limit: "200",
+  },
   marketSymbol: "510300",
   marketPeriod: "day",
   marketLimit: 240,
@@ -288,6 +297,7 @@ function escapeHtml(value) {
 }
 
 function finite(value) {
+  if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -846,6 +856,18 @@ function monitoringPath() {
   return "/api/monitoring";
 }
 
+function marketIntelligencePath() {
+  const params = new URLSearchParams();
+  const filters = state.intelligenceFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.market) params.set("market", filters.market);
+  if (filters.query) params.set("q", filters.query);
+  if (filters.limit && filters.limit !== "200") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/market-intelligence${query ? `?${query}` : ""}`;
+}
+
 async function loadRoute() {
   state.controller?.abort();
   destroyMarketChart();
@@ -894,6 +916,7 @@ async function loadRoute() {
     } else {
       const endpoints = {
         overview: "/api/overview",
+        intelligence: marketIntelligencePath(),
         research: researchPath(),
         monitoring: monitoringPath(),
         assistant: "/api/assistant",
@@ -927,6 +950,7 @@ function renderRoute(payload) {
   const renderers = {
     overview: renderOverview,
     market: renderMarket,
+    intelligence: renderMarketIntelligence,
     monitoring: renderMonitoring,
     research: renderResearch,
     assistant: renderAssistant,
@@ -969,6 +993,9 @@ function updateRouteDate(payload) {
   } else if (state.route === "market") {
     value = payload.chart?.data_date;
     label = "K 线截止";
+  } else if (state.route === "intelligence") {
+    value = payload.trade_date;
+    label = "情报日期";
   } else if (state.route === "monitoring") {
     value = payload.scan?.data_date || payload.snapshot?.data_date;
     label = "监控截止";
@@ -1101,6 +1128,32 @@ function bindUniverseFilterForm() {
     event.preventDefault();
     applyUniverseFilterForm(form);
   });
+}
+
+async function applyIntelligenceFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.intelligenceFilters = {
+    date: String(values.get("date") || ""),
+    symbol: String(values.get("symbol") || "").trim(),
+    market: String(values.get("market") || ""),
+    query: String(values.get("q") || "").trim(),
+    limit: String(values.get("limit") || "200"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#market-intelligence-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearIntelligenceFilters() {
+  state.intelligenceFilters = {
+    date: "",
+    symbol: "",
+    market: "",
+    query: "",
+    limit: "200",
+  };
+  await loadRoute();
+  restoreFocusAfterRender("[data-intelligence-filter-clear]", "intelligence");
 }
 
 function syncJournalDecisionControl() {
@@ -4444,6 +4497,181 @@ function authorizationReasonLabel(value) {
   return text;
 }
 
+function formatPercentPoints(value, signed = false) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  const sign = signed && parsed > 0 ? "+" : "";
+  return `${sign}${formatNumber(parsed, 2)}%`;
+}
+
+function intelligenceStatusLabel(value) {
+  return {
+    complete: "完整收盘快照",
+    current: "完整收盘快照",
+    empty: "合法空集",
+    stale: "快照滞后",
+    provisional: "晚于完成截止",
+    unavailable: "尚无可用快照",
+    failed: "刷新失败",
+  }[String(value || "").toLowerCase()] || "状态待确认";
+}
+
+function intelligenceStatusKind(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (["complete", "current"].includes(normalized)) return "success";
+  if (["empty", "stale", "provisional"].includes(normalized)) return "warning";
+  if (["failed", "unavailable"].includes(normalized)) return "danger";
+  return "neutral";
+}
+
+function intelligenceWarningText(item, coverage) {
+  const code = String(item?.code || "");
+  if (code === "not_exchange_certified") {
+    return "东方财富是第三方公开研究来源，不是交易所认证披露源。";
+  }
+  if (code === "optional_metric_missing") {
+    const missing = coverage?.data_quality?.missing_optional_numeric_values?.turnover_rate;
+    return `${formatInteger(missing)} 条记录的换手率缺失；页面保留“—”，没有填充为 0。`;
+  }
+  if (code === "dragon_tiger_stale") {
+    return "本地龙虎榜快照早于当前已完成收盘日。";
+  }
+  if (code === "after_completed_session_cutoff") {
+    return "所选快照晚于当前已完成收盘日，只能作为待复核证据。";
+  }
+  return String(item?.message || item || "证据边界待复核");
+}
+
+function intelligenceUnavailableText(error) {
+  if (error?.code === "dragon_tiger_not_refreshed") {
+    return "尚无已验证的本地龙虎榜快照。请运行“刷新龙虎榜”，系统不会用示例数据填充。";
+  }
+  if (error?.code === "dragon_tiger_refresh_failed") {
+    return "最近一次刷新未发布新快照。请到系统任务查看错误记录后重试。";
+  }
+  return String(error?.message || error || "先刷新当前已验证行情，再运行龙虎榜刷新；系统不会用示例数据填充空页面。");
+}
+
+function renderMarketIntelligence(data) {
+  const records = Array.isArray(data.records) ? data.records : [];
+  const coverage = data.coverage || {};
+  const dataQuality = coverage.data_quality || {};
+  const freshness = data.freshness || {};
+  const summary = data.summary || {};
+  const source = data.source || {};
+  const authority = data.authority || {};
+  const revisions = Array.isArray(data.revisions) ? data.revisions : [];
+  const filters = data.filters || state.intelligenceFilters || {};
+  const status = String(data.status || "unavailable").toLowerCase();
+  const contentStatus = String(data.content_status || (
+    data.available === true && coverage.complete === true && summary.record_count === 0
+      ? "empty"
+      : data.available === true ? "records" : "unavailable"
+  )).toLowerCase();
+  const statusKind = intelligenceStatusKind(status);
+  const running = state.jobs.some((job) => job.action === "refresh-market-intelligence" && ["queued", "running"].includes(job.status));
+  const latestJob = state.jobs.find((job) => job.action === "refresh-market-intelligence");
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  const errors = Array.isArray(data.errors) ? data.errors : [];
+  const returnedCount = summary.returned_count ?? records.length;
+  const matchedCount = summary.matched_count ?? records.length;
+  const reportedCount = coverage.declared_count ?? summary.record_count ?? records.length;
+  const sourceSymbols = summary.security_count ?? new Set(records.map((item) => item.symbol).filter(Boolean)).size;
+  const orderedRevisions = [...revisions].reverse();
+  const marketOptions = [
+    ["", "全部市场"],
+    ["SH", "上海证券交易所"],
+    ["SZ", "深圳证券交易所"],
+    ["BJ", "北京证券交易所"],
+  ];
+  const filter = `<form class="filter-form intelligence-filter-form" id="market-intelligence-filter-form" aria-describedby="market-intelligence-filter-help">
+    <div class="field"><label for="intelligence-date">交易日期</label><input id="intelligence-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div>
+    <div class="field"><label for="intelligence-symbol">证券代码</label><input id="intelligence-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="六位代码"></div>
+    <div class="field"><label for="intelligence-market">交易市场</label><select id="intelligence-market" name="market">${marketOptions.map(([value, label]) => `<option value="${value}"${String(filters.market || "") === value ? " selected" : ""}>${label}</option>`).join("")}</select></div>
+    <div class="field intelligence-query"><label for="intelligence-query">名称或上榜原因</label><input id="intelligence-query" name="q" type="search" maxlength="100" value="${escapeHtml(filters.q ?? filters.query ?? "")}" placeholder="输入关键词"></div>
+    <div class="field"><label for="intelligence-limit">最多返回</label><input id="intelligence-limit" name="limit" type="number" min="1" max="500" step="1" inputmode="numeric" value="${escapeHtml(filters.limit || "200")}"></div>
+    <div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-intelligence-filter-clear>清除条件</button></div>
+  </form><p id="market-intelligence-filter-help" class="section-note">筛选只读取已固化的完整快照，不会重新请求网络。留空日期时读取最近一次成功发布的交易日。</p>`;
+  const statusCallout = running
+    ? `<aside class="callout warning" role="status" aria-live="polite"><strong>龙虎榜正在刷新</strong><p>后台任务正在抓取并校验全部分页；发布完成前继续显示上一份完整快照，不会展示半份结果。</p></aside>`
+    : latestJob?.status === "failed"
+      ? `<aside class="callout danger" role="alert"><strong>最近一次刷新失败</strong><p>已有快照没有被覆盖。请在<a href="#system">系统任务</a>中查看错误日志，再重新运行刷新。</p></aside>`
+      : status === "unavailable"
+        ? `<aside class="callout warning" role="status"><strong>尚未固化龙虎榜快照</strong><p>${escapeHtml(intelligenceUnavailableText(errors[0] || data.empty_state))}</p></aside>`
+        : contentStatus === "empty" && !["stale", "provisional"].includes(status)
+          ? `<aside class="callout warning" role="status"><strong>该交易日没有龙虎榜记录</strong><p>来源返回计数为 0 且分页校验完整；这与尚未刷新或网络失败是不同状态。</p></aside>`
+          : status === "stale" || data.stale === true
+            ? `<aside class="callout warning" role="status"><strong>龙虎榜快照早于当前行情</strong><p>${contentStatus === "empty" ? "该日来源经完整校验返回 0 条记录；" : ""}当前显示 ${escapeHtml(data.trade_date || "未知日期")} 的已固化证据，刷新前不要把它当作最新收盘事件。</p></aside>`
+            : status === "provisional"
+              ? `<aside class="callout warning" role="status"><strong>所选快照晚于完成截止</strong><p>${contentStatus === "empty" ? "该日来源经完整校验返回 0 条记录；" : ""}当前快照为 ${escapeHtml(data.trade_date || "未知日期")}，完成截止为 ${escapeHtml(freshness.completed_session_cutoff || "不可用")}；它只能作为待复核证据。</p></aside>`
+              : data.available === true && freshness.status === "unknown"
+                ? `<aside class="callout warning" role="status"><strong>无法核对快照新鲜度</strong><p>本地行情缓存不可用，当前只能确认龙虎榜快照自身完整，不能确认它是否为最近完成收盘日。</p></aside>`
+                : "";
+  const warningMarkup = warnings.length
+    ? `<aside class="callout warning" role="status"><strong>证据边界</strong><ul>${warnings.map((item) => `<li>${escapeHtml(intelligenceWarningText(item, coverage))}</li>`).join("")}</ul></aside>`
+    : "";
+  const rows = records.length
+    ? records.map((item) => {
+      const symbol = item.symbol || item.security_code || "—";
+      const change = item.change_pct ?? item.change_rate;
+      const net = item.net_amount ?? item.billboard_net_amount;
+      const reason = item.reason_text || item.reason || item.explanation || "原因未提供";
+      return `<tr>
+        <td class="symbol-cell"><strong>${escapeHtml(symbol)}</strong><span>${escapeHtml(item.name || item.security_name || "名称未提供")}</span></td>
+        <td>${escapeHtml(item.trade_market || item.market_name || item.market || "—")}</td>
+        <td class="numeric">${formatNumber(item.close ?? item.close_price, 2)}</td>
+        <td class="numeric ${tone(change)}">${formatPercentPoints(change, true)}</td>
+        <td class="numeric">${formatPercentPoints(item.turnover_pct ?? item.turnover_rate)}</td>
+        <td class="numeric">${formatMoney(item.buy_amount ?? item.billboard_buy_amount)}</td>
+        <td class="numeric">${formatMoney(item.sell_amount ?? item.billboard_sell_amount)}</td>
+        <td class="numeric ${tone(net)}">${formatMoney(net)}</td>
+        <td class="numeric ${tone(item.net_ratio ?? item.deal_net_ratio)}">${formatPercentPoints(item.net_ratio ?? item.deal_net_ratio, true)}</td>
+        <td class="intelligence-reason"><strong>${escapeHtml(reason)}</strong><span class="table-subtext mono">${escapeHtml(item.reason_code || item.change_type || item.trade_id || "—")}</span></td>
+      </tr>`;
+    }).join("")
+    : emptyRow(10, status === "unavailable" ? "尚无已发布的龙虎榜证据" : contentStatus === "empty" ? "该交易日来源返回 0 条记录" : "没有记录符合当前筛选条件");
+  const revisionRows = orderedRevisions.length
+    ? orderedRevisions.map((item) => `<tr><td>${item.revision_id === data.revision_id ? statusChip("当前", "info") : statusChip("历史", "neutral")}</td><td class="mono">${escapeHtml(item.revision_id || "—")}</td><td>${escapeHtml(item.trade_date || data.trade_date || "—")}</td><td>${formatDate(item.retrieved_at, true)}</td><td class="mono">${escapeHtml(shortFingerprint(item.evidence_fingerprint))}</td></tr>`).join("")
+    : emptyRow(5, "尚无修订历史");
+  return `<div class="page-stack intelligence-page">
+    ${pageIntro("龙虎榜收盘证据", "逐页校验东方财富日频龙虎榜，并将完整结果固化为只读修订链。", actionButton("refresh-market-intelligence", "primary"))}
+    <section class="intelligence-filter-band" aria-label="龙虎榜筛选">${filter}</section>
+    <section class="metric-strip" aria-label="龙虎榜摘要">
+      ${metric("证据状态", intelligenceStatusLabel(status), `${data.trade_date || "日期不可用"} · ${coverage.complete === true ? "分页已核对" : "覆盖不可确认"}${contentStatus === "empty" && status !== "empty" ? " · 合法空集" : ""}`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}
+      ${metric("显示记录 / 来源证券", `${formatInteger(returnedCount)} / ${data.available === true ? formatInteger(sourceSymbols) : "不可用"}`, data.available === true ? `来源 ${formatInteger(reportedCount)} 条 · 匹配 ${formatInteger(matchedCount)} 条 · 显示 ${formatInteger(returnedCount)} 条` : `来源计数不可用 · 显示 ${formatInteger(returnedCount)} 条`)}
+      ${metric("全量龙虎榜净额", data.available === true ? formatMoney(summary.net_amount) : "不可用", data.available === true ? `来源全量：买入 ${formatMoney(summary.buy_amount)} · 卖出 ${formatMoney(summary.sell_amount)}` : "尚无已发布证据，不能解释为零值", data.available === true ? tone(summary.net_amount) : "tone-negative")}
+      ${metric("来源 / 修订", source.provider === "eastmoney" ? "东方财富" : source.provider || "未提供", `${formatInteger(revisions.length)} 个可读修订 · 非交易所认证`, "tone-info")}
+    </section>
+    ${statusCallout}${warningMarkup}
+    <section class="panel">
+      ${panelHeader("龙虎榜明细", `${data.trade_date || "日期不可用"} · ${escapeHtml(source.report_name || "RPT_DAILYBILLBOARD_DETAILSNEW")} · ${formatInteger(returnedCount)} 条`)}
+      <div class="table-wrap" aria-label="龙虎榜明细宽表"><table class="data-table intelligence-table">
+        <thead><tr><th>证券</th><th>市场</th><th class="numeric">收盘价</th><th class="numeric">涨跌幅</th><th class="numeric">换手率</th><th class="numeric">买入额</th><th class="numeric">卖出额</th><th class="numeric">净额</th><th class="numeric">净额占比</th><th>上榜原因</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </section>
+    <section class="equal-layout">
+      <article class="panel">
+        ${panelHeader("来源与完整性", "复核日期、分页、指纹与来源边界")}
+        <div class="path-list">
+          <div class="path-row"><span>交易日期</span><code>${escapeHtml(data.trade_date || "—")}</code></div>
+          <div class="path-row"><span>完成截止</span><code>${escapeHtml(freshness.completed_session_cutoff || "—")}</code></div>
+          <div class="path-row"><span>来源报告</span><code>${escapeHtml(source.report_name || "—")}</code></div>
+          <div class="path-row"><span>分页 / 计数</span><code>${formatInteger(coverage.pages)} 页 · ${formatInteger(coverage.received_count)} / ${formatInteger(coverage.declared_count)} 条</code></div>
+          <div class="path-row"><span>字段完整性</span><code>${dataQuality.rows_with_missing_optional_values ? `${formatInteger(dataQuality.rows_with_missing_optional_values)} 条可选指标缺失；身份与金额字段完整` : data.available === true ? "身份、金额与可选指标完整" : "不可确认"}</code></div>
+          <div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div>
+          <div class="path-row"><span>证据指纹</span><code>${escapeHtml(data.evidence_fingerprint || data.fingerprint || "—")}</code></div>
+        </div>
+      </article>
+      <article class="panel">
+        ${panelHeader("不可变修订", "规范化证据相同则复用，记录变化才追加")}
+        <div class="table-wrap" aria-label="龙虎榜修订历史"><table class="data-table compact"><thead><tr><th>状态</th><th>快照 ID</th><th>交易日</th><th>抓取时间</th><th>证据指纹</th></tr></thead><tbody>${revisionRows}</tbody></table></div>
+      </article>
+    </section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>龙虎榜是单一公开来源的收盘事件证据，不是交易所认证行情，也不等同于市场情绪。当前页面固定为 ${authority.research_only === true && authority.execution_authorized === false ? "research_only" : "权限异常，需停止使用"}；它不能修改策略、持仓、订单、风控门禁或真实交易授权。</p></aside>
+  </div>`;
+}
+
 function renderUniverse(data) {
   const instruments = Array.isArray(data.instruments) ? data.instruments : [];
   const screen = data.screen || {};
@@ -5754,6 +5982,10 @@ async function startJob(action) {
     mergeJob(job);
     notify(`${JOB_LABELS[action] || action}已进入任务队列`);
     updateJobsUi();
+    if (action === "refresh-market-intelligence" && state.route === "intelligence") {
+      await loadRoute();
+      restoreFocusAfterRender('[data-job-action="refresh-market-intelligence"]', "intelligence");
+    }
   } catch (error) {
     notify(friendlyError(error.message), true);
   } finally {
@@ -5802,6 +6034,7 @@ async function pollJobs() {
     const payload = await api("/api/jobs");
     const jobs = payload.jobs || [];
     let storageRefreshMode = "";
+    let intelligenceRefreshCompleted = false;
     for (const job of jobs) {
       const previous = state.jobStates.get(job.id);
       if (previous && ["queued", "running"].includes(previous) && ["succeeded", "failed", "cancelled"].includes(job.status)) {
@@ -5825,6 +6058,9 @@ async function pollJobs() {
         ) {
           storageRefreshMode = "local";
         }
+        if (job.action === "refresh-market-intelligence") {
+          intelligenceRefreshCompleted = true;
+        }
       }
       state.jobStates.set(job.id, job.status);
     }
@@ -5837,6 +6073,9 @@ async function pollJobs() {
       await refreshStorageInventory(true);
     } else if (state.route === "storage" && storageRefreshMode === "local") {
       await reloadStorageStatus(true);
+    } else if (state.route === "intelligence" && intelligenceRefreshCompleted) {
+      await loadRoute();
+      restoreFocusAfterRender('[data-job-action="refresh-market-intelligence"]', "intelligence");
     }
   } catch {
     setConnection(false);
@@ -5910,6 +6149,11 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const intelligenceFilterClear = event.target.closest("[data-intelligence-filter-clear]");
+  if (intelligenceFilterClear) {
+    clearIntelligenceFilters();
+    return;
+  }
   const researchDigestGenerate = event.target.closest("[data-research-digest-generate]");
   if (researchDigestGenerate) {
     generateResearchDigests(researchDigestGenerate);
@@ -6244,7 +6488,10 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.id === "market-controls-form") {
+  if (event.target.id === "market-intelligence-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyIntelligenceFilterForm(event.target);
+  } else if (event.target.id === "market-controls-form") {
     event.preventDefault();
     const values = new FormData(event.target);
     const symbol = String(values.get("symbol") || "");
