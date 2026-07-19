@@ -25,6 +25,7 @@ from ..broker.paper_audit import audit_paper
 from ..broker.shadow import import_shadow_csv, shadow_account_status
 from ..broker.scope import create_broker_ledger_scope
 from ..config import AppConfig
+from ..data.capital_flow import CapitalFlowQuery, CapitalFlowStore
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..data.market_breadth import MarketBreadthQuery, MarketBreadthStore
@@ -1223,6 +1224,29 @@ class DashboardService:
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
             cutoff = None
         result = MarketBreadthStore(self.config).list(
+            store_query,
+            completed_session_cutoff=cutoff,
+        )
+        result["generated_at"] = _now()
+        return result
+
+    def capital_flow(
+        self,
+        query: CapitalFlowQuery | None = None,
+    ) -> dict[str, Any]:
+        """Read local board capital-flow evidence without refreshing a provider."""
+
+        selected = query or CapitalFlowQuery()
+        store_query = replace(selected, include_revisions=True)
+        cutoff = None
+        try:
+            market = self.market(recover_snapshot=False)
+            candidate = getattr(market, "completed_through", None)
+            if isinstance(candidate, date) and not isinstance(candidate, datetime):
+                cutoff = candidate
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            cutoff = None
+        result = CapitalFlowStore(self.config).list(
             store_query,
             completed_session_cutoff=cutoff,
         )

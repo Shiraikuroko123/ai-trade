@@ -27,6 +27,18 @@ This section describes the current `main` branch, not the public `v0.12.1`
 wheel. The persistent research-digest commands, HTTP routes, and Windows task
 scripts below will remain source-only until a later release is explicitly cut.
 
+- Added a third read-only closing-market intelligence dataset for Eastmoney's
+  provider-defined `m:90+t:2` board capital flow. The bounded refresh validates
+  all pages, stable counts, exact fields, unique board identities, quote dates,
+  finite present values, and at least one main-flow value before publication;
+  source nulls remain unavailable instead of becoming zero.
+- Added immutable capital-flow revisions, response and evidence fingerprints,
+  `capital-flow-refresh`, a fixed background job, and bounded local-only
+  `GET /api/capital-flow` filters. The workstation exposes unavailable, stale,
+  provisional, running, failed, and valid empty-filter states. Signed values
+  are paired with direction words, and warnings state that overlapping board
+  rows are not whole-market flow and order-size buckets remain uncertified,
+  single-source provider methodology with no execution authority.
 - Added a second read-only closing-market intelligence dataset for Eastmoney's
   provider-defined `m:90+t:2` board universe and the SH/SZ/BJ benchmark breadth
   responses. The bounded refresh validates all pages, counts, quote dates,

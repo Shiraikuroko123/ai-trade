@@ -1,10 +1,11 @@
 # Market Intelligence Evidence
 
 The market-intelligence layer on `main` is an **Unreleased**, read-only research
-surface. It currently contains two independent Eastmoney evidence datasets:
-the daily Dragon-Tiger List and closing market breadth with provider-defined
-board rankings. It does not provide intraday quotes, exchange-certified
-records, news sentiment, a strategy signal, or any order authority.
+surface. It currently contains three independent Eastmoney evidence datasets:
+the daily Dragon-Tiger List, closing market breadth with provider-defined board
+rankings, and provider-reported board capital flow. It does not provide intraday
+quotes, exchange-certified records, news sentiment, a strategy signal, or any
+order authority.
 
 ## Current Dataset
 
@@ -12,7 +13,7 @@ records, news sentiment, a strategy signal, or any order authority.
 |---|---|---|---|
 | `dragon_tiger_daily` | Eastmoney `RPT_DAILYBILLBOARD_DETAILSNEW` | One completed trading date | Implemented as a local immutable revision chain |
 | `sector_breadth` | Eastmoney `m:90+t:2` board pages plus SH/SZ/BJ benchmark quote responses | One completed trading date | Implemented as a separate local immutable revision chain; see `MARKET_BREADTH.md` |
-| Capital flow | None | - | Not implemented |
+| `capital_flow` | Eastmoney `m:90+t:2` board pages with provider-reported order-size buckets | One completed quote date | Implemented as a separate local immutable revision chain; see `CAPITAL_FLOW.md` |
 | Announcements and news | None | - | Not implemented |
 | Valuation percentiles | None | - | Not implemented |
 | Sentiment | None | - | Not implemented; Dragon-Tiger List evidence does not make `sentiment_coverage` available |
@@ -53,6 +54,19 @@ Its complete validation, source scope, filters, storage format, and observed
 single-source limitations are documented in [Market Breadth and Board
 Rankings](MARKET_BREADTH.md).
 
+Board capital flow also has its own command and fixed background action:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli capital-flow-refresh --date 2026-07-17
+```
+
+It retains main, super-large, large, medium, and small provider-reported net
+amounts and percentages. The source endpoint does not become a historical
+archive when an older date is supplied: every returned quote date must match
+the requested date before publication. Provider scope, bucket methodology,
+filters, storage, and non-aggregation rules are documented in [Board
+Capital-Flow Evidence](CAPITAL_FLOW.md).
+
 ## Validation Contract
 
 The provider accepts only the documented daily report envelope and a bounded
@@ -79,6 +93,7 @@ Validated records are normalized, deterministically ordered, and stored below:
 ```text
 state/market_intelligence/dragon_tiger/YYYY-MM-DD/
 state/market_intelligence/sector_breadth/YYYY-MM-DD/
+state/market_intelligence/capital_flow/YYYY-MM-DD/
 ```
 
 Each revision carries the source report, retrieval time, response and evidence
@@ -101,6 +116,8 @@ GET /api/market-intelligence
 GET /api/market-intelligence?date=2026-07-17&market=SZ&symbol=000722&q=涨幅&limit=100
 GET /api/market-breadth
 GET /api/market-breadth?date=2026-07-17&q=银行&sort=advance_share&direction=desc&limit=100
+GET /api/capital-flow
+GET /api/capital-flow?date=2026-07-17&q=银行&sort=main_net_inflow&direction=desc&limit=100
 ```
 
 Supported filters are `date`, `market`, `symbol`, `q`, and `limit`. Parameters
@@ -120,10 +137,11 @@ Every snapshot and response fixes:
 }
 ```
 
-Dragon-Tiger List and breadth rows may support a human research review. They
-cannot modify
+Dragon-Tiger List, breadth, and capital-flow rows may support a human research
+review. They cannot modify
 a strategy candidate, mark fundamental or sentiment coverage as available,
 write a paper or broker ledger, create an order, satisfy a promotion gate, or
-unlock live trading. Later flow, news, valuation, and sentiment adapters require
-their own provider, date, methodology, licensing, completeness, staleness, and
-cross-source contracts before entering this layer.
+unlock live trading. Board flow remains a single-source provider-methodology
+view, not a whole-market total. Later news, valuation, sentiment, or licensed
+flow adapters require their own provider, date, methodology, licensing,
+completeness, staleness, and cross-source contracts before entering this layer.

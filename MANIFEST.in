@@ -17,6 +17,7 @@ include docs/PAPER_TRADING.md
 include docs/MONITORING.md
 include docs/MARKET_INTELLIGENCE.md
 include docs/MARKET_BREADTH.md
+include docs/CAPITAL_FLOW.md
 include docs/RESEARCH_METHODOLOGY.md
 include docs/RESEARCH_JOURNAL.md
 include docs/RESEARCH_DIGESTS.md
@@ -36,6 +37,7 @@ include scripts/verify_distribution.py
 include src/ai_trade/monitoring.py
 include src/ai_trade/data/market_intelligence.py
 include src/ai_trade/data/market_breadth.py
+include src/ai_trade/data/capital_flow.py
 include src/ai_trade/research_archive.py
 include src/ai_trade/research_digest.py
 include src/ai_trade/web/assets/app.css

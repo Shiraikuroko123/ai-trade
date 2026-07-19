@@ -17,6 +17,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
     "refresh-data": ("download", "--force"),
     "refresh-market-intelligence": ("market-intelligence-refresh",),
     "refresh-market-breadth": ("market-breadth-refresh",),
+    "refresh-capital-flow": ("capital-flow-refresh",),
     "backtest": ("backtest",),
     "walk-forward": ("walk-forward",),
     "validate": ("validate",),

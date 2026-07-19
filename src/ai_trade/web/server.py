@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
+from ..data.capital_flow import CapitalFlowQuery
 from ..data.market_breadth import MarketBreadthQuery
 from ..data.market_intelligence import DragonTigerQuery
 from ..json_utils import loads_unique_json
@@ -106,6 +107,26 @@ MARKET_BREADTH_SORTS = frozenset(
         "volume_ratio",
         "market_cap",
         "constituent_count",
+        "name",
+    }
+)
+CAPITAL_FLOW_DEFAULT_LIMIT = 200
+CAPITAL_FLOW_MAX_LIMIT = 500
+CAPITAL_FLOW_MAX_QUERY_LENGTH = 1024
+CAPITAL_FLOW_MAX_TEXT_LENGTH = 100
+CAPITAL_FLOW_SORTS = frozenset(
+    {
+        "main_net_inflow",
+        "main_net_inflow_pct",
+        "super_large_net_inflow",
+        "super_large_net_inflow_pct",
+        "large_net_inflow",
+        "large_net_inflow_pct",
+        "medium_net_inflow",
+        "medium_net_inflow_pct",
+        "small_net_inflow",
+        "small_net_inflow_pct",
+        "change_pct",
         "name",
     }
 )
@@ -356,6 +377,9 @@ def _handler_factory(
                 elif parsed.path == "/api/market-breadth":
                     query = _parse_market_breadth_query(parsed.query)
                     self._json(service.market_breadth(query))
+                elif parsed.path == "/api/capital-flow":
+                    query = _parse_capital_flow_query(parsed.query)
+                    self._json(service.capital_flow(query))
                 elif parsed.path == "/api/monitoring":
                     if parsed.query:
                         raise ValueError(
@@ -1287,6 +1311,57 @@ def _parse_market_breadth_query(query: str) -> MarketBreadthQuery:
             f"limit must be between 1 and {MARKET_BREADTH_MAX_LIMIT}"
         )
     return MarketBreadthQuery(
+        trade_date=trade_date,
+        q=text_query,
+        sort=sort,
+        direction=direction,
+        limit=limit,
+    )
+
+
+def _parse_capital_flow_query(query: str) -> CapitalFlowQuery:
+    if len(query) > CAPITAL_FLOW_MAX_QUERY_LENGTH:
+        raise ValueError("Capital-flow query is too long")
+    if not query:
+        return CapitalFlowQuery()
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=5,
+        )
+    except ValueError as exc:
+        raise ValueError("Capital-flow query is invalid") from exc
+    unsupported = sorted(set(values) - {"date", "q", "sort", "direction", "limit"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported capital-flow query parameters: " + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    trade_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    text_query = values.get("q", [None])[0]
+    if text_query is not None:
+        text_query = _bounded_text(
+            text_query,
+            "q",
+            CAPITAL_FLOW_MAX_TEXT_LENGTH,
+        )
+    sort = values.get("sort", ["main_net_inflow"])[0]
+    if sort not in CAPITAL_FLOW_SORTS:
+        raise ValueError("Unsupported capital-flow sort field")
+    direction = values.get("direction", ["desc"])[0]
+    if direction not in {"asc", "desc"}:
+        raise ValueError("direction must be asc or desc")
+    raw_limit = values.get("limit", [str(CAPITAL_FLOW_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= CAPITAL_FLOW_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {CAPITAL_FLOW_MAX_LIMIT}")
+    return CapitalFlowQuery(
         trade_date=trade_date,
         q=text_query,
         sort=sort,

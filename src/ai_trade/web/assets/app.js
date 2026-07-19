@@ -58,6 +58,7 @@ const JOB_LABELS = {
   "cloud-backup": "备份行情",
   "refresh-market-intelligence": "刷新龙虎榜",
   "refresh-market-breadth": "刷新市场宽度",
+  "refresh-capital-flow": "刷新资金流",
   "monitoring-scan": "运行收盘监控",
 };
 
@@ -234,6 +235,13 @@ const state = {
     date: "",
     query: "",
     sort: "change_pct",
+    direction: "desc",
+    limit: "200",
+  },
+  capitalFlowFilters: {
+    date: "",
+    query: "",
+    sort: "main_net_inflow",
     direction: "desc",
     limit: "200",
   },
@@ -893,6 +901,18 @@ function marketBreadthPath() {
   return `/api/market-breadth${query ? `?${query}` : ""}`;
 }
 
+function capitalFlowPath() {
+  const params = new URLSearchParams();
+  const filters = state.capitalFlowFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.query) params.set("q", filters.query);
+  if (filters.sort && filters.sort !== "main_net_inflow") params.set("sort", filters.sort);
+  if (filters.direction && filters.direction !== "desc") params.set("direction", filters.direction);
+  if (filters.limit && filters.limit !== "200") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/capital-flow${query ? `?${query}` : ""}`;
+}
+
 async function loadRoute() {
   state.controller?.abort();
   destroyMarketChart();
@@ -927,11 +947,16 @@ async function loadRoute() {
         universe_error: universeResult.status === "rejected" ? friendlyError(universeResult.reason?.message) : "",
       };
     } else if (requestedRoute === "intelligence") {
-      const [dragonTigerResult, breadthResult] = await Promise.allSettled([
+      const [dragonTigerResult, breadthResult, capitalFlowResult] = await Promise.allSettled([
         api(marketIntelligencePath(), { signal }),
         api(marketBreadthPath(), { signal }),
+        api(capitalFlowPath(), { signal }),
       ]);
-      if (dragonTigerResult.status === "rejected" && breadthResult.status === "rejected") {
+      if (
+        dragonTigerResult.status === "rejected"
+        && breadthResult.status === "rejected"
+        && capitalFlowResult.status === "rejected"
+      ) {
         throw dragonTigerResult.reason;
       }
       payload = {
@@ -939,11 +964,15 @@ async function loadRoute() {
         dragon_tiger_error: dragonTigerResult.status === "rejected" ? friendlyError(dragonTigerResult.reason?.message) : "",
         breadth: breadthResult.status === "fulfilled" ? breadthResult.value : null,
         breadth_error: breadthResult.status === "rejected" ? friendlyError(breadthResult.reason?.message) : "",
+        capital_flow: capitalFlowResult.status === "fulfilled" ? capitalFlowResult.value : null,
+        capital_flow_error: capitalFlowResult.status === "rejected" ? friendlyError(capitalFlowResult.reason?.message) : "",
         generated_at: breadthResult.status === "fulfilled"
           ? breadthResult.value?.generated_at
-          : dragonTigerResult.status === "fulfilled"
-            ? dragonTigerResult.value?.generated_at
-            : null,
+          : capitalFlowResult.status === "fulfilled"
+            ? capitalFlowResult.value?.generated_at
+            : dragonTigerResult.status === "fulfilled"
+              ? dragonTigerResult.value?.generated_at
+              : null,
       };
     } else if (requestedRoute === "risk") {
       const [overview, research] = await Promise.all([
@@ -1037,7 +1066,7 @@ function updateRouteDate(payload) {
     value = payload.chart?.data_date;
     label = "K 线截止";
   } else if (state.route === "intelligence") {
-    value = payload.breadth?.trade_date || payload.dragon_tiger?.trade_date;
+    value = payload.breadth?.trade_date || payload.capital_flow?.trade_date || payload.dragon_tiger?.trade_date;
     label = "情报日期";
   } else if (state.route === "monitoring") {
     value = payload.scan?.data_date || payload.snapshot?.data_date;
@@ -1223,6 +1252,32 @@ async function clearBreadthFilters() {
   };
   await loadRoute();
   restoreFocusAfterRender("[data-market-breadth-filter-clear]", "intelligence");
+}
+
+async function applyCapitalFlowFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.capitalFlowFilters = {
+    date: String(values.get("date") || ""),
+    query: String(values.get("q") || "").trim(),
+    sort: String(values.get("sort") || "main_net_inflow"),
+    direction: String(values.get("direction") || "desc"),
+    limit: String(values.get("limit") || "200"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#capital-flow-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearCapitalFlowFilters() {
+  state.capitalFlowFilters = {
+    date: "",
+    query: "",
+    sort: "main_net_inflow",
+    direction: "desc",
+    limit: "200",
+  };
+  await loadRoute();
+  restoreFocusAfterRender("[data-capital-flow-filter-clear]", "intelligence");
 }
 
 function syncJournalDecisionControl() {
@@ -4770,7 +4825,7 @@ function renderMarketBreadth(data, requestError = "") {
   const revisionRows = orderedRevisions.length
     ? orderedRevisions.map((item) => `<tr><td>${item.revision_id === snapshot.revision_id ? statusChip("当前", "info") : statusChip("历史", "neutral")}</td><td class="mono">${escapeHtml(item.revision_id || "—")}</td><td>${escapeHtml(item.trade_date || snapshot.trade_date || "—")}</td><td>${formatDate(item.retrieved_at, true)}</td><td class="mono">${escapeHtml(shortFingerprint(item.evidence_fingerprint))}</td></tr>`).join("")
     : emptyRow(5, "尚无修订历史");
-  return `<section id="market-breadth-evidence" class="intelligence-dataset market-breadth-dataset">
+  return `<section id="market-breadth-evidence" class="intelligence-dataset market-breadth-dataset" tabindex="-1">
     ${pageIntro("市场宽度与板块排名", "用同一收盘日的来源计数观察上涨/下跌广度，再比较东方财富定义的板块集合；不自动生成交易信号。", actionButton("refresh-market-breadth", "primary"))}
     <section class="intelligence-filter-band" aria-label="市场宽度筛选">${form}</section>
     <section class="metric-strip" aria-label="市场宽度摘要">
@@ -4810,13 +4865,184 @@ function renderMarketBreadth(data, requestError = "") {
   </section>`;
 }
 
+const CAPITAL_FLOW_SORT_LABELS = {
+  main_net_inflow: "主力净额",
+  main_net_inflow_pct: "主力净额占比",
+  super_large_net_inflow: "超大单净额",
+  super_large_net_inflow_pct: "超大单净额占比",
+  large_net_inflow: "大单净额",
+  large_net_inflow_pct: "大单净额占比",
+  medium_net_inflow: "中单净额",
+  medium_net_inflow_pct: "中单净额占比",
+  small_net_inflow: "小单净额",
+  small_net_inflow_pct: "小单净额占比",
+  change_pct: "板块涨跌幅",
+  name: "板块名称",
+};
+
+function formatSignedCompactMoney(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  const sign = parsed > 0 ? "+" : parsed < 0 ? "-" : "";
+  return `${sign}¥${compactFormatter.format(Math.abs(parsed))}`;
+}
+
+function capitalFlowDirectionLabel(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "方向不可用";
+  if (parsed > 0) return "净流入";
+  if (parsed < 0) return "净流出";
+  return "净额持平";
+}
+
+function capitalFlowAmountText(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "资金净额不可用";
+  return `${capitalFlowDirectionLabel(parsed)} ${formatSignedCompactMoney(parsed)}`;
+}
+
+function capitalFlowWarningText(item, coverage) {
+  const code = String(item?.code || "");
+  if (code === "not_exchange_certified") {
+    return "东方财富是第三方公开研究来源，不是交易所认证的资金流数据。";
+  }
+  if (code === "provider_flow_scope") {
+    return "资金流覆盖东方财富 m:90+t:2 定义的板块集合；板块可能重叠，板块行求和不能解释为全市场净流入。";
+  }
+  if (code === "provider_flow_methodology") {
+    return "主力、超大单、大单、中单和小单沿用提供方订单规模口径，目前没有交易所定义或独立跨源校验。";
+  }
+  if (code === "optional_metric_missing") {
+    const missing = coverage?.data_quality?.rows_with_missing_optional_values;
+    return `${formatInteger(missing)} 条板块记录至少缺少一个可选资金流指标；页面保留“—”，没有填充为 0。`;
+  }
+  if (code === "capital_flow_stale") {
+    return "本地资金流快照早于当前已完成收盘日。";
+  }
+  if (code === "after_completed_session_cutoff") {
+    return "所选资金流快照晚于当前已完成收盘日，只能作为待复核证据。";
+  }
+  return String(item?.message || item || "资金流证据边界待复核");
+}
+
+function capitalFlowErrorText(item) {
+  const code = String(item?.code || "");
+  if (code === "capital_flow_not_refreshed") {
+    return "本机尚未固化资金流快照；请先运行“刷新资金流”。";
+  }
+  if (code === "capital_flow_refresh_failed") {
+    return "最近一次资金流刷新失败；已有完整快照不会被覆盖。请在系统任务中查看详情并重试。";
+  }
+  return String(item?.message || item || "资金流证据暂不可用，请查看任务日志。");
+}
+
+function renderCapitalFlow(data, requestError = "") {
+  const snapshot = data || {};
+  const summary = snapshot.summary || {};
+  const coverage = snapshot.coverage || {};
+  const quality = coverage.data_quality || {};
+  const source = snapshot.source || {};
+  const flows = Array.isArray(snapshot.flows) ? snapshot.flows : [];
+  const revisions = Array.isArray(snapshot.revisions) ? snapshot.revisions : [];
+  const filters = snapshot.filters || {};
+  const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+  const errors = Array.isArray(snapshot.errors) ? snapshot.errors : [];
+  const status = String(snapshot.status || (snapshot.available === true ? "current" : "unavailable")).toLowerCase();
+  const statusKind = breadthStatusKind(status);
+  const available = snapshot.available === true;
+  const running = state.jobs.some((job) => job.action === "refresh-capital-flow" && ["queued", "running"].includes(job.status));
+  const latestJob = state.jobs.find((job) => job.action === "refresh-capital-flow");
+  const returnedCount = summary.returned_flow_count ?? flows.length;
+  const matchedCount = summary.matched_flow_count ?? flows.length;
+  const sortKey = String(filters.sort || "main_net_inflow");
+  const sortLabel = CAPITAL_FLOW_SORT_LABELS[sortKey] || "排序指标待确认";
+  const sortOptions = Object.entries(CAPITAL_FLOW_SORT_LABELS)
+    .map(([value, label]) => `<option value="${value}"${sortKey === value ? " selected" : ""}>${label}</option>`)
+    .join("");
+  const form = `<form class="filter-form capital-flow-filter-form" id="capital-flow-filter-form" aria-describedby="capital-flow-filter-help">
+    <div class="field"><label for="capital-flow-date">交易日期</label><input id="capital-flow-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div>
+    <div class="field capital-flow-query"><label for="capital-flow-query">板块名称或代码</label><input id="capital-flow-query" name="q" type="search" maxlength="100" value="${escapeHtml(filters.q ?? filters.query ?? "")}" placeholder="输入板块关键词"></div>
+    <div class="field"><label for="capital-flow-sort">排名指标</label><select id="capital-flow-sort" name="sort">${sortOptions}</select></div>
+    <div class="field"><label for="capital-flow-direction">排序方向</label><select id="capital-flow-direction" name="direction"><option value="desc"${String(filters.direction || "desc") === "desc" ? " selected" : ""}>从高到低</option><option value="asc"${String(filters.direction || "") === "asc" ? " selected" : ""}>从低到高</option></select></div>
+    <div class="field"><label for="capital-flow-limit">最多返回</label><input id="capital-flow-limit" name="limit" type="number" min="1" max="500" step="1" inputmode="numeric" value="${escapeHtml(filters.limit || "200")}"></div>
+    <div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-capital-flow-filter-clear>清除条件</button></div>
+  </form><p id="capital-flow-filter-help" class="section-note">筛选只读取已固化的完整快照，不会重新请求网络。金额单位为人民币元；板块会重叠，因此页面不把板块行合计称为全市场资金流。</p>`;
+  const statusCallout = running
+    ? `<aside class="callout warning" role="status" aria-live="polite"><strong>资金流正在刷新</strong><p>后台任务正在抓取并校验全部板块分页；发布完成前继续显示上一份完整快照，不会展示半份结果。</p></aside>`
+    : latestJob?.status === "failed"
+      ? `<aside class="callout danger" role="alert"><strong>最近一次资金流刷新失败</strong><p>已有快照没有被覆盖。请在<a href="#system">系统任务</a>中查看错误日志，再重新运行刷新。</p></aside>`
+      : requestError
+        ? `<aside class="callout danger" role="alert"><strong>资金流接口读取失败</strong><p>${escapeHtml(requestError)}</p></aside>`
+        : !available
+          ? `<aside class="callout warning" role="status"><strong>尚未固化资金流快照</strong><p>${escapeHtml(capitalFlowErrorText(errors[0]) || "先运行刷新资金流，再查看板块订单规模净额。")}</p></aside>`
+          : status === "stale"
+            ? `<aside class="callout warning" role="status"><strong>资金流快照早于当前行情</strong><p>当前显示 ${escapeHtml(snapshot.trade_date || "未知日期")} 的已固化证据，刷新前不要把它当作最新收盘资金流。</p></aside>`
+            : status === "provisional"
+              ? `<aside class="callout warning" role="status"><strong>所选资金流晚于完成截止</strong><p>当前快照为 ${escapeHtml(snapshot.trade_date || "未知日期")}，只能作为待复核证据。</p></aside>`
+              : flows.length === 0
+                ? `<aside class="callout warning" role="status"><strong>当前筛选没有匹配板块</strong><p>来源快照仍然完整；请清除关键词或放宽筛选条件。</p></aside>`
+                : "";
+  const warningMarkup = warnings.length
+    ? `<aside class="callout warning" role="status"><strong>证据边界</strong><ul>${warnings.map((item) => `<li>${escapeHtml(capitalFlowWarningText(item, coverage))}</li>`).join("")}</ul></aside>`
+    : "";
+  const rows = flows.length
+    ? flows.map((item, index) => `<tr>
+        <td class="numeric">${formatInteger(index + 1)}</td>
+        <td><strong>${escapeHtml(item.name || "—")}</strong><span class="table-subtext mono">${escapeHtml(item.code || "—")}</span></td>
+        <td class="numeric ${tone(item.change_pct)}"><strong>${escapeHtml(breadthChangeText(item.change_pct))}</strong></td>
+        <td class="numeric ${tone(item.main_net_inflow)}"><strong>${escapeHtml(capitalFlowAmountText(item.main_net_inflow))}</strong></td>
+        <td class="numeric ${tone(item.main_net_inflow_pct)}"><strong>${formatPercentPoints(item.main_net_inflow_pct, true)}</strong><span class="table-subtext">主力净额占比</span></td>
+        <td class="numeric ${tone(item.super_large_net_inflow)}"><strong>${escapeHtml(formatSignedCompactMoney(item.super_large_net_inflow))}</strong><span class="table-subtext">${escapeHtml(capitalFlowDirectionLabel(item.super_large_net_inflow))}</span></td>
+        <td class="numeric ${tone(item.large_net_inflow)}"><strong>${escapeHtml(formatSignedCompactMoney(item.large_net_inflow))}</strong><span class="table-subtext">${escapeHtml(capitalFlowDirectionLabel(item.large_net_inflow))}</span></td>
+        <td class="numeric ${tone(item.medium_net_inflow)}"><strong>${escapeHtml(formatSignedCompactMoney(item.medium_net_inflow))}</strong><span class="table-subtext">${escapeHtml(capitalFlowDirectionLabel(item.medium_net_inflow))}</span></td>
+        <td class="numeric ${tone(item.small_net_inflow)}"><strong>${escapeHtml(formatSignedCompactMoney(item.small_net_inflow))}</strong><span class="table-subtext">${escapeHtml(capitalFlowDirectionLabel(item.small_net_inflow))}</span></td>
+        <td class="numeric">${escapeHtml(item.quote_date || "—")}</td>
+      </tr>`).join("")
+    : emptyRow(10, available ? "没有记录符合当前筛选条件" : "尚无已发布的资金流证据");
+  const orderedRevisions = [...revisions].reverse();
+  const revisionRows = orderedRevisions.length
+    ? orderedRevisions.map((item) => `<tr><td>${item.revision_id === snapshot.revision_id ? statusChip("当前", "info") : statusChip("历史", "neutral")}</td><td class="mono">${escapeHtml(item.revision_id || "—")}</td><td>${escapeHtml(item.trade_date || snapshot.trade_date || "—")}</td><td>${formatDate(item.retrieved_at, true)}</td><td class="mono">${escapeHtml(shortFingerprint(item.evidence_fingerprint))}</td></tr>`).join("")
+    : emptyRow(5, "尚无修订历史");
+  const topLabel = finite(summary.top_inflow_value) !== null && Number(summary.top_inflow_value) > 0 ? "最大主力净流入" : "最高主力净额";
+  const bottomLabel = finite(summary.top_outflow_value) !== null && Number(summary.top_outflow_value) < 0 ? "最大主力净流出" : "最低主力净额";
+  return `<section id="capital-flow-evidence" class="intelligence-dataset capital-flow-dataset" tabindex="-1">
+    ${pageIntro("板块资金流", "比较同一收盘日的提供方订单规模净额；用于研究分化，不自动生成交易信号。", actionButton("refresh-capital-flow", "primary"))}
+    <section class="intelligence-filter-band" aria-label="板块资金流筛选">${form}</section>
+    <section class="metric-strip" aria-label="板块资金流摘要">
+      ${metric("证据状态", breadthStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · ${coverage.complete === true ? "分页已核对" : "覆盖不可确认"}`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}
+      ${metric("主力净流入 / 净流出", available ? `${formatInteger(summary.positive_main_count)} / ${formatInteger(summary.negative_main_count)}` : "不可用", available ? `持平 ${formatInteger(summary.flat_main_count)} · 核心值缺失 ${formatInteger(summary.missing_main_count)}` : "尚无已发布证据")}
+      ${metric("净流入板块占比", available ? formatPercent(summary.positive_main_share) : "不可用", available ? `显示 ${formatInteger(returnedCount)} / 匹配 ${formatInteger(matchedCount)} · 来源 ${formatInteger(summary.flow_count)}` : "来源计数不可用", available ? tone(summary.positive_main_share - 0.5) : "tone-negative")}
+      ${metric(topLabel, available ? capitalFlowAmountText(summary.top_inflow_value) : "不可用", available ? `${summary.top_inflow_name || "板块名称不可用"} · ${summary.top_inflow_code || "代码不可用"}` : "来源极值不可用", available ? tone(summary.top_inflow_value) : "tone-negative")}
+      ${metric(bottomLabel, available ? capitalFlowAmountText(summary.top_outflow_value) : "不可用", available ? `${summary.top_outflow_name || "板块名称不可用"} · ${summary.top_outflow_code || "代码不可用"}` : "来源极值不可用", available ? tone(summary.top_outflow_value) : "tone-negative")}
+    </section>
+    ${statusCallout}${warningMarkup}
+    <section class="panel">
+      ${panelHeader("板块订单规模净额", `${snapshot.trade_date || "日期不可用"} · ${formatInteger(returnedCount)} 条显示 · ${sortLabel} ${String(filters.direction || "desc") === "desc" ? "降序" : "升序"}`)}
+      <div class="table-wrap" aria-label="板块资金流宽表"><table class="data-table capital-flow-table"><thead><tr><th class="numeric">排名</th><th>板块</th><th>涨跌</th><th class="numeric">主力净额</th><th class="numeric">主力占比</th><th class="numeric">超大单</th><th class="numeric">大单</th><th class="numeric">中单</th><th class="numeric">小单</th><th class="numeric">报价日期</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </section>
+    <section class="equal-layout">
+      <article class="panel">
+        ${panelHeader("来源与完整性", "复核日期、分页、单位、方法和指纹")}
+        <div class="path-list"><div class="path-row"><span>交易日期</span><code>${escapeHtml(snapshot.trade_date || "—")}</code></div><div class="path-row"><span>完成截止</span><code>${escapeHtml(snapshot.freshness?.completed_session_cutoff || "—")}</code></div><div class="path-row"><span>来源范围</span><code>${escapeHtml(source.board_filter || "—")} · ${escapeHtml(source.provider || "—")}</code></div><div class="path-row"><span>分页 / 计数</span><code>${available ? `${formatInteger(coverage.pages)} 页 · ${formatInteger(coverage.received_count)} / ${formatInteger(coverage.declared_count)} 条` : "不可用"}</code></div><div class="path-row"><span>金额单位 / 方法</span><code>${escapeHtml(source.amount_unit || "—")} · ${escapeHtml(source.methodology || "—")}</code></div><div class="path-row"><span>核心值 / 完整订单规模</span><code>${available ? `${formatInteger(quality.main_metric_available_rows)} / ${formatInteger(quality.complete_order_size_rows)} 条` : "不可用"}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div>
+      </article>
+      <article class="panel">
+        ${panelHeader("不可变修订", "规范化证据相同则复用，记录变化才追加")}
+        <div class="table-wrap" aria-label="板块资金流修订历史"><table class="data-table compact"><thead><tr><th>状态</th><th>快照 ID</th><th>交易日</th><th>抓取时间</th><th>证据指纹</th></tr></thead><tbody>${revisionRows}</tbody></table></div>
+      </article>
+    </section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>板块资金流是第三方提供方口径的收盘研究证据，不是交易所认证统计，也不能把重叠板块行求和解释为全市场资金流。当前页面固定为 ${snapshot.authority?.research_only === true && snapshot.authority?.execution_authorized === false ? "research_only" : "权限异常，需停止使用"}；它不能修改策略、持仓、订单、风控门禁或真实交易授权。</p></aside>
+  </section>`;
+}
+
 function renderMarketIntelligence(payload) {
   const dragonTiger = payload?.dragon_tiger || payload || {};
   const breadth = payload?.breadth || {};
+  const capitalFlow = payload?.capital_flow || {};
   return `<div class="page-stack intelligence-page">
-    ${pageIntro("收盘市场情报", "先看市场宽度与板块分化，再复核龙虎榜事件；两个数据集各自披露日期、来源和完整性。")}
-    <nav class="intelligence-jump-nav" aria-label="市场情报数据集"><a href="#market-breadth-evidence">市场宽度与板块排名</a><a href="#dragon-tiger-evidence">龙虎榜收盘证据</a></nav>
+    ${pageIntro("收盘市场情报", "先看市场宽度，再比较板块资金流，最后复核龙虎榜事件；三个数据集分别披露日期、来源和完整性。")}
+    <nav class="intelligence-jump-nav" aria-label="市场情报数据集"><a href="#intelligence" data-intelligence-jump="market-breadth-evidence">市场宽度与板块排名</a><a href="#intelligence" data-intelligence-jump="capital-flow-evidence">板块资金流</a><a href="#intelligence" data-intelligence-jump="dragon-tiger-evidence">龙虎榜收盘证据</a></nav>
     ${renderMarketBreadth(breadth, payload?.breadth_error || "")}
+    ${renderCapitalFlow(capitalFlow, payload?.capital_flow_error || "")}
     ${renderDragonTigerIntelligence(dragonTiger, payload?.dragon_tiger_error || "")}
   </div>`;
 }
@@ -4905,7 +5131,7 @@ function renderDragonTigerIntelligence(data, requestError = "") {
   const revisionRows = orderedRevisions.length
     ? orderedRevisions.map((item) => `<tr><td>${item.revision_id === data.revision_id ? statusChip("当前", "info") : statusChip("历史", "neutral")}</td><td class="mono">${escapeHtml(item.revision_id || "—")}</td><td>${escapeHtml(item.trade_date || data.trade_date || "—")}</td><td>${formatDate(item.retrieved_at, true)}</td><td class="mono">${escapeHtml(shortFingerprint(item.evidence_fingerprint))}</td></tr>`).join("")
     : emptyRow(5, "尚无修订历史");
-  return `<section id="dragon-tiger-evidence" class="intelligence-dataset dragon-tiger-dataset">
+  return `<section id="dragon-tiger-evidence" class="intelligence-dataset dragon-tiger-dataset" tabindex="-1">
     ${pageIntro("龙虎榜收盘证据", "逐页校验东方财富日频龙虎榜，并将完整结果固化为只读修订链。", actionButton("refresh-market-intelligence", "primary"))}
     <section class="intelligence-filter-band" aria-label="龙虎榜筛选">${filter}</section>
     <section class="metric-strip" aria-label="龙虎榜摘要">
@@ -6254,7 +6480,7 @@ async function startJob(action) {
     mergeJob(job);
     notify(`${JOB_LABELS[action] || action}已进入任务队列`);
     updateJobsUi();
-    if (["refresh-market-intelligence", "refresh-market-breadth"].includes(action) && state.route === "intelligence") {
+    if (["refresh-market-intelligence", "refresh-market-breadth", "refresh-capital-flow"].includes(action) && state.route === "intelligence") {
       await loadRoute();
       restoreFocusAfterRender(`[data-job-action="${action}"]`, "intelligence");
     }
@@ -6330,7 +6556,7 @@ async function pollJobs() {
         ) {
           storageRefreshMode = "local";
         }
-        if (["refresh-market-intelligence", "refresh-market-breadth"].includes(job.action)) {
+        if (["refresh-market-intelligence", "refresh-market-breadth", "refresh-capital-flow"].includes(job.action)) {
           intelligenceRefreshCompleted = job.action;
         }
       }
@@ -6403,6 +6629,31 @@ function notify(message, error = false) {
   window.setTimeout(() => toast.remove(), 4200);
 }
 
+function jumpToIntelligenceDataset(link) {
+  const allowed = new Set([
+    "market-breadth-evidence",
+    "capital-flow-evidence",
+    "dragon-tiger-evidence",
+  ]);
+  const targetId = String(link?.dataset?.intelligenceJump || "");
+  if (!allowed.has(targetId)) return;
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({ behavior: "auto", block: "start" });
+  const topbar = document.querySelector(".topbar");
+  const coveredThrough = topbar?.getBoundingClientRect().bottom || 0;
+  const targetTop = target.getBoundingClientRect().top;
+  const clearance = 12;
+  if (targetTop < coveredThrough + clearance) {
+    window.scrollBy({
+      top: targetTop - coveredThrough - clearance,
+      left: 0,
+      behavior: "auto",
+    });
+  }
+}
+
 async function logout() {
   logoutButton.disabled = true;
   logoutButton.textContent = "正在退出";
@@ -6421,6 +6672,17 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const intelligenceJump = event.target.closest("[data-intelligence-jump]");
+  if (intelligenceJump) {
+    event.preventDefault();
+    jumpToIntelligenceDataset(intelligenceJump);
+    return;
+  }
+  const capitalFlowFilterClear = event.target.closest("[data-capital-flow-filter-clear]");
+  if (capitalFlowFilterClear) {
+    clearCapitalFlowFilters();
+    return;
+  }
   const breadthFilterClear = event.target.closest("[data-market-breadth-filter-clear]");
   if (breadthFilterClear) {
     clearBreadthFilters();
@@ -6765,7 +7027,10 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.id === "market-breadth-filter-form") {
+  if (event.target.id === "capital-flow-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyCapitalFlowFilterForm(event.target);
+  } else if (event.target.id === "market-breadth-filter-form") {
     event.preventDefault();
     if (event.target.reportValidity()) applyBreadthFilterForm(event.target);
   } else if (event.target.id === "market-intelligence-filter-form") {

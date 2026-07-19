@@ -35,13 +35,16 @@ was used. This is intentional: each adapter needs an explicit license review,
 field mapping, adjustment policy, rate-limit policy and independent fixtures
 before it can enter a release.
 
-The Unreleased Dragon-Tiger List and market-breadth adapters documented in
-`MARKET_INTELLIGENCE.md` and `MARKET_BREADTH.md` are separate evidence
-boundaries. They do not implement `MarketDataProvider`, cannot supply or
-replace an OHLCV file, and are not counted as a third independent daily-bar
-source. Market breadth uses a provider-defined board universe and three
-benchmark quote responses; it is not a licensed industry taxonomy or an
-independent cross-source validation route.
+The Unreleased Dragon-Tiger List, market-breadth, and board-capital-flow
+adapters documented in `MARKET_INTELLIGENCE.md`, `MARKET_BREADTH.md`, and
+`CAPITAL_FLOW.md` are separate evidence boundaries. They do not implement
+`MarketDataProvider`, cannot supply or replace an OHLCV file, and are not
+counted as independent daily-bar sources. Market breadth uses a provider-defined
+board universe and three benchmark quote responses; capital flow uses the same
+provider-defined board scope with Eastmoney's order-size methodology. Neither
+is a licensed industry taxonomy, exchange-certified statistic, or independent
+cross-source validation route, and overlapping board-flow rows cannot be summed
+as whole-market flow.
 
 ## Manifest evidence
 

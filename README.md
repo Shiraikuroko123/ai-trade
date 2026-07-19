@@ -5,11 +5,11 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 `v0.12.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
-本 README 同时描述 `main` 分支中标记为 **Unreleased** 的后续能力。研究监控、持久化日报/周报、龙虎榜、市场宽度与板块排名、`archive-generate` 及相关后台任务目前只在 `main` 源码中提供，不包含在公开的 `v0.12.1` wheel 中；安装公开 wheel 的用户应以该 Release 随附文档和 [更新记录](CHANGELOG.md) 的 `0.12.1` 小节为准。需要试用这些未发布能力时必须克隆 `main` 并完成源码初始化，不能把下面的未发布说明当作 `v0.12.1` Release 承诺。
+本 README 同时描述 `main` 分支中标记为 **Unreleased** 的后续能力。研究监控、持久化日报/周报、龙虎榜、市场宽度与板块排名、板块资金流、`archive-generate` 及相关后台任务目前只在 `main` 源码中提供，不包含在公开的 `v0.12.1` wheel 中；安装公开 wheel 的用户应以该 Release 随附文档和 [更新记录](CHANGELOG.md) 的 `0.12.1` 小节为准。需要试用这些未发布能力时必须克隆 `main` 并完成源码初始化，不能把下面的未发布说明当作 `v0.12.1` Release 承诺。
 
 系统已经贯通以下流程：
 
@@ -32,6 +32,7 @@
 17. 在研究页把模拟净值账本、不可覆盖的模拟日报和当前用户日志投影为逐日摘要、ISO 周度复盘与历史持仓数量快照，并可将该证据按用户和模拟账期追加为不可变日报/周报修订链；缺失或不一致证据始终显式披露。
 18. 把东方财富指定交易日的完整龙虎榜分页校验后固化为不可变修订，在独立市场情报页披露日期、来源、覆盖、指纹和筛选结果；该单源证据不等同情绪，也不进入策略或交易权限。
 19. 把东方财富指定交易日的全部板块分页与上证、深证、北证三条宽度响应联合校验后固化为另一条不可变修订链，提供可筛选板块排名和涨跌宽度；来源板块集合不冒充纯行业分类，也不生成交易信号。
+20. 把东方财富指定交易日的全部 `m:90+t:2` 板块分页校验后固化为第三条不可变修订链，披露主力及超大单、大单、中单、小单净额和占比；保留提供方空值、单位、日期、分页、指纹和重叠板块警告，不把板块行合计当作全市场资金流。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -212,14 +213,15 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 ## 收盘市场情报
 
-`main` / **Unreleased** 新增左侧 **市场情报** 视图。龙虎榜数据集抓取指定交易日的全部分页，校验交易日、唯一键、字段、有限数值、金额关系、分页数和总记录数后，才在 `state/market_intelligence/` 追加一份不可覆盖的本地 revision。市场宽度数据集则联合校验东方财富 `m:90+t:2` 板块集合的全部分页，以及上证、深证、北证三条基准响应中的上涨、下跌和平盘家数。两个数据集相互独立；相同规范化证据会幂等复用，同日证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
+`main` / **Unreleased** 新增左侧 **市场情报** 视图。龙虎榜数据集抓取指定交易日的全部分页，校验交易日、唯一键、字段、有限数值、金额关系、分页数和总记录数后，才在 `state/market_intelligence/` 追加一份不可覆盖的本地 revision。市场宽度数据集联合校验东方财富 `m:90+t:2` 板块集合的全部分页，以及上证、深证、北证三条基准响应中的上涨、下跌和平盘家数；板块资金流数据集单独校验同一板块集合的完整分页、主力及分桶资金流字段和报价日期。三个数据集相互独立；相同规范化证据会幂等复用，同日证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
 
-龙虎榜支持按交易日、市场、六位证券代码和上榜原因筛选；板块排名支持按交易日、名称/代码、涨跌幅、上涨占比、换手率、量比、市值或成分数量排序。GET 请求都只读本地证据且不会触网。页面会区分尚未抓取、合法空筛选、快照滞后、运行中和刷新失败，并披露来源口径、完整性、响应与证据指纹。东方财富是单一公开来源而不是交易所认证数据；`m:90+t:2` 是提供方定义的板块集合，不等同经许可的纯行业分类，宽度计数也不等同市场情绪，因此 AI 的 `sentiment_coverage` 仍保持 `UNAVAILABLE`。总览见 [市场情报证据](docs/MARKET_INTELLIGENCE.md)，板块数据口径、命令和接口见 [市场宽度与板块排名](docs/MARKET_BREADTH.md)。
+龙虎榜支持按交易日、市场、六位证券代码和上榜原因筛选；板块排名支持按交易日、名称/代码、涨跌幅、上涨占比、换手率、量比、市值或成分数量排序；资金流支持按交易日、名称/代码、涨跌幅、主力或各订单规模分桶净额/占比排序。GET 请求都只读本地证据且不会触网。页面会区分尚未抓取、合法空筛选、快照滞后、运行中和刷新失败，并披露来源口径、完整性、响应与证据指纹。东方财富是单一公开来源而不是交易所认证数据；`m:90+t:2` 是提供方定义的、可能重叠的板块集合，不等同经许可的纯行业分类；资金流金额沿用提供方订单规模方法且不应求和解释为全市场流入，宽度计数也不等同市场情绪，因此 AI 的 `sentiment_coverage` 仍保持 `UNAVAILABLE`。总览见 [市场情报证据](docs/MARKET_INTELLIGENCE.md)，板块数据口径、命令和接口见 [市场宽度与板块排名](docs/MARKET_BREADTH.md) 与 [板块资金流证据](docs/CAPITAL_FLOW.md)。
 
 从源码工作区刷新最近一份已验证行情对应的收盘日：
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli market-breadth-refresh
+.\.venv\Scripts\python.exe -m ai_trade.cli capital-flow-refresh
 ```
 
 ## 证券池批量筛选

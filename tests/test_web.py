@@ -147,6 +147,10 @@ class WebTests(unittest.TestCase):
             self.assertEqual(
                 COMMANDS[breadth.action], ("market-breadth-refresh",)
             )
+            capital_flow = manager.submit("refresh-capital-flow")
+            self.assertEqual(
+                COMMANDS[capital_flow.action], ("capital-flow-refresh",)
+            )
             with self.assertRaisesRegex(ValueError, "Unsupported"):
                 manager.submit("delete-everything")
             cancelled = manager.cancel(first.id)

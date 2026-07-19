@@ -79,15 +79,15 @@ The read-only `/api/universe/screen` projection derives liquidity, momentum, ann
 ```text
 explicit completed trade date + bounded Eastmoney responses
                           |
-             +------------+------------+
-             |                         |
-             v                         v
- Dragon-Tiger report pages    board pages + SH/SZ/BJ breadth
- date/count/amount checks      date/count/identity checks
-             |                         |
-             v                         v
- immutable event revisions    immutable breadth revisions
-             +------------+------------+
+             +------------+------------+------------+
+             |                         |            |
+             v                         v            v
+ Dragon-Tiger report pages    board + SH/SZ/BJ     board flow pages
+ date/count/amount checks      breadth checks       date/count/field checks
+             |                         |            |
+             v                         v            v
+ immutable event revisions    breadth revisions    flow revisions
+             +------------+------------+------------+
                           |
                           v
               non-mutating filtered GET
@@ -125,6 +125,22 @@ revision chain; a valid Dragon-Tiger snapshot cannot make breadth available and
 vice versa. The board universe is explicitly not described as a licensed pure-
 industry taxonomy, and the provider-defined counts have no independent
 cross-source certification.
+
+`data/capital_flow.py` owns a third independent closing-evidence boundary. It
+reads every Eastmoney `m:90+t:2` board page and retains provider-reported main,
+super-large, large, medium, and small order-size net amounts and percentages in
+CNY yuan. Publication requires stable pagination, exact field schemas, unique
+board identities, bounded finite present values, at least one main-flow value,
+and a China Standard Time quote date matching the requested date. Source nulls
+remain unavailable. A requested historical date cannot force the current-quote
+endpoint to return historical evidence.
+
+Capital-flow storage, freshness, atomic publication, and local integrity checks
+use their own immutable revision chain. A valid event or breadth snapshot cannot
+make flow available, and a flow refresh failure cannot replace its prior
+complete revision. The provider-defined boards may overlap, so their amounts
+are never represented as whole-market flow. Order-size classification remains
+uncertified provider methodology without an independent cross-source check.
 
 ## Research Monitoring Boundary
 
