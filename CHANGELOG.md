@@ -27,6 +27,15 @@ This section describes the current `main` branch, not the public `v0.12.1`
 wheel. The persistent research-digest commands, HTTP routes, and Windows task
 scripts below will remain source-only until a later release is explicitly cut.
 
+- Added a multi-stage non-root Docker image and Compose deployment with a
+  read-only root filesystem, dropped capabilities, health checks, explicit
+  persistence mounts, and host-loopback-only port publication. The new
+  container bind is accepted only when beta authentication is active;
+  `--owner-local` plus container binding fails closed.
+- Added `docs/DOCKER_DEPLOYMENT.md`, a credential-free environment template,
+  Docker source-distribution checks, and documented rebuild/restart, Linux
+  UID/GID, optional AI/R2, and non-public-hosting boundaries.
+
 - Added a bounded independent daily-bar reconciliation for the registered
   Eastmoney/Tencent providers. The audit binds actual per-file source routes,
   overlapping completed sessions, explicit OHLCV tolerances, deviations, and

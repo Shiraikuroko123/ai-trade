@@ -43,6 +43,7 @@ WHEEL_REQUIRED = {
     "ai_trade/strategy_lab/store.py",
     "ai_trade/data/cache_snapshot.py",
     "ai_trade/data/capital_flow.py",
+    "ai_trade/data/cross_check.py",
     "ai_trade/data/market_breadth.py",
     "ai_trade/data/market_intelligence.py",
     "ai_trade/data/providers.py",
@@ -66,18 +67,24 @@ WHEEL_REQUIRED = {
 }
 
 SDIST_REQUIRED = {
+    ".dockerignore",
     "CHANGELOG.md",
     "DESIGN.md",
+    "Dockerfile",
     "LICENSE",
     "MANIFEST.in",
     "NOTICE",
     "PRODUCT.md",
     "README.md",
     "SECURITY.md",
+    "compose.bind.yaml",
+    "compose.yaml",
     "config/default.json",
     "config/security_master.json",
     "docs/ARCHITECTURE.md",
+    "docs/CROSS_SOURCE_AUDIT.md",
     "docs/DATA_PROVIDERS.md",
+    "docs/DOCKER_DEPLOYMENT.md",
     "docs/AI_ASSISTANT.md",
     "docs/CLOUD_STORAGE.md",
     "docs/assets/workstation-overview.png",
@@ -93,10 +100,12 @@ SDIST_REQUIRED = {
     "docs/RESEARCH_DIGESTS.md",
     "docs/UNIVERSE.md",
     "docs/UNIVERSE_SCREENING.md",
+    "docker.env.example",
     "pyproject.toml",
     "scripts/bootstrap.ps1",
     "scripts/configure_ai.ps1",
     "scripts/configure_cloud.ps1",
+    "scripts/docker-entrypoint.sh",
     "scripts/install_paper_task.ps1",
     "scripts/run_daily_paper.ps1",
     "scripts/install_monitor_task.ps1",
@@ -139,6 +148,7 @@ SDIST_REQUIRED = {
     "src/ai_trade/strategy_lab/store.py",
     "src/ai_trade/data/cache_snapshot.py",
     "src/ai_trade/data/capital_flow.py",
+    "src/ai_trade/data/cross_check.py",
     "src/ai_trade/data/market_breadth.py",
     "src/ai_trade/data/market_intelligence.py",
     "src/ai_trade/data/providers.py",
@@ -233,6 +243,7 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+TEXT_FILE_NAMES = {".dockerignore", "Dockerfile", "MANIFEST.in", "docker.env.example"}
 MAX_TEXT_MEMBER_BYTES = 16 * 1024 * 1024
 SENSITIVE_CONTENT_PATTERNS = (
     (
@@ -266,7 +277,10 @@ SENSITIVE_CONTENT_PATTERNS = (
             r"DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|GH_TOKEN|GITHUB_TOKEN|"
             r"OPENAI_API_KEY|"
             r"PAPERFIELD_S3_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY))"
-            r"\s*[:=]\s*[\"']?(?![$<{%])[A-Za-z0-9/+_=.-]{16,}",
+            # Keep the assignment scan on one line. An empty credential
+            # followed by another environment variable must not be treated
+            # as if the next variable name were its value.
+            r"[ \t]*[:=][ \t]*[\"']?(?![$<{%])[A-Za-z0-9/+_=.-]{16,}",
         ),
     ),
     (
@@ -582,7 +596,7 @@ def _verify_sha256(
 
 def _is_text_member(name: str) -> bool:
     path = PurePosixPath(name)
-    return path.suffix.casefold() in TEXT_SUFFIXES or path.name == "MANIFEST.in"
+    return path.suffix.casefold() in TEXT_SUFFIXES or path.name in TEXT_FILE_NAMES
 
 
 def _verify_text_content(name: str, content: bytes, archive_name: str) -> None:

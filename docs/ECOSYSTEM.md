@@ -78,6 +78,14 @@ authoritative paper and broker ledgers.
 | Market sentiment | Not implemented | Dragon-Tiger List records remain event evidence and do not make assistant `sentiment_coverage` available. |
 | External push notification delivery | Not implemented | Email, webhook, Windows Toast, and mobile delivery adapters still require separate credentials, retry policy, and authenticated outbox delivery; the current inbox makes no such claim. |
 
+## Deployment Status
+
+| Capability | Status | AI Trade boundary |
+|---|---|---|
+| Windows source/wheel startup | Complete | Native startup and scheduled tasks bind loopback; owner-local bypass remains limited to one trusted machine. |
+| Docker/Compose workstation | Complete on `main` | Multi-stage non-root image, read-only root filesystem, dropped capabilities, persistent named volumes with an optional bind override, health check, beta authentication, and host-loopback port publication are included. |
+| Internet or multi-tenant hosting | Not implemented | There is no bundled TLS proxy, centralized identity provider, remote session revocation, tenant isolation, or public-service hardening. |
+
 The matrix deliberately keeps human notes, accounting evidence, and strategy
 decisions separate. A note saying “hold” or “reduce risk” is a record of what the
 operator thought at that time, not a signal, order, or promotion fact.

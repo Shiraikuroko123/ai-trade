@@ -153,9 +153,17 @@ MONITORING_NOTIFICATION_ACTION_PATH = re.compile(
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, handler, jobs: JobManager):
+    def __init__(
+        self,
+        address,
+        handler,
+        jobs: JobManager,
+        *,
+        allow_container_bind: bool = False,
+    ):
         super().__init__(address, handler)
         self.jobs = jobs
+        self.allow_container_bind = allow_container_bind
 
     def server_close(self) -> None:
         self.jobs.close()
@@ -167,12 +175,17 @@ def create_dashboard_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     auth_enabled: bool | None = None,
+    allow_container_bind: bool = False,
 ) -> tuple[DashboardServer, str]:
-    _require_loopback(host)
+    use_auth = config.auth_enabled if auth_enabled is None else auth_enabled
+    _require_loopback(
+        host,
+        allow_container_bind=allow_container_bind,
+        auth_enabled=use_auth,
+    )
     service = DashboardService(config)
     jobs = JobManager(config)
     token = secrets.token_urlsafe(32)
-    use_auth = config.auth_enabled if auth_enabled is None else auth_enabled
     auth: AuthManager | None = None
     session_max_age = 0
     if use_auth:
@@ -189,7 +202,12 @@ def create_dashboard_server(
         )
     handler = _handler_factory(service, jobs, token, auth, session_max_age)
     try:
-        server = DashboardServer((host, port), handler, jobs)
+        server = DashboardServer(
+            (host, port),
+            handler,
+            jobs,
+            allow_container_bind=allow_container_bind,
+        )
     except Exception:
         jobs.close()
         raise
@@ -202,10 +220,21 @@ def serve_dashboard(
     port: int = 8765,
     open_browser: bool = True,
     auth_enabled: bool | None = None,
+    allow_container_bind: bool = False,
 ) -> None:
-    server, _ = create_dashboard_server(config, host, port, auth_enabled)
+    server, _ = create_dashboard_server(
+        config,
+        host,
+        port,
+        auth_enabled,
+        allow_container_bind,
+    )
     actual_host, actual_port = server.server_address[:2]
-    display_host = f"[{actual_host}]" if ":" in actual_host else actual_host
+    display_host = (
+        "127.0.0.1"
+        if server.allow_container_bind and str(actual_host) in {"0.0.0.0", "::"}
+        else f"[{actual_host}]" if ":" in actual_host else actual_host
+    )
     url = f"http://{display_host}:{actual_port}/"
     LOGGER.info("AI Trade workstation listening at %s", url)
     print(f"AI Trade workstation: {url}")
@@ -1004,6 +1033,11 @@ def _handler_factory(
                 hostname, port = _parse_host_header(values[0])
             except ValueError:
                 return False
+            if getattr(self.server, "allow_container_bind", False):
+                # Docker publishes the container port separately.  Keep the
+                # browser-facing Host limited to loopback even when the
+                # process listens on the container interface.
+                return _is_loopback_host(hostname)
             bound_host = str(self.server.server_address[0]).lower()
             if hostname.lower() not in {"localhost", bound_host}:
                 return False
@@ -2203,7 +2237,17 @@ def _bounded_text(value: object, field: str, maximum: int) -> str:
     return value
 
 
-def _require_loopback(host: str) -> None:
+def _require_loopback(
+    host: str,
+    *,
+    allow_container_bind: bool = False,
+    auth_enabled: bool = True,
+) -> None:
+    if allow_container_bind and not auth_enabled:
+        raise ValueError(
+            "Container binding requires beta authentication; do not combine "
+            "--container-bind with --owner-local"
+        )
     if host.lower() == "localhost":
         return
     try:
@@ -2211,7 +2255,18 @@ def _require_loopback(host: str) -> None:
             return
     except ValueError:
         pass
+    if allow_container_bind and host == "0.0.0.0":
+        return
     raise ValueError("The workstation may bind only to localhost or a loopback address")
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _parse_host_header(value: str) -> tuple[str, int | None]:

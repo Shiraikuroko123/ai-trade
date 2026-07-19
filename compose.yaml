@@ -1,0 +1,73 @@
+name: ai-trade
+
+services:
+  workstation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-trade:main
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "${AI_TRADE_DOCKER_UID:-10001}:${AI_TRADE_DOCKER_GID:-10001}"
+    command:
+      - serve
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+      - --no-open
+      - --container-bind
+    ports:
+      - "127.0.0.1:${AI_TRADE_DOCKER_PORT:-8877}:8765"
+    volumes:
+      - type: volume
+        source: config
+        target: /workspace/config
+      - type: volume
+        source: data
+        target: /workspace/data
+      - type: volume
+        source: reports
+        target: /workspace/reports
+      - type: volume
+        source: state
+        target: /workspace/state
+      - type: volume
+        source: logs
+        target: /workspace/logs
+      - type: volume
+        source: local
+        target: /workspace/local
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      AI_TRADE_AI_BASE_URL: "${AI_TRADE_AI_BASE_URL:-https://api.openai.com/v1}"
+      AI_TRADE_AI_MODEL: "${AI_TRADE_AI_MODEL:-}"
+      AI_TRADE_AI_API_KEY: "${AI_TRADE_AI_API_KEY:-}"
+      AI_TRADE_AI_TIMEOUT_SECONDS: "${AI_TRADE_AI_TIMEOUT_SECONDS:-30}"
+      AI_TRADE_CLOUD_ENABLED: "${AI_TRADE_CLOUD_ENABLED:-0}"
+      AI_TRADE_CLOUD_PREFIX: "${AI_TRADE_CLOUD_PREFIX:-ai-trade}"
+      AI_TRADE_CLOUD_INSTALLATION_ID: "${AI_TRADE_CLOUD_INSTALLATION_ID:-}"
+      AI_TRADE_R2_ENDPOINT: "${AI_TRADE_R2_ENDPOINT:-}"
+      AI_TRADE_R2_REGION: "${AI_TRADE_R2_REGION:-auto}"
+      AI_TRADE_R2_BUCKET: "${AI_TRADE_R2_BUCKET:-}"
+      AI_TRADE_R2_ACCESS_KEY_ID: "${AI_TRADE_R2_ACCESS_KEY_ID:-}"
+      AI_TRADE_R2_SECRET_ACCESS_KEY: "${AI_TRADE_R2_SECRET_ACCESS_KEY:-}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      NO_PROXY: "${NO_PROXY:-127.0.0.1,localhost}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 10s
+
+volumes:
+  config:
+  data:
+  reports:
+  state:
+  logs:
+  local:

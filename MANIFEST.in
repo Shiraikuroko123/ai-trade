@@ -5,10 +5,17 @@ include CHANGELOG.md
 include SECURITY.md
 include PRODUCT.md
 include DESIGN.md
+include Dockerfile
+include compose.yaml
+include compose.bind.yaml
+include .dockerignore
+include docker.env.example
 include config/default.json
 include config/security_master.json
 include docs/ARCHITECTURE.md
 include docs/DATA_PROVIDERS.md
+include docs/CROSS_SOURCE_AUDIT.md
+include docs/DOCKER_DEPLOYMENT.md
 include docs/AI_ASSISTANT.md
 include docs/BROKER_ADAPTERS.md
 include docs/CLOUD_STORAGE.md
@@ -27,6 +34,7 @@ include docs/assets/workstation-overview.png
 include scripts/bootstrap.ps1
 include scripts/configure_ai.ps1
 include scripts/configure_cloud.ps1
+include scripts/docker-entrypoint.sh
 include scripts/install_paper_task.ps1
 include scripts/run_daily_paper.ps1
 include scripts/install_monitor_task.ps1
@@ -38,6 +46,7 @@ include src/ai_trade/monitoring.py
 include src/ai_trade/data/market_intelligence.py
 include src/ai_trade/data/market_breadth.py
 include src/ai_trade/data/capital_flow.py
+include src/ai_trade/data/cross_check.py
 include src/ai_trade/research_archive.py
 include src/ai_trade/research_digest.py
 include src/ai_trade/web/assets/app.css

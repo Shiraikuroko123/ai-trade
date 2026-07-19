@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[架构](docs/ARCHITECTURE.md) · [Docker 部署](docs/DOCKER_DEPLOYMENT.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 `v0.12.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
@@ -35,6 +35,7 @@
 20. 把东方财富指定交易日的全部 `m:90+t:2` 板块分页校验后固化为第三条不可变修订链，披露主力及超大单、大单、中单、小单净额和占比；保留提供方空值、单位、日期、分页、指纹和重叠板块警告，不把板块行合计当作全市场资金流。
 21. 在当前登录账户下把规则告警和失败扫描幂等汇总为本地通知，保留来源与证据指纹，并用追加式动作记录未读、已读和归档；本地收件箱不会确认原告警、发送外部推送或取得交易权限。
 22. 对最近完整日线执行可选的跨源一致性审计，将逐证券实际来源、独立参考源、日期重合、最大偏差和审计指纹写入行情 manifest；回退源供数时禁止同源自检，核对失败也不会替换主快照或提升交易权限。
+23. 提供非 root、只读根文件系统的 Docker/Compose 部署；容器通配绑定必须启用内测认证，宿主机端口固定发布到回环地址，免登录模式不能借容器暴露。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -66,6 +67,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 ```
 
 `serve --owner-local` 只适合工作区所有者在自己的可信电脑上使用，它保留回环地址限制但跳过内测登录。命令会打印并打开类似 `http://127.0.0.1:8765/` 的地址；不要直接双击 `src/ai_trade/web/assets/index.html`。端口占用时可以增加 `--port 8877`。
+
+### Docker / Compose
+
+源码仓库现在提供受约束的 Docker 部署。容器默认使用内测登录并只在宿主机
+`127.0.0.1:8877` 发布端口；它不会启用真实交易，也不允许把 `--owner-local`
+与容器通配绑定组合。首次启动的最短路径：
+
+```powershell
+Copy-Item .\docker.env.example .\.env.docker
+docker compose --env-file .\.env.docker build
+docker compose --env-file .\.env.docker run --rm workstation beta-user-add your-name
+docker compose --env-file .\.env.docker up -d
+Start-Process http://127.0.0.1:8877/
+```
+
+默认数据、报告、账号和研究状态保留在 Docker 命名卷，不随镜像重建删除；
+需要直接复用仓库现有目录时再显式叠加 `compose.bind.yaml`。
+完整的权限、Linux UID/GID、AI/R2 变量、更新、日志和故障处理见
+[Docker 部署](docs/DOCKER_DEPLOYMENT.md)。不要把 Compose 端口改成公网监听。
 
 ### 可选 QMT 只读连接
 

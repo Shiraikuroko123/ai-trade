@@ -253,6 +253,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Bypass beta login for this loopback-only owner session",
     )
+    serve.add_argument(
+        "--container-bind",
+        action="store_true",
+        help=(
+            "Allow the Docker container interface; requires beta authentication "
+            "and should be paired with a loopback-only published port"
+        ),
+    )
     beta_add = subparsers.add_parser(
         "beta-user-add", help="Add an account to the local beta whitelist"
     )
@@ -855,6 +863,7 @@ def main(argv: list[str] | None = None) -> int:
                 port=args.port,
                 open_browser=not args.no_open,
                 auth_enabled=False if args.owner_local else None,
+                allow_container_bind=args.container_bind,
             )
             return 0
     except Exception as exc:

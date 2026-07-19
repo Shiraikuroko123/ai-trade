@@ -20,10 +20,24 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 class DistributionVerificationTests(unittest.TestCase):
     def test_market_refresh_modules_are_required_in_both_artifacts(self):
-        for module in ("cache_snapshot.py", "tencent.py"):
+        for module in ("cache_snapshot.py", "cross_check.py", "tencent.py"):
             with self.subTest(module=module):
                 self.assertIn(f"ai_trade/data/{module}", WHEEL_REQUIRED)
                 self.assertIn(f"src/ai_trade/data/{module}", SDIST_REQUIRED)
+        self.assertIn("docs/CROSS_SOURCE_AUDIT.md", SDIST_REQUIRED)
+
+    def test_docker_deployment_surface_is_required_in_source_artifact(self):
+        for name in (
+            ".dockerignore",
+            "Dockerfile",
+            "compose.bind.yaml",
+            "compose.yaml",
+            "docker.env.example",
+            "docs/DOCKER_DEPLOYMENT.md",
+            "scripts/docker-entrypoint.sh",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, SDIST_REQUIRED)
 
     def test_cloud_usage_module_is_required_in_both_artifacts(self):
         self.assertIn("ai_trade/cloud_usage.py", WHEEL_REQUIRED)
@@ -159,6 +173,15 @@ class DistributionVerificationTests(unittest.TestCase):
             b"Authorization: Bearer ${ACCESS_TOKEN}\n"
         )
         _verify_text_content("guide.md", content, "sample.zip")
+
+    def test_adjacent_empty_credential_assignments_are_allowed(self):
+        content = (
+            b"AI_TRADE_AI_API_KEY=\n"
+            b"AI_TRADE_R2_ACCESS_KEY_ID=\n"
+            b"AI_TRADE_R2_SECRET_ACCESS_KEY=\n"
+            b"OPENAI_API_KEY=\n"
+        )
+        _verify_text_content("docker.env.example", content, "sample.zip")
 
     def test_runtime_cache_and_sensitive_files_are_rejected(self):
         cases = (

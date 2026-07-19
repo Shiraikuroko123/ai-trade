@@ -57,8 +57,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.host, "127.0.0.1")
         self.assertEqual(args.port, 8765)
         self.assertFalse(args.owner_local)
+        self.assertFalse(args.container_bind)
         owner = build_parser().parse_args(["serve", "--owner-local"])
         self.assertTrue(owner.owner_local)
+        container = build_parser().parse_args(["serve", "--container-bind"])
+        self.assertTrue(container.container_bind)
 
     def test_assistant_analyze_parser_and_command(self):
         args = build_parser().parse_args(

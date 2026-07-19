@@ -341,6 +341,57 @@ class WebTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "loopback"):
             create_dashboard_server(config, "0.0.0.0", 0)
 
+    def test_container_binding_requires_auth_and_keeps_host_loopback(self):
+        config = load_config(
+            Path(__file__).resolve().parents[1] / "config/default.json"
+        )
+        with self.assertRaisesRegex(ValueError, "beta authentication"):
+            create_dashboard_server(
+                config,
+                "0.0.0.0",
+                0,
+                auth_enabled=False,
+                allow_container_bind=True,
+            )
+        with self.assertRaisesRegex(ValueError, "beta authentication"):
+            create_dashboard_server(
+                config,
+                "127.0.0.1",
+                0,
+                auth_enabled=False,
+                allow_container_bind=True,
+            )
+        server, _ = create_dashboard_server(
+            config,
+            "0.0.0.0",
+            0,
+            auth_enabled=True,
+            allow_container_bind=True,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_port
+        try:
+            status, _, _ = _request(
+                port,
+                "GET",
+                "/login.html",
+                headers={"Host": f"127.0.0.1:{port}"},
+            )
+            self.assertEqual(status, 200)
+            status, _, body = _request(
+                port,
+                "GET",
+                "/login.html",
+                headers={"Host": f"192.0.2.1:{port}"},
+            )
+            self.assertEqual(status, 403)
+            self.assertIn(b"Invalid host header", body)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_static_api_host_and_write_token_security(self):
         config = load_config(
             Path(__file__).resolve().parents[1] / "config/default.json"
