@@ -29,6 +29,7 @@ from ..monitoring import (
     ALERT_ACTIONS,
     MonitoringCapacityError,
     MonitoringConflictError,
+    NOTIFICATION_ACTIONS,
     RULE_SEVERITIES,
     RULE_TYPE_METADATA,
 )
@@ -143,6 +144,9 @@ MONITORING_WATCHLIST_ID_PATTERN = re.compile(r"watch_[0-9a-f]{32}\Z")
 MONITORING_RULE_ID_PATTERN = re.compile(r"rule_[0-9a-f]{32}\Z")
 MONITORING_ALERT_ACTION_PATH = re.compile(
     r"/api/monitoring/alerts/(alert_[0-9a-f]{32})/actions\Z"
+)
+MONITORING_NOTIFICATION_ACTION_PATH = re.compile(
+    r"/api/monitoring/notifications/(notification_[0-9a-f]{32})/actions\Z"
 )
 
 
@@ -616,6 +620,24 @@ def _handler_factory(
                             action=action,
                             note=note,
                             snooze_until=snooze_until,
+                            expected_state_fingerprint=expected_state_fingerprint,
+                        )
+                    )
+                elif match := MONITORING_NOTIFICATION_ACTION_PATH.fullmatch(
+                    parsed.path
+                ):
+                    action, expected_state_fingerprint = (
+                        _parse_monitoring_notification_action_payload(
+                            self._read_json(),
+                            require_expected_state_fingerprint=True,
+                        )
+                    )
+                    self._json(
+                        service.monitoring_notification_action(
+                            owner_id=_assistant_user_id(context),
+                            actor=_strategy_lab_actor(context),
+                            notification_id=match.group(1),
+                            action=action,
                             expected_state_fingerprint=expected_state_fingerprint,
                         )
                     )
@@ -2112,6 +2134,32 @@ def _parse_monitoring_alert_action_payload(
             "expected_state_fingerprint must be a lowercase SHA-256 fingerprint"
         )
     return str(action), str(note), snooze_until, expected
+
+
+def _parse_monitoring_notification_action_payload(
+    payload: dict[str, object],
+    *,
+    require_expected_state_fingerprint: bool = False,
+) -> tuple[str, str | None]:
+    _reject_unknown_fields(
+        payload,
+        {"action", "expected_state_fingerprint"},
+        "monitoring notification action",
+    )
+    action = payload.get("action")
+    if action not in NOTIFICATION_ACTIONS:
+        raise ValueError("Unsupported monitoring notification action")
+    expected = payload.get("expected_state_fingerprint")
+    if require_expected_state_fingerprint and expected is None:
+        raise ValueError("expected_state_fingerprint is required")
+    if expected is not None and (
+        not isinstance(expected, str)
+        or not STRATEGY_LAB_FINGERPRINT_PATTERN.fullmatch(expected)
+    ):
+        raise ValueError(
+            "expected_state_fingerprint must be a lowercase SHA-256 fingerprint"
+        )
+    return str(action), expected
 
 
 def _parse_monitoring_revision(

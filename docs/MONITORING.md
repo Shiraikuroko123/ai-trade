@@ -122,11 +122,38 @@ appends an automatic `unsnooze` action before rule evaluation. Loading the page,
 leaving the workstation open, or reaching the date while the PC is off does not
 run a timer. The alert remains snoozed until a later scan or a manual unsnooze.
 
+## Local Notification Inbox
+
+The monitoring response also exposes a small owner-scoped local inbox. It is a
+delivery/read projection over immutable alert records and failed scan records;
+it does not become a second source of truth for rule state. A new notification
+is deterministically identified by its source type and source ID, so refreshing
+the page or repeating a scan does not duplicate it. Each record retains the
+source fingerprint, optional snapshot-evidence fingerprint, severity, message,
+symbol, and data date. A changed or missing source binding fails closed.
+
+`GET /api/monitoring` returns `notifications`, `notification_summary`, and
+`notification_delivery`. The delivery mode is currently `local_inbox`; the
+response deliberately reports that no external delivery channel is configured.
+The workstation supports
+`POST /api/monitoring/notifications/<notification-id>/actions` with
+`mark_read`, `mark_unread`, or `dismiss`. Every transition is a new immutable
+action and requires the current notification state fingerprint. Dismissing a
+notification only archives the inbox entry; it does not acknowledge, close, or
+reopen the underlying monitoring alert.
+
+The page defaults to unread notifications and can filter by reading state,
+severity, and source. The table retains the source ID, data date, generation
+time, and evidence fingerprint, and remains a keyboard-focusable horizontally
+scrollable region on narrow screens. Loading the inbox never refreshes market
+data, changes a strategy, edits an accounting ledger, or calls a broker.
+
 ## Storage and Trust Boundary
 
 Monitoring state is stored below
 `state/monitoring/users/<sha256-owner>/` as bounded strict JSON configuration
-revisions, scans, alerts, and actions. The repository ignores `state/`, release
+revisions, scans, alerts, alert actions, notifications, and notification actions.
+The repository ignores `state/`, release
 verification rejects it, and the Cloudflare R2 exporter can read only the market
 cache allowlist. Monitoring state therefore does not consume R2 quota and is not
 restored by an R2 market-cache restore.
@@ -157,8 +184,9 @@ or signed/WORM export; that facility is not part of this release.
 Monitoring uses bounded immutable files rather than an archive or compaction
 service. One owner may have at most 50 watchlists, 500 symbols per watchlist
 (2,000 symbols total), 500 rules, 1,000 configuration revisions, 2,000 scans,
-5,000 alerts, and 10,000 alert actions. These are lifetime record caps, not
-free-space estimates: dismissing an alert does not free its action slots, and
+5,000 alerts, 10,000 alert actions, 7,000 notification records, and 15,000
+notification actions. These are lifetime record caps, not free-space estimates:
+dismissing an alert or archiving a notification does not free action slots, and
 deleting old files is not a supported retention operation because it can break
 the evidence chain. At a cap, the API fails closed with a capacity conflict and
 the scheduled CLI reports a non-zero result. A future verified checkpoint and

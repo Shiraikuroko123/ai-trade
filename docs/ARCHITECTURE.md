@@ -153,6 +153,9 @@ owner-scoped watchlists + versioned deterministic rules
                          v
       immutable scan + alert evidence + review-action chain
                          |
+                         v
+      owner-local notification inbox + read/archive-action chain
+                         |
                          X  no strategy write, paper-ledger write,
                             broker call, approval, or order authority
 ```
@@ -164,9 +167,13 @@ configuration revision and fingerprint, snapshot, completed-session cutoff,
 rule observations, exclusions, suppression reasons, and triggered alert IDs.
 Alert records retain the deterministic rule fingerprint, source-file hash, and
 evidence fingerprint. Review actions append state transitions instead of editing
-the original alert. Authenticated HTTP writes derive owner and actor from the
-server session, require same-origin CSRF protection, and use configuration or
-alert-state compare-and-swap tokens. Per-owner re-entrant process locks and an
+the original alert. A local notification inbox materializes deterministic
+references to alert and failed-scan records; it retains source/evidence
+fingerprints and has its own append-only unread/read/archive action chain. It is
+not an external push service and has no strategy, accounting, or order authority.
+Authenticated HTTP writes derive owner and actor from the server session,
+require same-origin CSRF protection, and use configuration, alert-state, or
+notification-state compare-and-swap tokens. Per-owner re-entrant process locks and an
 operating-system file lock serialize readers and writers. Before publishing a
 scan with new alerts, the owner writes an atomically staged
 `.scan-transaction.json` marker from the private `.staging/` directory. Recovery

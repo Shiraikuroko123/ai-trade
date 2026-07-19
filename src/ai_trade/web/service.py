@@ -1087,6 +1087,24 @@ class DashboardService:
         )
         return self.monitoring(owner_id=owner_id)
 
+    def monitoring_notification_action(
+        self,
+        *,
+        owner_id: str,
+        actor: str,
+        notification_id: str,
+        action: str,
+        expected_state_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        engine = self._monitoring_engine()
+        engine.store.profile(owner_id).notification_action(
+            notification_id,
+            action=action,
+            actor=actor,
+            expected_state_fingerprint=expected_state_fingerprint,
+        )
+        return self.monitoring(owner_id=owner_id)
+
     def _screen_metrics(
         self,
         item: dict[str, Any],

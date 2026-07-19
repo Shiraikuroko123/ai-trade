@@ -50,7 +50,8 @@ authoritative paper and broker ledgers.
 | Multi-profile scheduled sweep | Complete on Windows | The task scans the local owner and enabled beta accounts. One malformed profile is reported as failed without stopping later profiles; an invalid beta-user store produces a warning and non-zero CLI exit. |
 | Partial and failed retry | Complete | Only a fully successful owner/configuration/snapshot scan is reusable. Partial and failed attempts remain evidence and are reevaluated under a new attempt ID; staged alert/scan publication has owner-local marker recovery. |
 | Historical rule/evidence binding | Complete within the local trust boundary | Historical configuration revisions and persisted snapshot evidence rederive alert rule metadata and evidence fingerprints. The hashes remain unkeyed local values. |
-| Alert review lifecycle | Complete within the local trust boundary | Open, acknowledge, snooze, dismiss, reopen, and automatic scan-time unsnooze actions are append-only and state-fingerprint protected. There is no push notification or timer service. |
+| Alert review lifecycle | Complete within the local trust boundary | Open, acknowledge, snooze, dismiss, reopen, and automatic scan-time unsnooze actions are append-only and state-fingerprint protected. Snooze remains scan-driven rather than a background timer. |
+| Owner-scoped local notification inbox | Complete within the local trust boundary | Alert and failed-scan sources are materialized idempotently with source/evidence fingerprints; unread/read/archive actions are append-only and state-fingerprint protected. The inbox is local-only and cannot authorize execution. |
 | Capacity and retention | Bounded | Each owner has hard immutable-file caps and no archive/compaction service; reaching a cap stops new writes until a future verified checkpoint format exists. |
 | Host-independent tamper evidence | Not implemented | Local SHA-256 and cross-record validation are not signatures or WORM storage. A local administrator can recalculate records or delete a newest chain tail; monitoring state is not included in the R2 market-cache backup. |
 | Minute/Tick/Level-2 monitoring and live execution | Not implemented | The current monitor uses completed daily data and remains `research_only`; it cannot change strategy, accounting, broker permissions, or orders. |
@@ -65,7 +66,7 @@ authoritative paper and broker ledgers.
 | Announcements, news, and hot lists | Not implemented | No traceable publication-time and correction-aware source is configured. |
 | Valuation temperature | Not implemented | Price history is not a substitute for PE/PB/cash-flow valuation evidence. |
 | Market sentiment | Not implemented | Dragon-Tiger List records remain event evidence and do not make assistant `sentiment_coverage` available. |
-| Push notification delivery | Not implemented | Monitoring provides local review states and scheduled scans, but no authenticated external delivery channel. |
+| External push notification delivery | Not implemented | Email, webhook, Windows Toast, and mobile delivery adapters still require separate credentials, retry policy, and authenticated outbox delivery; the current inbox makes no such claim. |
 
 The matrix deliberately keeps human notes, accounting evidence, and strategy
 decisions separate. A note saying “hold” or “reduce risk” is a record of what the

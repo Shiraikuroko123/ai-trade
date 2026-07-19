@@ -653,6 +653,112 @@ class MonitoringEngineTests(unittest.TestCase):
                 profile.alert_action(alert_id, action="dismiss", actor="capacity")
         self.assertEqual(profile.alerts()[0]["status"], "acknowledged")
 
+    def test_notification_inbox_is_owner_isolated_and_idempotent(self):
+        alice, _ = self._configured_profile("alice")
+        bob = self.store.profile("bob")
+        market = _Market([10.0, 11.0, 12.0])
+
+        self.engine.scan("alice", actor="scheduler", market=market)
+        first = self.engine.status("alice", market=market)
+        second = self.engine.status("alice", market=market)
+        bob_status = self.engine.status("bob", market=market)
+
+        self.assertEqual(len(first["notifications"]), 1)
+        self.assertEqual(first["notifications"], second["notifications"])
+        self.assertEqual(first["notification_summary"]["unread_count"], 1)
+        self.assertEqual(bob_status["notifications"], [])
+        self.assertEqual(bob_status["notification_summary"]["total_count"], 0)
+        self.assertEqual(
+            len(list((alice.directory / "notifications").glob("*.json"))), 1
+        )
+        self.assertFalse((bob.directory / "notifications").exists())
+        self.assertFalse(first["authority"]["execution_authorized"])
+        self.assertFalse(first["authority"]["strategy_changed"])
+        self.assertFalse(first["authority"]["paper_account_changed"])
+        self.assertFalse(first["authority"]["broker_permissions_changed"])
+
+    def test_failed_scan_materializes_a_critical_operational_notification(self):
+        self._configured_profile("alice")
+        scan = self.engine.scan(
+            "alice", actor="scheduler", market=_UnavailableMarket()
+        )
+        status = self.engine.status("alice", market=_UnavailableMarket())
+
+        self.assertEqual(scan["status"], "failed")
+        self.assertEqual(len(status["notifications"]), 1)
+        notification = status["notifications"][0]
+        self.assertEqual(notification["source_type"], "scan_failure")
+        self.assertEqual(notification["source_id"], scan["scan_id"])
+        self.assertEqual(notification["source_fingerprint"], scan["fingerprint"])
+        self.assertEqual(notification["severity"], "critical")
+        self.assertEqual(notification["status"], "unread")
+        self.assertIsNone(notification["evidence_fingerprint"])
+        self.assertIn(scan["error"]["code"], notification["message"])
+
+    def test_notification_actions_append_and_require_current_state(self):
+        profile, _ = self._configured_profile("alice")
+        market = _Market([10.0, 11.0, 12.0])
+        self.engine.scan("alice", actor="scheduler", market=market)
+        initial = self.engine.status("alice", market=market)["notifications"][0]
+
+        read = profile.notification_action(
+            initial["notification_id"],
+            action="mark_read",
+            actor="alice",
+            expected_state_fingerprint=initial["state_fingerprint"],
+        )
+        self.assertEqual(read["status"], "read")
+        with self.assertRaises(MonitoringConflictError):
+            profile.notification_action(
+                initial["notification_id"],
+                action="mark_unread",
+                actor="alice",
+                expected_state_fingerprint=initial["state_fingerprint"],
+            )
+        dismissed = profile.notification_action(
+            initial["notification_id"],
+            action="dismiss",
+            actor="alice",
+            expected_state_fingerprint=read["state_fingerprint"],
+        )
+
+        self.assertEqual(dismissed["status"], "dismissed")
+        self.assertEqual(dismissed["last_action"]["actor"], "alice")
+        self.assertEqual(dismissed["last_action"]["sequence"], 2)
+        self.assertEqual(
+            len(
+                list(
+                    (profile.directory / "notification_actions").glob("*.json")
+                )
+            ),
+            2,
+        )
+        self.assertEqual(profile.alerts()[0]["status"], "open")
+        summary = profile.notification_status()["summary"]
+        self.assertEqual(summary["dismissed_count"], 1)
+        self.assertEqual(summary["unread_count"], 0)
+
+    def test_notification_source_binding_detects_semantic_tampering(self):
+        profile, _ = self._configured_profile("alice")
+        market = _Market([10.0, 11.0, 12.0])
+        self.engine.scan("alice", actor="scheduler", market=market)
+        self.engine.status("alice", market=market)
+        path = next((profile.directory / "notifications").glob("*.json"))
+        _rewrite_fingerprint(path, title="伪造通知标题")
+
+        with self.assertRaisesRegex(RuntimeError, "source binding is invalid"):
+            profile.verify_integrity()
+
+    def test_notification_capacity_fails_before_partial_materialization(self):
+        profile, _ = self._configured_profile("alice")
+        self.engine.scan(
+            "alice", actor="scheduler", market=_Market([10.0, 11.0, 12.0])
+        )
+        with patch("ai_trade.monitoring.MAX_NOTIFICATIONS", 0):
+            with self.assertRaises(MonitoringCapacityError):
+                profile.notification_status()
+        self.assertFalse((profile.directory / "notifications").exists())
+
     def test_scan_all_profiles_isolates_one_profile_failure(self):
         alice, _ = self._configured_profile("alice")
         bob, _ = self._configured_profile("bob")

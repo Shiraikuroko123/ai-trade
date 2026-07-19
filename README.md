@@ -33,6 +33,7 @@
 18. 把东方财富指定交易日的完整龙虎榜分页校验后固化为不可变修订，在独立市场情报页披露日期、来源、覆盖、指纹和筛选结果；该单源证据不等同情绪，也不进入策略或交易权限。
 19. 把东方财富指定交易日的全部板块分页与上证、深证、北证三条宽度响应联合校验后固化为另一条不可变修订链，提供可筛选板块排名和涨跌宽度；来源板块集合不冒充纯行业分类，也不生成交易信号。
 20. 把东方财富指定交易日的全部 `m:90+t:2` 板块分页校验后固化为第三条不可变修订链，披露主力及超大单、大单、中单、小单净额和占比；保留提供方空值、单位、日期、分页、指纹和重叠板块警告，不把板块行合计当作全市场资金流。
+21. 在当前登录账户下把规则告警和失败扫描幂等汇总为本地通知，保留来源与证据指纹，并用追加式动作记录未读、已读和归档；本地收件箱不会确认原告警、发送外部推送或取得交易权限。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -338,7 +339,7 @@ ai-trade/
 │   ├── research_archive.py  # 模拟账本、日报与日志的只读收盘归档投影
 │   ├── research_digest.py   # 按用户/账期隔离的不可变日报与周报修订链
 │   ├── research_journal.py  # 每用户隔离的不可变研究日志
-│   ├── monitoring.py        # 每用户隔离的监控规则、扫描与告警证据
+│   ├── monitoring.py        # 每用户隔离的监控、告警与本地通知证据
 │   ├── backtest.py          # 事件驱动回测
 │   ├── security.py          # 时点证券主数据与动态标的池
 │   ├── strategy.py          # 信号、流动性和组合风险预算
@@ -425,6 +426,7 @@ ai-trade/
 - `state/shadow_fills.csv`：按登录用户、来源和账户别名隔离的标准化影子成交；每行带可重算的内容指纹。
 - `state/shadow_imports.csv`：原始文件 SHA-256、接收/重复数量和导入时间；不保留原始券商 CSV。
 - `state/research_journal/users/<owner-sha256>/entries/`：按登录用户隔离的 append-only 研究记录；每条记录绑定证据指纹，修正通过新记录关联旧编号。
+- `state/monitoring/users/<owner-sha256>/`：配置修订、扫描、告警、本地通知及各自的追加式处理动作；不进入 R2 行情备份。
 - `paper_audit.json`、`paper_audit.md`：账本完整性、前向指标和券商沙盒晋级门槛。
 
 工作台“系统”页会验证报告是否与当前行情快照一致，并允许在本机下载已生成的 `.html`、`.json`、`.csv` 和 `.md` 报告；路径穿越和其他文件后缀会被拒绝。
@@ -464,7 +466,7 @@ Get-ScheduledTask -TaskName 'AI-Trade Research Monitor Daily'
 Get-ScheduledTaskInfo -TaskName 'AI-Trade Research Monitor Daily'
 ```
 
-监控任务调用一次性 `monitor-scan --all-profiles`，不会启动常驻服务或修改策略、模拟账本和券商权限。日志位于 `logs/scheduled_monitor.log`，超过 5 MiB 自动轮换并保留最近 5 份。完整命令、失败语义和卸载方法见 [监控与告警运维](docs/MONITORING.md)。
+监控任务调用一次性 `monitor-scan --all-profiles`，不会启动常驻服务或修改策略、模拟账本和券商权限。打开监控页后，本地收件箱会把新告警和失败扫描按来源 ID 幂等登记；它没有邮件、Webhook、Windows Toast 或移动端外部投递。日志位于 `logs/scheduled_monitor.log`，超过 5 MiB 自动轮换并保留最近 5 份。完整命令、失败语义、通知状态和卸载方法见 [监控与告警运维](docs/MONITORING.md)。
 
 安装每日 18:30 的全用户日报/周报归档任务：
 

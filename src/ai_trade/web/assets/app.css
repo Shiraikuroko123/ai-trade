@@ -3839,7 +3839,17 @@ progress {
   padding: 0 0 0.75rem;
 }
 
-.monitoring-filter-form .filter-actions {
+.monitoring-notification-filter-form {
+  align-items: end;
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(3, minmax(130px, 1fr)) 92px auto;
+  padding: 0 0 0.75rem;
+}
+
+.monitoring-filter-form .filter-actions,
+.monitoring-notification-filter-form .filter-actions {
   align-items: end;
   display: flex;
   flex-wrap: wrap;
@@ -3847,6 +3857,7 @@ progress {
 }
 
 .monitoring-alert-table,
+.monitoring-notification-table,
 .monitoring-watchlist-table,
 .monitoring-rule-table {
   margin-top: 0.7rem;
@@ -3858,8 +3869,26 @@ progress {
   overflow: auto;
 }
 
+.monitoring-notification-table {
+  max-height: 520px;
+  overflow: auto;
+}
+
 .monitoring-alert-table table {
   min-width: 1320px;
+}
+
+.monitoring-notification-table table {
+  min-width: 1120px;
+}
+
+.monitoring-notification-unread > td {
+  background: var(--surface);
+}
+
+.monitoring-notification-unread > td:nth-child(2) strong {
+  color: var(--graphite);
+  font-weight: 720;
 }
 
 .monitoring-watchlist-table table {
@@ -3924,6 +3953,17 @@ progress {
   align-items: stretch;
   flex-direction: column;
   min-width: 132px;
+}
+
+.monitoring-notification-actions {
+  align-items: stretch;
+  flex-direction: column;
+  min-width: 112px;
+}
+
+.monitoring-notification-actions .button {
+  justify-content: flex-start;
+  white-space: nowrap;
 }
 
 .monitoring-alert-actions .button {
@@ -4164,12 +4204,14 @@ progress {
   }
 
   .monitoring-filter-form,
+  .monitoring-notification-filter-form,
   .monitoring-rule-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
 
   .monitoring-filter-form .filter-actions,
+  .monitoring-notification-filter-form .filter-actions,
   .monitoring-rule-form .section-note {
     grid-column: 1 / -1;
   }
@@ -4488,6 +4530,7 @@ progress {
   }
 
   .monitoring-filter-form,
+  .monitoring-notification-filter-form,
   .monitoring-rule-form,
   .monitoring-create-form {
     grid-template-columns: minmax(0, 1fr);
@@ -4495,11 +4538,13 @@ progress {
 
   .monitoring-rule-form .field:first-child,
   .monitoring-filter-form .filter-actions,
+  .monitoring-notification-filter-form .filter-actions,
   .monitoring-rule-form .section-note {
     grid-column: auto;
   }
 
   .monitoring-filter-form .filter-actions,
+  .monitoring-notification-filter-form .filter-actions,
   .monitoring-create-form .button,
   .monitoring-rule-form .action-row,
   .monitoring-rule-form .button,
@@ -4509,6 +4554,7 @@ progress {
   }
 
   .monitoring-filter-form .filter-actions,
+  .monitoring-notification-filter-form .filter-actions,
   .monitoring-action-form .action-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

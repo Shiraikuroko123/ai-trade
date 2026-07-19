@@ -88,6 +88,18 @@ const MONITORING_ACTION_LABELS = {
   unsnooze: "取消暂缓",
 };
 
+const MONITORING_NOTIFICATION_STATUS_LABELS = {
+  unread: "未读",
+  read: "已读",
+  dismissed: "已归档",
+};
+
+const MONITORING_NOTIFICATION_ACTION_LABELS = {
+  mark_read: "标为已读",
+  mark_unread: "设为未读",
+  dismiss: "归档通知",
+};
+
 const CHECK_LABELS = {
   broker_mode_live: "配置明确选择实盘模式",
   adapter_configured: "已选择券商适配器",
@@ -258,6 +270,12 @@ const state = {
     symbol: "",
     severity: "",
     status: "unresolved",
+    limit: "100",
+  },
+  monitoringNotificationFilters: {
+    status: "unread",
+    severity: "",
+    source_type: "",
     limit: "100",
   },
   monitoringBusy: false,
@@ -5512,6 +5530,58 @@ function monitoringFilteredAlerts(data) {
   return filtered.slice(0, limit);
 }
 
+function monitoringNotificationStatusLabel(value) {
+  return MONITORING_NOTIFICATION_STATUS_LABELS[String(value || "").toLowerCase()] || "状态待确认";
+}
+
+function monitoringNotificationStatusKind(value) {
+  return {
+    unread: "warning",
+    read: "info",
+    dismissed: "neutral",
+  }[String(value || "").toLowerCase()] || "neutral";
+}
+
+function monitoringNotificationSourceLabel(value) {
+  return {
+    alert: "规则告警",
+    scan_failure: "扫描失败",
+  }[String(value || "").toLowerCase()] || "来源待确认";
+}
+
+function monitoringFilteredNotifications(data) {
+  const filters = state.monitoringNotificationFilters || {};
+  const status = String(filters.status || "unread");
+  const severity = String(filters.severity || "");
+  const sourceType = String(filters.source_type || "");
+  const notifications = Array.isArray(data?.notifications) ? data.notifications : [];
+  const filtered = notifications.filter((item) => {
+    if (status !== "all" && item.status !== status) return false;
+    if (severity && item.severity !== severity) return false;
+    if (sourceType && item.source_type !== sourceType) return false;
+    return true;
+  });
+  const limit = Math.max(1, Math.min(200, Number(filters.limit) || 100));
+  return filtered.slice(0, limit);
+}
+
+function monitoringNotificationActionButtons(notification) {
+  const id = escapeHtml(notification.notification_id);
+  const status = String(notification.status || "unread");
+  const title = escapeHtml(notification.title || "该通知");
+  const button = (action, label, style = "secondary") => {
+    const busy = monitoringActionBusy(`${notification.notification_id}:${action}`);
+    return `<button class="button ${style} compact" type="button" data-monitoring-notification-action="${action}" data-monitoring-notification-id="${id}" aria-label="${label}：${title}"${busy ? ' disabled aria-busy="true"' : ""}>${busy ? "处理中" : label}</button>`;
+  };
+  if (status === "unread") {
+    return `<div class="action-row monitoring-notification-actions">${button("mark_read", "标为已读")}${button("dismiss", "归档", "ghost")}</div>`;
+  }
+  if (status === "read") {
+    return `<div class="action-row monitoring-notification-actions">${button("mark_unread", "设为未读")}${button("dismiss", "归档", "ghost")}</div>`;
+  }
+  return `<span class="table-subtext">已归档；来源证据仍保留</span>`;
+}
+
 function monitoringEmptyStateMarkup(data, filteredAlerts) {
   const empty = data?.empty_state || {};
   const code = String(empty.code || "");
@@ -5611,15 +5681,21 @@ function renderMonitoring(data) {
   const watchlists = Array.isArray(data?.watchlists) ? data.watchlists : [];
   const rules = Array.isArray(data?.rules) ? data.rules : [];
   const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+  const notifications = Array.isArray(data?.notifications) ? data.notifications : [];
   const instruments = Array.isArray(data?.instruments) ? data.instruments : [];
   const summary = data?.summary || {};
+  const notificationSummary = data?.notification_summary || {};
+  const notificationDelivery = data?.notification_delivery || {};
   const snapshot = data?.snapshot || {};
   const scan = data?.scan || {};
   const metadata = monitoringRuleMetadata(data);
   const watchlistMap = Object.fromEntries(watchlists.map((item) => [item.watchlist_id, item]));
   const filteredAlerts = monitoringFilteredAlerts(data);
+  const filteredNotifications = monitoringFilteredNotifications(data);
   const unresolved = finite(summary.unresolved_count) || 0;
   const critical = finite(summary.severity_counts?.critical) || 0;
+  const unreadNotifications = finite(notificationSummary.unread_count) || 0;
+  const unreadCritical = finite(notificationSummary.unread_severity_counts?.critical) || 0;
   const scanStatus = String(scan.status || "not_run").toLowerCase();
   const snapshotDate = snapshot.data_date || scan.data_date || "不可用";
   const scanLabel = monitoringStatusLabel(scanStatus);
@@ -5635,6 +5711,14 @@ function renderMonitoring(data) {
     <div class="field"><label for="monitoring-filter-limit">最多显示</label><input id="monitoring-filter-limit" name="limit" type="number" min="1" max="200" step="1" inputmode="numeric" value="${escapeHtml(state.monitoringFilters.limit || "100")}"></div>
     <div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button ghost" type="button" data-monitoring-filter-clear>清除</button></div>
   </form><p id="monitoring-filter-help" class="section-note">筛选只改变当前显示，不改变已经固化的扫描和告警记录。</p>`;
+  const notificationFilters = state.monitoringNotificationFilters || {};
+  const notificationFilter = `<form id="monitoring-notification-filter-form" class="filter-form monitoring-notification-filter-form" aria-describedby="monitoring-notification-filter-help">
+    <div class="field"><label for="monitoring-notification-filter-status">阅读状态</label><select id="monitoring-notification-filter-status" name="status"><option value="unread"${notificationFilters.status === "unread" ? " selected" : ""}>未读</option><option value="all"${notificationFilters.status === "all" ? " selected" : ""}>全部</option><option value="read"${notificationFilters.status === "read" ? " selected" : ""}>已读</option><option value="dismissed"${notificationFilters.status === "dismissed" ? " selected" : ""}>已归档</option></select></div>
+    <div class="field"><label for="monitoring-notification-filter-severity">严重级别</label><select id="monitoring-notification-filter-severity" name="severity"><option value="">全部级别</option>${Object.entries(MONITORING_SEVERITY_LABELS).map(([value, label]) => `<option value="${value}"${notificationFilters.severity === value ? " selected" : ""}>${label}</option>`).join("")}</select></div>
+    <div class="field"><label for="monitoring-notification-filter-source">通知来源</label><select id="monitoring-notification-filter-source" name="source_type"><option value="">全部来源</option><option value="alert"${notificationFilters.source_type === "alert" ? " selected" : ""}>规则告警</option><option value="scan_failure"${notificationFilters.source_type === "scan_failure" ? " selected" : ""}>扫描失败</option></select></div>
+    <div class="field"><label for="monitoring-notification-filter-limit">最多显示</label><input id="monitoring-notification-filter-limit" name="limit" type="number" min="1" max="200" step="1" inputmode="numeric" value="${escapeHtml(notificationFilters.limit || "100")}"></div>
+    <div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button ghost" type="button" data-monitoring-notification-filter-clear>清除</button></div>
+  </form><p id="monitoring-notification-filter-help" class="section-note">本地收件箱只汇总规则告警和扫描失败；阅读或归档不会确认原告警，也不会触发策略、订单或外部推送。</p>`;
   const statusRegion = state.monitoringActionTarget ? "" : monitoringActionStatusMarkup();
   const ruleTargetOptions = watchlists.flatMap((list) => list.symbols.map((symbol) => `<option value="${escapeHtml(monitoringRuleTargetValue(list.watchlist_id, symbol))}">${escapeHtml(list.name)} · ${escapeHtml(symbol)} · ${escapeHtml(instrumentName(symbol))}</option>`)).join("");
   const ruleTypeOptions = (Array.isArray(data?.rule_types) ? data.rule_types : []).map((item) => `<option value="${escapeHtml(item.rule_type)}">${escapeHtml(item.label || item.rule_type)}</option>`).join("");
@@ -5667,6 +5751,19 @@ function renderMonitoring(data) {
     </tr>`;
   }).join("") : emptyRow(7, alerts.length ? "当前筛选没有匹配记录" : "尚无触发告警");
 
+  const notificationRows = filteredNotifications.length ? filteredNotifications.map((notification) => {
+    const source = monitoringNotificationSourceLabel(notification.source_type);
+    const evidence = notification.evidence_fingerprint || notification.source_fingerprint || "—";
+    return `<tr class="${notification.status === "unread" ? "monitoring-notification-unread" : ""}" data-monitoring-notification-row="${escapeHtml(notification.notification_id)}">
+      <td><div class="monitoring-alert-state">${statusChip(monitoringNotificationStatusLabel(notification.status), monitoringNotificationStatusKind(notification.status))}${statusChip(monitoringSeverityLabel(notification.severity), monitoringSeverityKind(notification.severity))}</div></td>
+      <td><strong>${escapeHtml(notification.title || "通知")}</strong><span class="table-subtext">${escapeHtml(notification.message || "—")}</span></td>
+      <td><span class="status-chip info">${escapeHtml(source)}</span><span class="table-subtext mono">${escapeHtml(notification.source_id || "—")}</span></td>
+      <td><span class="mono">${escapeHtml(notification.data_date || "—")}</span><span class="table-subtext">${escapeHtml(formatDate(notification.created_at, true))}</span></td>
+      <td>${monitoringNotificationActionButtons(notification)}</td>
+      <td><code class="truncate-hash" title="${escapeHtml(evidence)}">${escapeHtml(evidence)}</code></td>
+    </tr>`;
+  }).join("") : emptyRow(6, notifications.length ? "当前筛选没有匹配通知" : "暂无通知；运行收盘监控后，新的告警和失败记录会出现在这里");
+
   const watchlistRows = watchlists.length ? watchlists.map((item) => {
     const busy = monitoringActionBusy(`watchlist:${item.watchlist_id}`);
     const symbols = Array.isArray(item.symbols) ? item.symbols : [];
@@ -5689,23 +5786,28 @@ function renderMonitoring(data) {
       { label: "行情快照", value: snapshotDate, status: snapshot.available === false ? "不可用" : snapshot.data_date ? "已加载" : "待确认", kind: snapshot.available === false ? "danger" : snapshot.data_date ? "success" : "neutral", note: `来源 ${marketProviderLabel(snapshot.source || snapshot.providers?.[0]?.provider || scan.source_summary?.providers?.[0]?.provider || "未说明")} · 截止 ${snapshot.completed_session_cutoff || scan.completed_session_cutoff || "—"}` },
       { label: "监控列表", value: `${formatInteger(summary.watchlist_count || 0)} 个`, status: `${formatInteger(summary.symbol_count || 0)} 支证券`, kind: summary.watchlist_count ? "info" : "neutral", note: `${formatInteger(summary.enabled_rule_count || 0)} / ${formatInteger(summary.rule_count || 0)} 条规则启用` },
       { label: "最近扫描", value: scanLabel, status: scan.data_date || scan.status === "succeeded" ? "有记录" : "无记录", kind: scanKind, note: scan.finished_at ? `完成于 ${formatDate(scan.finished_at, true)}` : "尚未生成扫描记录" },
-      { label: "待处理告警", value: `${formatInteger(unresolved)} 条`, status: critical ? `${formatInteger(critical)} 条严重` : unresolved ? "需要复核" : "当前为空", kind: critical ? "danger" : unresolved ? "warning" : "success", note: `滞后告警 ${formatInteger(summary.stale_count || 0)} 条` },
+      { label: "待处理告警", value: `${formatInteger(unresolved)} 条`, status: critical ? `${formatInteger(critical)} 条严重` : unresolved ? "需要复核" : "当前为空", kind: critical ? "danger" : unresolved ? "warning" : "success", note: `未读通知 ${formatInteger(unreadNotifications)} 条 · 滞后告警 ${formatInteger(summary.stale_count || 0)} 条` },
       { label: "权限边界", value: authority.research_only === false ? "状态待确认" : "仅研究", status: authority.execution_authorized ? "需复核" : "不会下单", kind: authority.execution_authorized ? "warning" : "info", note: "不会修改策略、账本或券商权限" },
     ], "监控日期、范围与权限")}
     <section class="metric-strip monitoring-metric-strip" aria-label="监控摘要">
       ${metric("监控证券", formatInteger(summary.symbol_count || 0), `${formatInteger(summary.watchlist_count || 0)} 个列表`)}
       ${metric("启用规则", `${formatInteger(summary.enabled_rule_count || 0)} / ${formatInteger(summary.rule_count || 0)}`, "规则口径由服务器固定", summary.enabled_rule_count ? "tone-info" : "tone-warning")}
-      ${metric("待处理", `${formatInteger(unresolved)} 条`, critical ? `${formatInteger(critical)} 条严重` : "无严重告警", critical ? "tone-negative" : unresolved ? "tone-warning" : "tone-positive")}
+      ${metric("待处理", `${formatInteger(unresolved)} 条`, unreadCritical ? `${formatInteger(unreadCritical)} 条严重通知未读` : `未读通知 ${formatInteger(unreadNotifications)} 条`, unreadCritical ? "tone-negative" : unresolved || unreadNotifications ? "tone-warning" : "tone-positive")}
       ${metric("扫描证据", scan.data_date || "—", scanStatus === "failed" ? "本次失败，旧证据保留" : scanStatus === "partial" ? "部分完成" : scanStatus === "succeeded" ? "完整记录" : "尚未记录", scanStatus === "failed" ? "tone-negative" : scanStatus === "partial" ? "tone-warning" : "tone-info")}
     </section>
     ${monitoringEmptyStateMarkup(data, filteredAlerts)}
     ${monitoringScanStatusMarkup(data)}
     ${monitoringActionComposer(data)}
-    <section class="panel monitoring-alert-panel" aria-labelledby="monitoring-alerts-title">
+    ${statusRegion}
+    <section class="panel monitoring-notification-panel" aria-label="本地通知">
+      ${panelHeader("本地通知", `${formatInteger(filteredNotifications.length)} / ${formatInteger(notifications.length)} 条显示 · ${formatInteger(unreadNotifications)} 条未读`, statusChip(notificationDelivery.external_delivery_configured ? "外部推送已配置" : "仅本机", notificationDelivery.external_delivery_configured ? "success" : "info"))}
+      ${notificationFilter}
+      <div id="monitoring-notifications-region" class="table-wrap monitoring-notification-table" role="region" aria-label="本地通知记录，可横向滚动" tabindex="0"${state.monitoringActionBusy.size ? ' aria-busy="true"' : ""}><table class="data-table"><thead><tr><th>状态 / 级别</th><th>通知内容</th><th>来源</th><th>数据日期 / 生成时间</th><th>收件箱操作</th><th>证据指纹</th></tr></thead><tbody>${notificationRows}</tbody></table></div>
+    </section>
+    <section class="panel monitoring-alert-panel" aria-label="告警队列">
       ${panelHeader("告警队列", `${formatInteger(filteredAlerts.length)} / ${formatInteger(alerts.length)} 条显示 · 记录保留在当前账户`, statusChip(alerts.length ? "证据已加载" : "暂无告警", alerts.length ? "info" : "neutral"))}
       ${filter}
-      ${statusRegion}
-      <div id="monitoring-alerts-region" class="table-wrap monitoring-alert-table"${state.monitoringBusy ? ' aria-busy="true"' : ""}><table class="data-table"><thead><tr><th>状态 / 级别</th><th>证券 / 列表</th><th>处理</th><th>触发规则与观测</th><th>数据日期 / 来源</th><th>触发时间</th><th>证据指纹</th></tr></thead><tbody>${alertRows}</tbody></table></div>
+      <div id="monitoring-alerts-region" class="table-wrap monitoring-alert-table" role="region" aria-label="告警记录，可横向滚动" tabindex="0"${state.monitoringBusy ? ' aria-busy="true"' : ""}><table class="data-table"><thead><tr><th>状态 / 级别</th><th>证券 / 列表</th><th>处理</th><th>触发规则与观测</th><th>数据日期 / 来源</th><th>触发时间</th><th>证据指纹</th></tr></thead><tbody>${alertRows}</tbody></table></div>
     </section>
     <section class="monitoring-config-layout" aria-label="监控配置">
       <article class="panel monitoring-config-panel">
@@ -5978,6 +6080,26 @@ async function runMonitoringAlertAction(alertId, action, extras = {}, button = n
     `${alertId}:${action}`,
     button,
     () => { state.monitoringActionTarget = null; },
+  );
+}
+
+async function runMonitoringNotificationAction(notificationId, action, button = null) {
+  const current = (state.data.get("monitoring")?.notifications || []).find(
+    (item) => item.notification_id === notificationId,
+  );
+  const expected = current?.state_fingerprint;
+  if (!expected) {
+    monitoringSetStatus("通知状态指纹不可用，请刷新监控后重试", "error");
+    monitoringRenderCurrent();
+    return false;
+  }
+  return runMonitoringMutation(
+    `/api/monitoring/notifications/${encodeURIComponent(notificationId)}/actions`,
+    { action, expected_state_fingerprint: expected },
+    `通知${MONITORING_NOTIFICATION_ACTION_LABELS[action] || "状态已更新"}`,
+    `${notificationId}:${action}`,
+    button,
+    () => restoreFocusAfterRender("#monitoring-notifications-region", "monitoring"),
   );
 }
 
@@ -6760,6 +6882,19 @@ document.addEventListener("click", (event) => {
     monitoringRenderCurrent();
     return;
   }
+  const monitoringNotificationFilterClear = event.target.closest("[data-monitoring-notification-filter-clear]");
+  if (monitoringNotificationFilterClear) {
+    state.monitoringNotificationFilters = {
+      status: "unread",
+      severity: "",
+      source_type: "",
+      limit: "100",
+    };
+    monitoringSetStatus("通知筛选已清除", "success");
+    monitoringRenderCurrent();
+    restoreFocusAfterRender("#monitoring-notification-filter-status", "monitoring");
+    return;
+  }
   const monitoringComposeCancel = event.target.closest("[data-monitoring-alert-compose-cancel]");
   if (monitoringComposeCancel) {
     state.monitoringActionTarget = null;
@@ -6785,6 +6920,15 @@ document.addEventListener("click", (event) => {
       monitoringAlertAction.dataset.monitoringAlertAction,
       {},
       monitoringAlertAction,
+    );
+    return;
+  }
+  const monitoringNotificationAction = event.target.closest("[data-monitoring-notification-action]");
+  if (monitoringNotificationAction) {
+    runMonitoringNotificationAction(
+      monitoringNotificationAction.dataset.monitoringNotificationId,
+      monitoringNotificationAction.dataset.monitoringNotificationAction,
+      monitoringNotificationAction,
     );
     return;
   }
@@ -7056,6 +7200,18 @@ document.addEventListener("submit", (event) => {
     };
     monitoringSetStatus("筛选已应用", "success");
     monitoringRenderCurrent();
+  } else if (event.target.id === "monitoring-notification-filter-form") {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    state.monitoringNotificationFilters = {
+      status: String(values.get("status") || "unread"),
+      severity: String(values.get("severity") || ""),
+      source_type: String(values.get("source_type") || ""),
+      limit: String(values.get("limit") || "100"),
+    };
+    monitoringSetStatus("通知筛选已应用", "success");
+    monitoringRenderCurrent();
+    restoreFocusAfterRender('#monitoring-notification-filter-form button[type="submit"]', "monitoring");
   } else if (event.target.id === "monitoring-watchlist-form") {
     event.preventDefault();
     createMonitoringWatchlist(event.target);

@@ -66,8 +66,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.12.1-ui25-capital-flow-a11y", self.html)
-        self.assertIn("app.js?v=0.12.1-ui25-capital-flow-a11y", self.html)
+        self.assertIn("app.css?v=0.12.1-ui26-local-notifications", self.html)
+        self.assertIn("app.js?v=0.12.1-ui26-local-notifications", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -112,6 +112,7 @@ class WebUiContractTests(unittest.TestCase):
             '"/api/monitoring/rules"',
             '"/api/monitoring/scan"',
             "/api/monitoring/alerts/${encodeURIComponent(alertId)}/actions",
+            "/api/monitoring/notifications/${encodeURIComponent(notificationId)}/actions",
         ):
             self.assertIn(endpoint, self.javascript)
         for state_label in (
@@ -133,10 +134,23 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("scan.config_revision ?? data.configuration?.revision", self.javascript)
         self.assertIn("scan.snapshot_evidence_fingerprint", self.javascript)
         self.assertIn("scan.manifest_sha256", self.javascript)
+        self.assertIn('aria-label="本地通知"', self.javascript)
+        self.assertIn('id="monitoring-notification-filter-form"', self.javascript)
+        self.assertIn('id="monitoring-notifications-region"', self.javascript)
+        self.assertIn("本地收件箱只汇总规则告警和扫描失败", self.javascript)
+        self.assertIn("标为已读", self.javascript)
+        self.assertIn("设为未读", self.javascript)
+        self.assertIn("归档通知", self.javascript)
+        self.assertIn(
+            'restoreFocusAfterRender("#monitoring-notifications-region", "monitoring")',
+            self.javascript,
+        )
 
     def test_monitoring_tables_scroll_and_forms_reflow_on_mobile(self):
         self.assertIn(".monitoring-alert-table table", self.css)
         self.assertIn("min-width: 1320px", self.css)
+        self.assertIn(".monitoring-notification-table table", self.css)
+        self.assertIn("min-width: 1120px", self.css)
         self.assertIn(".monitoring-watchlist-table table", self.css)
         self.assertIn("min-width: 920px", self.css)
         self.assertIn(".monitoring-rule-table table", self.css)
@@ -149,6 +163,7 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn(".monitoring-config-layout", mobile_css)
         self.assertIn("grid-template-columns: minmax(0, 1fr)", mobile_css)
         self.assertIn(".monitoring-filter-form", narrow_css)
+        self.assertIn(".monitoring-notification-filter-form", narrow_css)
         self.assertIn("repeat(6, minmax(156px, 1fr))", narrow_css)
 
     def test_risk_and_order_semantics_do_not_depend_on_color(self):

@@ -33,18 +33,24 @@ MAX_RULES = 500
 MAX_ALERTS = 5_000
 MAX_ACTIONS = 10_000
 MAX_SCANS = 2_000
+MAX_NOTIFICATIONS = MAX_ALERTS + MAX_SCANS
+MAX_NOTIFICATION_ACTIONS = 15_000
 MAX_RECORD_BYTES = 512 * 1024
 MAX_SCAN_BYTES = 2 * 1024 * 1024
 MAX_STAGING_FILES = 64
 MAX_STAGING_BYTES = 16 * 1024 * 1024
 MAX_PUBLIC_ALERTS = 200
 DEFAULT_ALERT_LIMIT = 100
+MAX_PUBLIC_NOTIFICATIONS = 200
+DEFAULT_NOTIFICATION_LIMIT = 100
 
 WATCHLIST_ID = re.compile(r"watch_[0-9a-f]{32}\Z")
 RULE_ID = re.compile(r"rule_[0-9a-f]{32}\Z")
 ALERT_ID = re.compile(r"alert_[0-9a-f]{32}\Z")
 ACTION_ID = re.compile(r"action_[0-9a-f]{32}\Z")
 SCAN_ID = re.compile(r"scan_[0-9a-f]{32}\Z")
+NOTIFICATION_ID = re.compile(r"notification_[0-9a-f]{32}\Z")
+NOTIFICATION_ACTION_ID = re.compile(r"notification_action_[0-9a-f]{32}\Z")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 PROFILE_ID = FINGERPRINT
 SYMBOL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:=+-]{0,63}\Z")
@@ -52,6 +58,8 @@ CONFIG_ID = re.compile(r"config_[0-9a-f]{32}\Z")
 STAGING_TEMP_NAME = re.compile(
     r"\.(?:revision_[0-9]{8}\.json|alert_[0-9a-f]{32}\.json|"
     r"action_[0-9a-f]{32}\.json|scan_[0-9a-f]{32}\.json|"
+    r"notification_[0-9a-f]{32}\.json|"
+    r"notification_action_[0-9a-f]{32}\.json|"
     r"\.scan-transaction\.json)\.[A-Za-z0-9_-]+\.tmp\Z"
 )
 
@@ -64,6 +72,13 @@ ALERT_ACTION_FROM = {
     "reopen": frozenset({"acknowledged", "dismissed"}),
     "snooze": frozenset({"open"}),
     "unsnooze": frozenset({"snoozed"}),
+}
+NOTIFICATION_STATUSES = frozenset({"unread", "read", "dismissed"})
+NOTIFICATION_ACTIONS = frozenset({"mark_read", "mark_unread", "dismiss"})
+NOTIFICATION_ACTION_FROM = {
+    "mark_read": frozenset({"unread"}),
+    "mark_unread": frozenset({"read"}),
+    "dismiss": frozenset({"unread", "read"}),
 }
 
 # These formulas are intentionally server-side and versioned.  A rule that is
@@ -319,6 +334,41 @@ _SCAN_TRANSACTION_FIELDS = frozenset(
         "scan_id",
         "scan_fingerprint",
         "alerts",
+        "fingerprint",
+    }
+)
+_NOTIFICATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "notification_id",
+        "owner",
+        "created_at",
+        "source_type",
+        "source_id",
+        "source_fingerprint",
+        "evidence_fingerprint",
+        "severity",
+        "title",
+        "message",
+        "symbol",
+        "data_date",
+        "status",
+        "fingerprint",
+    }
+)
+_NOTIFICATION_ACTION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "notification_action_id",
+        "owner",
+        "notification_id",
+        "created_at",
+        "sequence",
+        "actor",
+        "action",
+        "from_status",
+        "to_status",
+        "notification_fingerprint",
         "fingerprint",
     }
 )
@@ -665,12 +715,241 @@ class MonitoringProfile:
         with self.store._owner_lock(self.profile_id):
             self._verify_integrity_unlocked()
 
+    def notification_status(
+        self, *, limit: int = DEFAULT_NOTIFICATION_LIMIT
+    ) -> dict[str, Any]:
+        """Return the owner-local notification inbox and materialize new sources.
+
+        Notification records are a delivery/read layer over immutable monitoring
+        evidence.  Alerts and failed scans remain authoritative; opening the
+        inbox only creates missing, deterministic references to those records.
+        """
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= MAX_PUBLIC_NOTIFICATIONS
+        ):
+            raise ValueError(
+                f"limit must be between 1 and {MAX_PUBLIC_NOTIFICATIONS}"
+            )
+        with self.store._owner_lock(self.profile_id):
+            self._verify_integrity_unlocked()
+            self._materialize_notifications_unlocked()
+            projected = self._project_notifications_unlocked()
+        unread = [item for item in projected if item["status"] == "unread"]
+        return {
+            "items": projected[:limit],
+            "summary": {
+                "total_count": len(projected),
+                "unread_count": len(unread),
+                "read_count": sum(
+                    1 for item in projected if item["status"] == "read"
+                ),
+                "dismissed_count": sum(
+                    1 for item in projected if item["status"] == "dismissed"
+                ),
+                "unread_severity_counts": {
+                    severity: sum(
+                        1
+                        for item in unread
+                        if item["severity"] == severity
+                    )
+                    for severity in RULE_SEVERITIES
+                },
+            },
+            "delivery": {
+                "mode": "local_inbox",
+                "external_delivery_configured": False,
+                "last_delivery_at": None,
+            },
+            "authority": dict(_AUTHORITY),
+        }
+
+    def notification_action(
+        self,
+        notification_id: str,
+        *,
+        action: str,
+        actor: str,
+        expected_state_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one compare-and-swap inbox state transition."""
+        _valid_notification_id(notification_id)
+        if action not in NOTIFICATION_ACTIONS:
+            raise ValueError("Unsupported notification action")
+        with self.store._owner_lock(self.profile_id):
+            self._verify_integrity_unlocked()
+            self._materialize_notifications_unlocked()
+            notifications = self._list_records_unlocked(
+                "notifications", _NOTIFICATION_FIELDS, MAX_NOTIFICATIONS
+            )
+            notification = next(
+                (
+                    item
+                    for item in notifications
+                    if item["notification_id"] == notification_id
+                ),
+                None,
+            )
+            if notification is None:
+                raise KeyError(notification_id)
+            actions = self._list_records_unlocked(
+                "notification_actions",
+                _NOTIFICATION_ACTION_FIELDS,
+                MAX_NOTIFICATION_ACTIONS,
+            )
+            if len(actions) >= MAX_NOTIFICATION_ACTIONS:
+                raise MonitoringCapacityError(
+                    "monitoring notification action limit reached"
+                )
+            related = _validated_notification_action_chain(
+                notification,
+                [
+                    item
+                    for item in actions
+                    if item["notification_id"] == notification_id
+                ],
+            )
+            current_fingerprint = _notification_state_fingerprint(
+                notification, related
+            )
+            if expected_state_fingerprint is not None and (
+                not isinstance(expected_state_fingerprint, str)
+                or not FINGERPRINT.fullmatch(expected_state_fingerprint)
+            ):
+                raise ValueError(
+                    "expected_state_fingerprint must be a lowercase SHA-256 fingerprint"
+                )
+            if (
+                expected_state_fingerprint is not None
+                and expected_state_fingerprint != current_fingerprint
+            ):
+                raise MonitoringConflictError(
+                    "notification state changed; reload before writing"
+                )
+            status = notification["status"]
+            for item in related:
+                status = item["to_status"]
+            if status not in NOTIFICATION_ACTION_FROM[action]:
+                raise MonitoringConflictError(
+                    f"cannot {action} a notification in {status} state"
+                )
+            target = {
+                "mark_read": "read",
+                "mark_unread": "unread",
+                "dismiss": "dismissed",
+            }[action]
+            record = {
+                "schema_version": SCHEMA_VERSION,
+                "notification_action_id": f"notification_action_{uuid4().hex}",
+                "owner": self.profile_id,
+                "notification_id": notification_id,
+                "created_at": _now(),
+                "sequence": len(related) + 1,
+                "actor": _bounded_text(actor, "actor", 80),
+                "action": action,
+                "from_status": status,
+                "to_status": target,
+                "notification_fingerprint": notification["fingerprint"],
+            }
+            record["fingerprint"] = _fingerprint(
+                {key: value for key, value in record.items() if key != "fingerprint"}
+            )
+            path = (
+                self.directory
+                / "notification_actions"
+                / f"{record['notification_action_id']}.json"
+            )
+            _validate_notification_action_record(record, path)
+            _atomic_create_json(
+                path,
+                record,
+                _NOTIFICATION_ACTION_FIELDS,
+                MAX_RECORD_BYTES,
+            )
+            result = dict(notification)
+            result["status"] = target
+            result["last_action"] = _public_notification_action(record)
+            result["state_fingerprint"] = _notification_state_fingerprint(
+                notification, [*related, record]
+            )
+            result.pop("owner", None)
+            return result
+
+    def _materialize_notifications_unlocked(self) -> None:
+        existing = self._list_records_unlocked(
+            "notifications", _NOTIFICATION_FIELDS, MAX_NOTIFICATIONS
+        )
+        by_id = {item["notification_id"]: item for item in existing}
+        alerts = self._list_records_unlocked("alerts", _ALERT_FIELDS, MAX_ALERTS)
+        scans = self._list_records_unlocked("scans", _SCAN_FIELDS, MAX_SCANS)
+        expected = [
+            *(_notification_from_alert(self.profile_id, item) for item in alerts),
+            *(
+                _notification_from_failed_scan(self.profile_id, item)
+                for item in scans
+                if item["status"] == "failed"
+            ),
+        ]
+        missing = [item for item in expected if item["notification_id"] not in by_id]
+        if len(existing) + len(missing) > MAX_NOTIFICATIONS:
+            raise MonitoringCapacityError("monitoring notification limit reached")
+        for item in missing:
+            path = self.directory / "notifications" / f"{item['notification_id']}.json"
+            _validate_notification_record(item, path)
+            _atomic_create_json(
+                path,
+                item,
+                _NOTIFICATION_FIELDS,
+                MAX_RECORD_BYTES,
+            )
+
+    def _project_notifications_unlocked(self) -> list[dict[str, Any]]:
+        records = self._list_records_unlocked(
+            "notifications", _NOTIFICATION_FIELDS, MAX_NOTIFICATIONS
+        )
+        actions = self._list_records_unlocked(
+            "notification_actions",
+            _NOTIFICATION_ACTION_FIELDS,
+            MAX_NOTIFICATION_ACTIONS,
+        )
+        by_notification: dict[str, list[dict[str, Any]]] = {}
+        for action in actions:
+            by_notification.setdefault(action["notification_id"], []).append(action)
+        public: list[dict[str, Any]] = []
+        for record in records:
+            current = dict(record)
+            related = _validated_notification_action_chain(
+                record, by_notification.get(record["notification_id"], [])
+            )
+            for action in related:
+                current["status"] = action["to_status"]
+                current["last_action"] = _public_notification_action(action)
+            current["state_fingerprint"] = _notification_state_fingerprint(
+                record, related
+            )
+            current.pop("owner", None)
+            public.append(current)
+        public.sort(
+            key=lambda item: (item["created_at"], item["notification_id"]),
+            reverse=True,
+        )
+        return public
+
     def _verify_integrity_unlocked(self) -> None:
         self._recover_scan_transaction_unlocked()
         configurations = self._configuration_records_unlocked()
         scans = self._list_records_unlocked("scans", _SCAN_FIELDS, MAX_SCANS)
         alerts = self._list_records_unlocked("alerts", _ALERT_FIELDS, MAX_ALERTS)
         actions = self._list_records_unlocked("actions", _ACTION_FIELDS, MAX_ACTIONS)
+        notifications = self._list_records_unlocked(
+            "notifications", _NOTIFICATION_FIELDS, MAX_NOTIFICATIONS
+        )
+        notification_actions = self._list_records_unlocked(
+            "notification_actions",
+            _NOTIFICATION_ACTION_FIELDS,
+            MAX_NOTIFICATION_ACTIONS,
+        )
         config_by_revision = {item["revision"]: item for item in configurations}
         by_scan = {item["scan_id"]: item for item in scans}
         by_alert = {item["alert_id"]: item for item in alerts}
@@ -731,6 +1010,56 @@ class MonitoringProfile:
         for alert in alerts:
             _validated_action_chain(
                 alert, actions_by_alert.get(alert["alert_id"], [])
+            )
+        by_notification: dict[str, dict[str, Any]] = {}
+        seen_sources: set[tuple[str, str]] = set()
+        for notification in notifications:
+            notification_id = notification["notification_id"]
+            if notification_id in by_notification:
+                raise RuntimeError("Monitoring notification id is duplicated")
+            by_notification[notification_id] = notification
+            source_key = (
+                notification["source_type"],
+                notification["source_id"],
+            )
+            if source_key in seen_sources:
+                raise RuntimeError("Monitoring notification source is duplicated")
+            seen_sources.add(source_key)
+            if notification["source_type"] == "alert":
+                source = by_alert.get(notification["source_id"])
+                if source is None:
+                    raise RuntimeError(
+                        "Monitoring notification references a missing alert"
+                    )
+                expected_notification = _notification_from_alert(
+                    self.profile_id, source
+                )
+            else:
+                source = by_scan.get(notification["source_id"])
+                if source is None or source["status"] != "failed":
+                    raise RuntimeError(
+                        "Monitoring notification references a missing failed scan"
+                    )
+                expected_notification = _notification_from_failed_scan(
+                    self.profile_id, source
+                )
+            if notification != expected_notification:
+                raise RuntimeError(
+                    "Monitoring notification source binding is invalid"
+                )
+        notification_actions_by_id: dict[str, list[dict[str, Any]]] = {}
+        for action in notification_actions:
+            if action["notification_id"] not in by_notification:
+                raise RuntimeError(
+                    "Monitoring notification action references a missing notification"
+                )
+            notification_actions_by_id.setdefault(
+                action["notification_id"], []
+            ).append(action)
+        for notification in notifications:
+            _validated_notification_action_chain(
+                notification,
+                notification_actions_by_id.get(notification["notification_id"], []),
             )
 
     def _project_alerts_unlocked(self) -> list[dict[str, Any]]:
@@ -1051,6 +1380,10 @@ class MonitoringProfile:
                 _validate_action_record(record, path)
             elif kind == "scans":
                 _validate_scan_record(record, path)
+            elif kind == "notifications":
+                _validate_notification_record(record, path)
+            elif kind == "notification_actions":
+                _validate_notification_action_record(record, path)
             records.append(record)
         return records
 
@@ -1388,6 +1721,9 @@ class MonitoringEngine:
         config, alerts, alert_summary, scan = profile.status_parts(
             limit=MAX_PUBLIC_ALERTS
         )
+        notifications = profile.notification_status(
+            limit=MAX_PUBLIC_NOTIFICATIONS
+        )
         snapshot = self.snapshot(market)
         return {
             "schema_version": SCHEMA_VERSION,
@@ -1404,6 +1740,9 @@ class MonitoringEngine:
             "snapshot": snapshot,
             "scan": scan or {"status": "not_run", "data_date": None, "error": None},
             "alerts": alerts,
+            "notifications": notifications["items"],
+            "notification_summary": notifications["summary"],
+            "notification_delivery": notifications["delivery"],
             "summary": {
                 "watchlist_count": len(config["watchlists"]),
                 "symbol_count": len({symbol for item in config["watchlists"] for symbol in item["symbols"]}),
@@ -1983,6 +2322,105 @@ def _validated_action_chain(
     return ordered
 
 
+def _notification_id(source_type: str, source_id: str) -> str:
+    return f"notification_{_fingerprint({'source_type': source_type, 'source_id': source_id})[:32]}"
+
+
+def _notification_from_alert(
+    profile_id: str, alert: Mapping[str, Any]
+) -> dict[str, Any]:
+    record = {
+        "schema_version": SCHEMA_VERSION,
+        "notification_id": _notification_id("alert", str(alert["alert_id"])),
+        "owner": profile_id,
+        "created_at": alert["triggered_at"],
+        "source_type": "alert",
+        "source_id": alert["alert_id"],
+        "source_fingerprint": alert["fingerprint"],
+        "evidence_fingerprint": alert["evidence_fingerprint"],
+        "severity": alert["severity"],
+        "title": f"{alert['symbol']} · {alert['rule_label']}"[:160],
+        "message": f"观测值 {alert['observed_text']}，规则已在 {alert['data_date']} 收盘证据中触发。",
+        "symbol": alert["symbol"],
+        "data_date": alert["data_date"],
+        "status": "unread",
+    }
+    record["fingerprint"] = _fingerprint(record)
+    return record
+
+
+def _notification_from_failed_scan(
+    profile_id: str, scan: Mapping[str, Any]
+) -> dict[str, Any]:
+    error = scan.get("error") if isinstance(scan.get("error"), Mapping) else {}
+    code = str(error.get("code") or "scan_failed")
+    message = str(error.get("message") or "监控扫描未完成")
+    record = {
+        "schema_version": SCHEMA_VERSION,
+        "notification_id": _notification_id(
+            "scan_failure", str(scan["scan_id"])
+        ),
+        "owner": profile_id,
+        "created_at": scan["finished_at"],
+        "source_type": "scan_failure",
+        "source_id": scan["scan_id"],
+        "source_fingerprint": scan["fingerprint"],
+        "evidence_fingerprint": scan.get("snapshot_evidence_fingerprint"),
+        "severity": "critical",
+        "title": "收盘监控运行失败",
+        "message": f"{code}：{message}"[:1_000],
+        "symbol": None,
+        "data_date": scan.get("data_date"),
+        "status": "unread",
+    }
+    record["fingerprint"] = _fingerprint(record)
+    return record
+
+
+def _public_notification_action(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: item
+        for key, item in value.items()
+        if key
+        not in {
+            "owner",
+            "notification_fingerprint",
+            "fingerprint",
+        }
+    }
+
+
+def _notification_state_fingerprint(
+    notification: Mapping[str, Any], actions: list[Mapping[str, Any]]
+) -> str:
+    return _fingerprint(
+        {
+            "notification_fingerprint": notification["fingerprint"],
+            "action_fingerprints": [item["fingerprint"] for item in actions],
+        }
+    )
+
+
+def _validated_notification_action_chain(
+    notification: Mapping[str, Any], actions: list[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    ordered = sorted((dict(item) for item in actions), key=lambda item: item["sequence"])
+    expected_status = notification["status"]
+    for sequence, action in enumerate(ordered, start=1):
+        if action["sequence"] != sequence:
+            raise RuntimeError(
+                "Monitoring notification action sequence is not contiguous"
+            )
+        if action["notification_fingerprint"] != notification["fingerprint"]:
+            raise RuntimeError("Monitoring notification action binding does not match")
+        if action["from_status"] != expected_status:
+            raise RuntimeError(
+                "Monitoring notification action state chain does not match"
+            )
+        expected_status = action["to_status"]
+    return ordered
+
+
 def _validate_scan_evidence_binding(scan: Mapping[str, Any]) -> None:
     snapshot_id = scan["snapshot_id"]
     if snapshot_id is None:
@@ -2359,6 +2797,12 @@ def _valid_scan_id(value: Any) -> str:
     return value
 
 
+def _valid_notification_id(value: Any) -> str:
+    if not isinstance(value, str) or not NOTIFICATION_ID.fullmatch(value):
+        raise ValueError("notification id is invalid")
+    return value
+
+
 def _valid_symbol(value: Any) -> str:
     if not isinstance(value, str) or value != value.strip() or not SYMBOL.fullmatch(value):
         raise ValueError("symbol is invalid")
@@ -2576,6 +3020,98 @@ def _validate_action_record(value: Mapping[str, Any], path: Path) -> None:
             raise ValueError("snooze_until is only valid for snooze")
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeError(f"Invalid monitoring alert action: {path}: {exc}") from exc
+
+
+def _validate_notification_record(value: Mapping[str, Any], path: Path) -> None:
+    try:
+        notification_id = _valid_notification_id(value["notification_id"])
+        if path.stem != notification_id:
+            raise ValueError("filename does not match notification_id")
+        _valid_profile_id(value["owner"])
+        _valid_timestamp(value["created_at"], "created_at")
+        source_type = value["source_type"]
+        if source_type not in {"alert", "scan_failure"}:
+            raise ValueError("source_type is unsupported")
+        source_id = value["source_id"]
+        if source_type == "alert":
+            _valid_alert_id(source_id)
+            _valid_symbol(value["symbol"])
+            _parse_iso_date(value["data_date"], "data_date")
+        else:
+            _valid_scan_id(source_id)
+            if value["symbol"] is not None:
+                raise ValueError("scan failure symbol must be null")
+            if value["data_date"] is not None:
+                _parse_iso_date(value["data_date"], "data_date")
+        if notification_id != _notification_id(source_type, source_id):
+            raise ValueError("notification_id does not match source")
+        for field in ("source_fingerprint",):
+            if not isinstance(value[field], str) or not FINGERPRINT.fullmatch(
+                value[field]
+            ):
+                raise ValueError(f"{field} is invalid")
+        evidence = value["evidence_fingerprint"]
+        if evidence is not None and (
+            not isinstance(evidence, str) or not FINGERPRINT.fullmatch(evidence)
+        ):
+            raise ValueError("evidence_fingerprint is invalid")
+        if value["severity"] not in RULE_SEVERITIES:
+            raise ValueError("severity is invalid")
+        if value["status"] != "unread":
+            raise ValueError("initial notification status must be unread")
+        _bounded_text(value["title"], "title", 160)
+        _bounded_text(value["message"], "message", 1_000)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Invalid monitoring notification record: {path}: {exc}"
+        ) from exc
+
+
+def _validate_notification_action_record(
+    value: Mapping[str, Any], path: Path
+) -> None:
+    try:
+        action_id = value["notification_action_id"]
+        if (
+            not isinstance(action_id, str)
+            or not NOTIFICATION_ACTION_ID.fullmatch(action_id)
+        ):
+            raise ValueError("notification_action_id is invalid")
+        if path.stem != action_id:
+            raise ValueError("filename does not match notification_action_id")
+        _valid_profile_id(value["owner"])
+        _valid_notification_id(value["notification_id"])
+        _valid_timestamp(value["created_at"], "created_at")
+        _bounded_int(
+            value["sequence"], "sequence", 1, MAX_NOTIFICATION_ACTIONS
+        )
+        _bounded_text(value["actor"], "actor", 80)
+        action = value["action"]
+        if action not in NOTIFICATION_ACTIONS:
+            raise ValueError("notification action is unsupported")
+        if (
+            value["from_status"] not in NOTIFICATION_STATUSES
+            or value["to_status"] not in NOTIFICATION_STATUSES
+        ):
+            raise ValueError("notification status transition is invalid")
+        if value["from_status"] not in NOTIFICATION_ACTION_FROM[action]:
+            raise ValueError("notification action is invalid from source state")
+        expected_target = {
+            "mark_read": "read",
+            "mark_unread": "unread",
+            "dismiss": "dismissed",
+        }[action]
+        if value["to_status"] != expected_target:
+            raise ValueError("notification action target state is invalid")
+        fingerprint = value["notification_fingerprint"]
+        if not isinstance(fingerprint, str) or not FINGERPRINT.fullmatch(
+            fingerprint
+        ):
+            raise ValueError("notification_fingerprint is invalid")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Invalid monitoring notification action: {path}: {exc}"
+        ) from exc
 
 
 def _validate_scan_record(value: Mapping[str, Any], path: Path) -> None:
@@ -2838,9 +3374,12 @@ __all__ = [
     "ALERT_ACTIONS",
     "ALERT_STATUSES",
     "DEFAULT_ALERT_LIMIT",
+    "DEFAULT_NOTIFICATION_LIMIT",
     "MonitoringConflictError",
     "MonitoringEngine",
     "MonitoringStore",
+    "NOTIFICATION_ACTIONS",
+    "NOTIFICATION_STATUSES",
     "RULE_SEVERITIES",
     "RULE_TYPE_METADATA",
     "SCHEMA_VERSION",

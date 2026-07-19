@@ -68,6 +68,11 @@ scripts below will remain source-only until a later release is explicitly cut.
   one-snapshot scans, immutable alert evidence, append-only review actions, and
   a Windows scheduled-task runner. Monitoring remains `research_only` and has
   no strategy, paper-ledger, broker, approval, or order authority.
+- Added an owner-scoped local notification inbox that materializes alert and
+  failed-scan sources idempotently with source/evidence fingerprints. Read,
+  unread, and archive transitions are append-only and state-fingerprint
+  protected; external email, webhook, toast, and mobile delivery remain out of
+  scope.
 - Made scan outcomes explicit and retryable: a fully successful scan may be
   reused for the same owner/configuration/snapshot tuple, while `partial` and
   `failed` attempts remain immutable evidence and are reevaluated under a new
@@ -92,9 +97,10 @@ scripts below will remain source-only until a later release is explicitly cut.
   reserved staging names within bounded residue limits, and use Windows
   write-through same-volume publication where available.
 - Monitoring record budgets are explicit hard caps (1,000 configuration
-  revisions, 2,000 scans, 5,000 alerts, and 10,000 actions per owner, alongside
-  bounded watchlists, symbols, and rules). This release has no verified archive
-  or compaction path, so reaching a cap stops new writes until a future
+  revisions, 2,000 scans, 5,000 alerts, 10,000 alert actions, 7,000
+  notifications, and 15,000 notification actions per owner, alongside bounded
+  watchlists, symbols, and rules). This release has no verified archive or
+  compaction path, so reaching a cap stops new writes until a future
   checkpointed retention format exists.
 - Added open, acknowledged, snoozed, and dismissed alert review states. A
   reached `snooze_until` date appends an auditable automatic unsnooze action at

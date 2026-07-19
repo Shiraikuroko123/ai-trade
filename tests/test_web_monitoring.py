@@ -11,6 +11,7 @@ from ai_trade.web.server import (
     DashboardServer,
     _handler_factory,
     _parse_monitoring_alert_action_payload,
+    _parse_monitoring_notification_action_payload,
     _parse_monitoring_rule_payload,
     _parse_monitoring_watchlist_payload,
 )
@@ -19,6 +20,7 @@ from ai_trade.web.server import (
 WATCHLIST_ID = "watch_" + "a" * 32
 RULE_ID = "rule_" + "b" * 32
 ALERT_ID = "alert_" + "c" * 32
+NOTIFICATION_ID = "notification_" + "d" * 32
 
 
 class _Jobs:
@@ -84,6 +86,13 @@ class _Service:
         if self.alert_conflict:
             raise MonitoringConflictError("alert state changed; reload before writing")
         return self._record("alert_action", **payload)
+
+    def monitoring_notification_action(self, **payload):
+        if self.alert_conflict:
+            raise MonitoringConflictError(
+                "notification state changed; reload before writing"
+            )
+        return self._record("notification_action", **payload)
 
 
 class MonitoringHttpTests(unittest.TestCase):
@@ -273,6 +282,21 @@ class MonitoringHttpTests(unittest.TestCase):
             }
         )
         self.assertEqual(parsed, ("acknowledge", "", None, "d" * 64))
+        with self.assertRaises(ValueError):
+            _parse_monitoring_notification_action_payload(
+                {"action": "mark_read", "note": "not supported"}
+            )
+        with self.assertRaises(ValueError):
+            _parse_monitoring_notification_action_payload(
+                {"action": "acknowledge"}
+            )
+        notification = _parse_monitoring_notification_action_payload(
+            {
+                "action": "mark_read",
+                "expected_state_fingerprint": "e" * 64,
+            }
+        )
+        self.assertEqual(notification, ("mark_read", "e" * 64))
 
     def test_revision_conflict_maps_to_http_409(self):
         service = _Service(conflict=True)
@@ -399,6 +423,50 @@ class MonitoringHttpTests(unittest.TestCase):
             )
         self.assertEqual(status, 409)
         self.assertIn("alert state changed", payload["error"])
+
+    def test_notification_route_is_session_bound_and_requires_state_fingerprint(self):
+        service = _Service()
+        with _running_server(service, token="csrf") as port:
+            status, payload = _request_json(
+                port,
+                "POST",
+                f"/api/monitoring/notifications/{NOTIFICATION_ID}/actions",
+                {"action": "mark_read"},
+                token="csrf",
+            )
+            self.assertEqual(status, 400)
+            self.assertIn("expected_state_fingerprint is required", payload["error"])
+
+            status, payload = _request_json(
+                port,
+                "POST",
+                f"/api/monitoring/notifications/{NOTIFICATION_ID}/actions",
+                {
+                    "action": "dismiss",
+                    "expected_state_fingerprint": "f" * 64,
+                    "owner_id": "other",
+                },
+                token="csrf",
+            )
+            self.assertEqual(status, 400)
+
+            status, payload = _request_json(
+                port,
+                "POST",
+                f"/api/monitoring/notifications/{NOTIFICATION_ID}/actions",
+                {
+                    "action": "dismiss",
+                    "expected_state_fingerprint": "f" * 64,
+                },
+                token="csrf",
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["operation"], "notification_action")
+            call = service.calls[-1][1]
+            self.assertEqual(call["owner_id"], "local-owner")
+            self.assertEqual(call["actor"], "local-owner")
+            self.assertEqual(call["notification_id"], NOTIFICATION_ID)
+            self.assertEqual(call["action"], "dismiss")
 
 
 class _RunningServer:
