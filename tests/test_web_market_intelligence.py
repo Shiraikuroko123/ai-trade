@@ -77,6 +77,7 @@ class DashboardMarketIntelligenceServiceTests(unittest.TestCase):
             result = service.market_intelligence(query)
 
         self.assertTrue(result["available"])
+        self.assertRegex(result["generated_at"], r"^\d{4}-\d{2}-\d{2}T")
         service.market.assert_called_once_with(recover_snapshot=False)
         store_type.assert_called_once_with(config)
         store.list.assert_called_once_with(
@@ -104,7 +105,8 @@ class DashboardMarketIntelligenceServiceTests(unittest.TestCase):
         with patch("ai_trade.web.service.DragonTigerStore", return_value=store):
             result = service.market_intelligence(query)
 
-        self.assertEqual(result, snapshot)
+        self.assertEqual(result["records"], snapshot["records"])
+        self.assertRegex(result["generated_at"], r"^\d{4}-\d{2}-\d{2}T")
         store.list.assert_called_once_with(
             DragonTigerQuery(include_revisions=True),
             completed_session_cutoff=None,

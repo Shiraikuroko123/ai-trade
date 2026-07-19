@@ -35,10 +35,13 @@ was used. This is intentional: each adapter needs an explicit license review,
 field mapping, adjustment policy, rate-limit policy and independent fixtures
 before it can enter a release.
 
-The Unreleased Dragon-Tiger List adapter documented in
-`MARKET_INTELLIGENCE.md` is a separate event-report boundary. It does not
-implement `MarketDataProvider`, cannot supply or replace an OHLCV file, and is
-not counted as a third independent daily-bar source.
+The Unreleased Dragon-Tiger List and market-breadth adapters documented in
+`MARKET_INTELLIGENCE.md` and `MARKET_BREADTH.md` are separate evidence
+boundaries. They do not implement `MarketDataProvider`, cannot supply or
+replace an OHLCV file, and are not counted as a third independent daily-bar
+source. Market breadth uses a provider-defined board universe and three
+benchmark quote responses; it is not a licensed industry taxonomy or an
+independent cross-source validation route.
 
 ## Manifest evidence
 

@@ -1,16 +1,17 @@
 # Market Intelligence Evidence
 
 The market-intelligence layer on `main` is an **Unreleased**, read-only research
-surface. Its first dataset is the daily Dragon-Tiger List published by
-Eastmoney. It does not provide intraday quotes, exchange-certified records,
-news sentiment, a strategy signal, or any order authority.
+surface. It currently contains two independent Eastmoney evidence datasets:
+the daily Dragon-Tiger List and closing market breadth with provider-defined
+board rankings. It does not provide intraday quotes, exchange-certified
+records, news sentiment, a strategy signal, or any order authority.
 
 ## Current Dataset
 
 | Dataset | Provider | Frequency | Current boundary |
 |---|---|---|---|
 | `dragon_tiger_daily` | Eastmoney `RPT_DAILYBILLBOARD_DETAILSNEW` | One completed trading date | Implemented as a local immutable revision chain |
-| Sector rankings and breadth | None | - | Not implemented; the security-master `sector` field remains a risk group, not a whole-market industry feed |
+| `sector_breadth` | Eastmoney `m:90+t:2` board pages plus SH/SZ/BJ benchmark quote responses | One completed trading date | Implemented as a separate local immutable revision chain; see `MARKET_BREADTH.md` |
 | Capital flow | None | - | Not implemented |
 | Announcements and news | None | - | Not implemented |
 | Valuation percentiles | None | - | Not implemented |
@@ -41,6 +42,17 @@ leaves the previous complete snapshot untouched. The page distinguishes a
 running refresh, a failed job, a valid empty result, a stale snapshot, and a
 workspace that has never refreshed this dataset.
 
+Market breadth has its own command and fixed background action, so a failure
+cannot make a Dragon-Tiger snapshot available or unavailable:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli market-breadth-refresh --date 2026-07-17
+```
+
+Its complete validation, source scope, filters, storage format, and observed
+single-source limitations are documented in [Market Breadth and Board
+Rankings](MARKET_BREADTH.md).
+
 ## Validation Contract
 
 The provider accepts only the documented daily report envelope and a bounded
@@ -66,6 +78,7 @@ Validated records are normalized, deterministically ordered, and stored below:
 
 ```text
 state/market_intelligence/dragon_tiger/YYYY-MM-DD/
+state/market_intelligence/sector_breadth/YYYY-MM-DD/
 ```
 
 Each revision carries the source report, retrieval time, response and evidence
@@ -86,6 +99,8 @@ is not restored by `cloud-restore`.
 ```text
 GET /api/market-intelligence
 GET /api/market-intelligence?date=2026-07-17&market=SZ&symbol=000722&q=涨幅&limit=100
+GET /api/market-breadth
+GET /api/market-breadth?date=2026-07-17&q=银行&sort=advance_share&direction=desc&limit=100
 ```
 
 Supported filters are `date`, `market`, `symbol`, `q`, and `limit`. Parameters
@@ -105,9 +120,10 @@ Every snapshot and response fixes:
 }
 ```
 
-Dragon-Tiger List rows may support a human research review. They cannot modify
+Dragon-Tiger List and breadth rows may support a human research review. They
+cannot modify
 a strategy candidate, mark fundamental or sentiment coverage as available,
 write a paper or broker ledger, create an order, satisfy a promotion gate, or
-unlock live trading. Later sector, flow, news, valuation, and sentiment
-adapters require their own provider, date, methodology, licensing, completeness,
-staleness, and cross-source contracts before entering this layer.
+unlock live trading. Later flow, news, valuation, and sentiment adapters require
+their own provider, date, methodology, licensing, completeness, staleness, and
+cross-source contracts before entering this layer.

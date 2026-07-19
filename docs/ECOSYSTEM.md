@@ -60,7 +60,7 @@ authoritative paper and broker ledgers.
 | Reference capability | Status | AI Trade boundary |
 |---|---|---|
 | Dragon-Tiger List | Complete within one public-source trust boundary | The full Eastmoney daily report is page/count/date/schema validated and stored as immutable local revisions. It is not exchange-certified and remains `research_only`. |
-| Sector rankings and breadth | Not implemented | Existing `sector` values are point-in-time security-master risk groups; the default ETF universe must not be presented as whole-market industry breadth. |
+| Sector rankings and breadth | Complete within one public-source trust boundary | All Eastmoney `m:90+t:2` board pages and SH/SZ/BJ benchmark breadth responses are count/date/schema/identity validated and stored as immutable local revisions. The provider-defined board universe is not presented as a licensed pure-industry taxonomy, has no independent cross-source check, and remains `research_only`. |
 | Capital flow | Not implemented | No normalized provider, unit, adjustment, coverage, licensing, or cross-source contract is configured. |
 | Announcements, news, and hot lists | Not implemented | No traceable publication-time and correction-aware source is configured. |
 | Valuation temperature | Not implemented | Price history is not a substitute for PE/PB/cash-flow valuation evidence. |
@@ -85,6 +85,7 @@ operator thought at that time, not a signal, order, or promotion fact.
 10. Research notes are append-only, owner-scoped evidence. They can explain a decision, but cannot mutate strategy, accounting, broker permissions, or live authority.
 11. Closing archives have two layers: `/api/research/archive` is a read-time evidence projection, while `ResearchDigestStore` persists a derivative, append-only daily/weekly revision chain. The paper equity ledger and daily reports remain accounting authority; digest rows cannot promote a strategy or authorize an order.
 12. Monitoring alerts are owner-scoped research prompts. Partial and failed scans remain explicit attempts, and no alert or review action changes strategy, paper accounting, broker permissions, or order authority.
+13. Market breadth and board rankings are third-party closing evidence. Their provider-defined classification and counts are disclosed, and they cannot create a signal, alter a strategy, or authorize an order.
 
 ## What Is Deliberately Not Adopted
 

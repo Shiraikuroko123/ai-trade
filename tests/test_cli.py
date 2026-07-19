@@ -182,6 +182,68 @@ class CliTests(unittest.TestCase):
         ensure_cache.assert_not_called()
         download.assert_not_called()
 
+    def test_market_breadth_refresh_uses_explicit_iso_date(self):
+        parsed = build_parser().parse_args(
+            ["market-breadth-refresh", "--date", "2024-01-05"]
+        )
+        self.assertEqual(parsed.command, "market-breadth-refresh")
+        self.assertEqual(parsed.date, "2024-01-05")
+
+        config = object()
+        result = {
+            "schema_version": 1,
+            "trade_date": "2024-01-05",
+            "status": "current",
+            "available": True,
+            "errors": [],
+        }
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.MarketData") as market_data,
+            patch(
+                "ai_trade.data.market_breadth.refresh_market_breadth",
+                return_value=result,
+            ) as refresh,
+            redirect_stdout(output),
+        ):
+            status = main(
+                ["market-breadth-refresh", "--date", "2024-01-05"]
+            )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output.getvalue()), result)
+        refresh.assert_called_once_with(config, date(2024, 1, 5))
+        market_data.assert_not_called()
+
+    def test_market_breadth_refresh_defaults_to_verified_cache_date(self):
+        config = object()
+        market = MagicMock()
+        market.latest_date.return_value = date(2024, 1, 8)
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.MarketData", return_value=market) as market_data,
+            patch(
+                "ai_trade.data.market_breadth.refresh_market_breadth",
+                return_value={
+                    "trade_date": "2024-01-08",
+                    "status": "current",
+                    "available": True,
+                    "errors": [],
+                },
+            ) as refresh,
+            redirect_stdout(output),
+        ):
+            status = main(["market-breadth-refresh"])
+
+        self.assertEqual(status, 0)
+        market_data.assert_called_once_with(config)
+        market.latest_date.assert_called_once_with()
+        refresh.assert_called_once_with(config, date(2024, 1, 8))
+
     def test_market_intelligence_refresh_rejects_bad_date_and_reports_failure(self):
         config = object()
         refresh = MagicMock()

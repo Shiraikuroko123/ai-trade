@@ -27,6 +27,7 @@ from ..broker.scope import create_broker_ledger_scope
 from ..config import AppConfig
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
+from ..data.market_breadth import MarketBreadthQuery, MarketBreadthStore
 from ..data.market_intelligence import DragonTigerQuery, DragonTigerStore
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
@@ -1198,10 +1199,35 @@ class DashboardService:
             # The ledger remains useful when the ordinary market cache is absent or
             # invalid; in that case the store reports freshness without a cutoff.
             cutoff = None
-        return DragonTigerStore(self.config).list(
+        result = DragonTigerStore(self.config).list(
             store_query,
             completed_session_cutoff=cutoff,
         )
+        result["generated_at"] = _now()
+        return result
+
+    def market_breadth(
+        self,
+        query: MarketBreadthQuery | None = None,
+    ) -> dict[str, Any]:
+        """Read local sector/breadth evidence without refreshing a provider."""
+
+        selected = query or MarketBreadthQuery()
+        store_query = replace(selected, include_revisions=True)
+        cutoff = None
+        try:
+            market = self.market(recover_snapshot=False)
+            candidate = getattr(market, "completed_through", None)
+            if isinstance(candidate, date) and not isinstance(candidate, datetime):
+                cutoff = candidate
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            cutoff = None
+        result = MarketBreadthStore(self.config).list(
+            store_query,
+            completed_session_cutoff=cutoff,
+        )
+        result["generated_at"] = _now()
+        return result
 
     def market_chart(
         self, *, symbol: str, period: str = "day", limit: int = 240

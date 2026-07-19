@@ -143,6 +143,10 @@ class WebTests(unittest.TestCase):
             self.assertEqual(
                 COMMANDS[intelligence.action], ("market-intelligence-refresh",)
             )
+            breadth = manager.submit("refresh-market-breadth")
+            self.assertEqual(
+                COMMANDS[breadth.action], ("market-breadth-refresh",)
+            )
             with self.assertRaisesRegex(ValueError, "Unsupported"):
                 manager.submit("delete-everything")
             cancelled = manager.cancel(first.id)

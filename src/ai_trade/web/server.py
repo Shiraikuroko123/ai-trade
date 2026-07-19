@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
+from ..data.market_breadth import MarketBreadthQuery
 from ..data.market_intelligence import DragonTigerQuery
 from ..json_utils import loads_unique_json
 from ..monitoring import (
@@ -93,6 +94,21 @@ MARKET_INTELLIGENCE_MAX_LIMIT = 500
 MARKET_INTELLIGENCE_MAX_QUERY_LENGTH = 1024
 MARKET_INTELLIGENCE_MAX_TEXT_LENGTH = 100
 MARKET_INTELLIGENCE_MARKETS = frozenset({"SH", "SZ", "BJ"})
+MARKET_BREADTH_DEFAULT_LIMIT = 200
+MARKET_BREADTH_MAX_LIMIT = 500
+MARKET_BREADTH_MAX_QUERY_LENGTH = 1024
+MARKET_BREADTH_MAX_TEXT_LENGTH = 100
+MARKET_BREADTH_SORTS = frozenset(
+    {
+        "change_pct",
+        "advance_share",
+        "turnover_rate",
+        "volume_ratio",
+        "market_cap",
+        "constituent_count",
+        "name",
+    }
+)
 SCREEN_GROUP_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 STRATEGY_LAB_CANDIDATE_PATH = re.compile(
     r"/api/strategy-lab/candidates/(cand_[0-9a-f]{32})(?:/(validate|approve|export|activate))?\Z"
@@ -337,6 +353,9 @@ def _handler_factory(
                 elif parsed.path == "/api/market-intelligence":
                     query = _parse_market_intelligence_query(parsed.query)
                     self._json(service.market_intelligence(query))
+                elif parsed.path == "/api/market-breadth":
+                    query = _parse_market_breadth_query(parsed.query)
+                    self._json(service.market_breadth(query))
                 elif parsed.path == "/api/monitoring":
                     if parsed.query:
                         raise ValueError(
@@ -1218,6 +1237,60 @@ def _parse_market_intelligence_query(query: str) -> DragonTigerQuery:
         symbol=symbol,
         market=market,
         q=text_query,
+        limit=limit,
+    )
+
+
+def _parse_market_breadth_query(query: str) -> MarketBreadthQuery:
+    if len(query) > MARKET_BREADTH_MAX_QUERY_LENGTH:
+        raise ValueError("Market breadth query is too long")
+    if not query:
+        return MarketBreadthQuery()
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=5,
+        )
+    except ValueError as exc:
+        raise ValueError("Market breadth query is invalid") from exc
+    unsupported = sorted(set(values) - {"date", "q", "sort", "direction", "limit"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported market breadth query parameters: "
+            + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    trade_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    text_query = values.get("q", [None])[0]
+    if text_query is not None:
+        text_query = _bounded_text(
+            text_query,
+            "q",
+            MARKET_BREADTH_MAX_TEXT_LENGTH,
+        )
+    sort = values.get("sort", ["change_pct"])[0]
+    if sort not in MARKET_BREADTH_SORTS:
+        raise ValueError("Unsupported market breadth sort field")
+    direction = values.get("direction", ["desc"])[0]
+    if direction not in {"asc", "desc"}:
+        raise ValueError("direction must be asc or desc")
+    raw_limit = values.get("limit", [str(MARKET_BREADTH_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= MARKET_BREADTH_MAX_LIMIT:
+        raise ValueError(
+            f"limit must be between 1 and {MARKET_BREADTH_MAX_LIMIT}"
+        )
+    return MarketBreadthQuery(
+        trade_date=trade_date,
+        q=text_query,
+        sort=sort,
+        direction=direction,
         limit=limit,
     )
 

@@ -62,6 +62,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="YYYY-MM-DD; defaults to the latest verified local market date",
     )
 
+    market_breadth = subparsers.add_parser(
+        "market-breadth-refresh",
+        help="Refresh sector rankings and exchange breadth for one completed date",
+    )
+    market_breadth.add_argument(
+        "--date",
+        help="YYYY-MM-DD; defaults to the latest verified local market date",
+    )
+
     cloud_status = subparsers.add_parser(
         "cloud-status", help="Inspect this user's optional Cloudflare R2 backup"
     )
@@ -434,6 +443,22 @@ def main(argv: list[str] | None = None) -> int:
                 0
                 if result.get("available") is True
                 and result.get("status") in {"current", "empty"}
+                and not result.get("errors")
+                else 1
+            )
+        if args.command == "market-breadth-refresh":
+            on_date = _parse_cli_iso_date(args.date, "date")
+            if on_date is None:
+                on_date = MarketData(config).latest_date()
+
+            from .data.market_breadth import refresh_market_breadth
+
+            result = refresh_market_breadth(config, on_date)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return (
+                0
+                if result.get("available") is True
+                and result.get("status") == "current"
                 and not result.get("errors")
                 else 1
             )

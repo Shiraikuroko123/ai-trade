@@ -77,13 +77,17 @@ The read-only `/api/universe/screen` projection derives liquidity, momentum, ann
 ## Closing Market Intelligence Boundary
 
 ```text
-explicit completed trade date + bounded Eastmoney report pages
+explicit completed trade date + bounded Eastmoney responses
                           |
-                          v
-       date/schema/count/identity/amount validation
-                          |
-                          v
-        immutable Dragon-Tiger List revision chain
+             +------------+------------+
+             |                         |
+             v                         v
+ Dragon-Tiger report pages    board pages + SH/SZ/BJ breadth
+ date/count/amount checks      date/count/identity checks
+             |                         |
+             v                         v
+ immutable event revisions    immutable breadth revisions
+             +------------+------------+
                           |
                           v
               non-mutating filtered GET
@@ -109,6 +113,18 @@ evidence, not signatures or exchange certification. Records live below
 Git-ignored `state/market_intelligence/`, outside the release and R2 market-cache
 allowlists. The UI and API retain fixed `research_only` authority, and this
 single event report does not change assistant fundamental or sentiment coverage.
+
+`data/market_breadth.py` owns a separate normalized closing-breadth boundary.
+It reads every page in Eastmoney's provider-defined `m:90+t:2` board universe
+and the three allowlisted SH/SZ/BJ benchmark responses, then checks response
+size, pagination, declared and received counts, board and benchmark identity,
+quote date, finite numeric values, advance/decline/flat relationships, and
+deterministic ordering. Publication, local integrity checks, freshness states,
+storage exclusion, and fixed authority follow an independent immutable
+revision chain; a valid Dragon-Tiger snapshot cannot make breadth available and
+vice versa. The board universe is explicitly not described as a licensed pure-
+industry taxonomy, and the provider-defined counts have no independent
+cross-source certification.
 
 ## Research Monitoring Boundary
 

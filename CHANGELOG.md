@@ -27,6 +27,17 @@ This section describes the current `main` branch, not the public `v0.12.1`
 wheel. The persistent research-digest commands, HTTP routes, and Windows task
 scripts below will remain source-only until a later release is explicitly cut.
 
+- Added a second read-only closing-market intelligence dataset for Eastmoney's
+  provider-defined `m:90+t:2` board universe and the SH/SZ/BJ benchmark breadth
+  responses. The bounded refresh validates all pages, counts, quote dates,
+  benchmark identities, finite values, count relationships, and deterministic
+  ordering before publishing any evidence.
+- Added immutable sector/breadth revisions, response and evidence fingerprints,
+  explicit third-party scope warnings, `market-breadth-refresh`, a fixed
+  background job, and bounded local-only `GET /api/market-breadth` filters.
+  The workstation distinguishes unavailable, stale, provisional, running,
+  failed, and valid empty-filter states, preserves wide-table keyboard access,
+  and uses words plus signed values instead of color-only market semantics.
 - Added the first read-only closing-market intelligence dataset: Eastmoney's
   daily Dragon-Tiger List. The bounded provider validates every page, requested
   trade date, source identity, finite value, amount relationship, page count,

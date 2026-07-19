@@ -2050,6 +2050,72 @@ progress {
   width: 100%;
 }
 
+.intelligence-dataset {
+  max-width: 100%;
+  min-width: 0;
+  scroll-margin-top: 1rem;
+}
+
+.intelligence-dataset + .intelligence-dataset {
+  border-top: 1px solid var(--rule);
+  padding-top: 1.5rem;
+}
+
+.intelligence-jump-nav {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.intelligence-jump-nav a {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink);
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  text-decoration: none;
+}
+
+.intelligence-jump-nav a:hover,
+.intelligence-jump-nav a:focus-visible {
+  background: var(--honey-soft);
+  border-color: var(--honey);
+}
+
+.breadth-filter-form {
+  align-items: end;
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(220px, 1.5fr) repeat(3, minmax(130px, 0.8fr)) auto;
+  width: 100%;
+}
+
+.breadth-filter-form .filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.market-breadth-dataset > .metric-strip {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.exchange-breadth-table {
+  min-width: 820px;
+}
+
+.market-breadth-table {
+  min-width: 1220px;
+  width: max(100%, 1320px);
+}
+
+.market-breadth-table td:nth-child(2) {
+  min-width: 180px;
+}
+
 .intelligence-filter-form .filter-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4031,13 +4097,23 @@ progress {
 
 @media (max-width: 820px) {
   .universe-filter-form,
-  .intelligence-filter-form {
+  .intelligence-filter-form,
+  .breadth-filter-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
 
+  .market-breadth-dataset > .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .intelligence-filter-form .intelligence-query,
   .intelligence-filter-form .filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .breadth-filter-form .breadth-query,
+  .breadth-filter-form .filter-actions {
     grid-column: 1 / -1;
   }
 
@@ -4334,7 +4410,8 @@ progress {
 
 @media (max-width: 560px) {
   .universe-filter-form,
-  .intelligence-filter-form {
+  .intelligence-filter-form,
+  .breadth-filter-form {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -4343,12 +4420,19 @@ progress {
     grid-column: auto;
   }
 
-  .intelligence-filter-form .filter-actions {
+  .breadth-filter-form .breadth-query,
+  .breadth-filter-form .filter-actions {
+    grid-column: auto;
+  }
+
+  .intelligence-filter-form .filter-actions,
+  .breadth-filter-form .filter-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .intelligence-filter-form .button {
+  .intelligence-filter-form .button,
+  .breadth-filter-form .button {
     width: 100%;
   }
 

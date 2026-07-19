@@ -57,6 +57,7 @@ const JOB_LABELS = {
   "paper-audit": "审计模拟账户",
   "cloud-backup": "备份行情",
   "refresh-market-intelligence": "刷新龙虎榜",
+  "refresh-market-breadth": "刷新市场宽度",
   "monitoring-scan": "运行收盘监控",
 };
 
@@ -229,6 +230,13 @@ const state = {
     query: "",
     limit: "200",
   },
+  breadthFilters: {
+    date: "",
+    query: "",
+    sort: "change_pct",
+    direction: "desc",
+    limit: "200",
+  },
   marketSymbol: "510300",
   marketPeriod: "day",
   marketLimit: 240,
@@ -305,6 +313,11 @@ function finite(value) {
 function formatMoney(value) {
   const parsed = finite(value);
   return parsed === null ? "—" : moneyFormatter.format(parsed);
+}
+
+function formatCompactMoney(value) {
+  const parsed = finite(value);
+  return parsed === null ? "—" : `¥${compactFormatter.format(parsed)}`;
 }
 
 function formatNumber(value, digits = 2) {
@@ -868,6 +881,18 @@ function marketIntelligencePath() {
   return `/api/market-intelligence${query ? `?${query}` : ""}`;
 }
 
+function marketBreadthPath() {
+  const params = new URLSearchParams();
+  const filters = state.breadthFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.query) params.set("q", filters.query);
+  if (filters.sort && filters.sort !== "change_pct") params.set("sort", filters.sort);
+  if (filters.direction && filters.direction !== "desc") params.set("direction", filters.direction);
+  if (filters.limit && filters.limit !== "200") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/market-breadth${query ? `?${query}` : ""}`;
+}
+
 async function loadRoute() {
   state.controller?.abort();
   destroyMarketChart();
@@ -901,6 +926,25 @@ async function loadRoute() {
         universe: universeResult.status === "fulfilled" ? universeResult.value : { instruments: [] },
         universe_error: universeResult.status === "rejected" ? friendlyError(universeResult.reason?.message) : "",
       };
+    } else if (requestedRoute === "intelligence") {
+      const [dragonTigerResult, breadthResult] = await Promise.allSettled([
+        api(marketIntelligencePath(), { signal }),
+        api(marketBreadthPath(), { signal }),
+      ]);
+      if (dragonTigerResult.status === "rejected" && breadthResult.status === "rejected") {
+        throw dragonTigerResult.reason;
+      }
+      payload = {
+        dragon_tiger: dragonTigerResult.status === "fulfilled" ? dragonTigerResult.value : null,
+        dragon_tiger_error: dragonTigerResult.status === "rejected" ? friendlyError(dragonTigerResult.reason?.message) : "",
+        breadth: breadthResult.status === "fulfilled" ? breadthResult.value : null,
+        breadth_error: breadthResult.status === "rejected" ? friendlyError(breadthResult.reason?.message) : "",
+        generated_at: breadthResult.status === "fulfilled"
+          ? breadthResult.value?.generated_at
+          : dragonTigerResult.status === "fulfilled"
+            ? dragonTigerResult.value?.generated_at
+            : null,
+      };
     } else if (requestedRoute === "risk") {
       const [overview, research] = await Promise.all([
         api("/api/overview", { signal }),
@@ -916,7 +960,6 @@ async function loadRoute() {
     } else {
       const endpoints = {
         overview: "/api/overview",
-        intelligence: marketIntelligencePath(),
         research: researchPath(),
         monitoring: monitoringPath(),
         assistant: "/api/assistant",
@@ -994,7 +1037,7 @@ function updateRouteDate(payload) {
     value = payload.chart?.data_date;
     label = "K 线截止";
   } else if (state.route === "intelligence") {
-    value = payload.trade_date;
+    value = payload.breadth?.trade_date || payload.dragon_tiger?.trade_date;
     label = "情报日期";
   } else if (state.route === "monitoring") {
     value = payload.scan?.data_date || payload.snapshot?.data_date;
@@ -1154,6 +1197,32 @@ async function clearIntelligenceFilters() {
   };
   await loadRoute();
   restoreFocusAfterRender("[data-intelligence-filter-clear]", "intelligence");
+}
+
+async function applyBreadthFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.breadthFilters = {
+    date: String(values.get("date") || ""),
+    query: String(values.get("q") || "").trim(),
+    sort: String(values.get("sort") || "change_pct"),
+    direction: String(values.get("direction") || "desc"),
+    limit: String(values.get("limit") || "200"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#market-breadth-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearBreadthFilters() {
+  state.breadthFilters = {
+    date: "",
+    query: "",
+    sort: "change_pct",
+    direction: "desc",
+    limit: "200",
+  };
+  await loadRoute();
+  restoreFocusAfterRender("[data-market-breadth-filter-clear]", "intelligence");
 }
 
 function syncJournalDecisionControl() {
@@ -4552,7 +4621,208 @@ function intelligenceUnavailableText(error) {
   return String(error?.message || error || "先刷新当前已验证行情，再运行龙虎榜刷新；系统不会用示例数据填充空页面。");
 }
 
-function renderMarketIntelligence(data) {
+function breadthStatusLabel(value) {
+  return {
+    current: "完整收盘快照",
+    stale: "快照滞后",
+    provisional: "晚于完成截止",
+    unavailable: "尚无可用快照",
+  }[String(value || "").toLowerCase()] || "状态待确认";
+}
+
+function breadthStatusKind(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "current") return "success";
+  if (["stale", "provisional"].includes(normalized)) return "warning";
+  if (normalized === "unavailable") return "danger";
+  return "neutral";
+}
+
+const MARKET_BREADTH_SORT_LABELS = {
+  change_pct: "涨跌幅",
+  advance_share: "板块上涨占比",
+  turnover_rate: "换手率",
+  volume_ratio: "量比",
+  market_cap: "总市值",
+  constituent_count: "成分数量",
+  name: "板块名称",
+};
+
+function breadthWarningText(item, coverage) {
+  const code = String(item?.code || "");
+  if (code === "not_exchange_certified") {
+    return "东方财富是第三方公开研究来源，不是交易所认证行情。";
+  }
+  if (code === "provider_breadth_scope") {
+    return "上涨、下跌和平盘家数来自上证、深证、北证三条基准响应，是提供方定义的收盘统计口径。";
+  }
+  if (code === "optional_metric_missing") {
+    const missing = coverage?.data_quality?.sector_rows_with_missing_optional_values;
+    return `${formatInteger(missing)} 条板块记录至少缺少一个可选指标；页面保留“—”，没有填充为 0。`;
+  }
+  if (code === "market_breadth_stale") {
+    return "本地市场宽度快照早于当前已完成收盘日。";
+  }
+  if (code === "after_completed_session_cutoff") {
+    return "所选市场宽度快照晚于当前已完成收盘日，只能作为待复核证据。";
+  }
+  return String(item?.message || item || "证据边界待复核");
+}
+
+function breadthChangeText(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "涨跌不可用";
+  if (parsed > 0) return `上涨 ${formatPercentPoints(parsed, true)}`;
+  if (parsed < 0) return `下跌 ${formatPercentPoints(parsed, true)}`;
+  return `平盘 ${formatPercentPoints(parsed)}`;
+}
+
+function breadthCountText(value) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  return `${parsed > 0 ? "+" : ""}${formatInteger(parsed)}`;
+}
+
+function renderMarketBreadth(data, requestError = "") {
+  const snapshot = data || {};
+  const summary = snapshot.summary || {};
+  const coverage = snapshot.coverage || {};
+  const source = snapshot.source || {};
+  const quality = coverage.data_quality || {};
+  const breadth = Array.isArray(snapshot.breadth) ? snapshot.breadth : [];
+  const sectors = Array.isArray(snapshot.sectors) ? snapshot.sectors : [];
+  const revisions = Array.isArray(snapshot.revisions) ? snapshot.revisions : [];
+  const filters = snapshot.filters || {};
+  const status = String(snapshot.status || (snapshot.available === true ? "current" : "unavailable")).toLowerCase();
+  const statusKind = breadthStatusKind(status);
+  const running = state.jobs.some((job) => job.action === "refresh-market-breadth" && ["queued", "running"].includes(job.status));
+  const latestJob = state.jobs.find((job) => job.action === "refresh-market-breadth");
+  const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+  const errors = Array.isArray(snapshot.errors) ? snapshot.errors : [];
+  const available = snapshot.available === true;
+  const returnedSectorCount = summary.returned_sector_count ?? sectors.length;
+  const matchedSectorCount = summary.matched_sector_count ?? sectors.length;
+  const breadthSecids = Array.isArray(source.breadth_secids)
+    ? source.breadth_secids.map((item) => String(item))
+    : [];
+  const sortKey = String(filters.sort || "change_pct");
+  const sortLabel = MARKET_BREADTH_SORT_LABELS[sortKey] || "排序指标待确认";
+  const form = `<form class="filter-form breadth-filter-form" id="market-breadth-filter-form" aria-describedby="market-breadth-filter-help">
+    <div class="field"><label for="market-breadth-date">交易日期</label><input id="market-breadth-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div>
+    <div class="field breadth-query"><label for="market-breadth-query">板块名称或代码</label><input id="market-breadth-query" name="q" type="search" maxlength="100" value="${escapeHtml(filters.q ?? filters.query ?? "")}" placeholder="输入板块关键词"></div>
+    <div class="field"><label for="market-breadth-sort">排名指标</label><select id="market-breadth-sort" name="sort">
+      ${[["change_pct", "涨跌幅"], ["advance_share", "板块上涨占比"], ["turnover_rate", "换手率"], ["volume_ratio", "量比"], ["market_cap", "总市值"], ["constituent_count", "成分数量"], ["name", "板块名称"]].map(([value, label]) => `<option value="${value}"${String(filters.sort || "change_pct") === value ? " selected" : ""}>${label}</option>`).join("")}
+    </select></div>
+    <div class="field"><label for="market-breadth-direction">排序方向</label><select id="market-breadth-direction" name="direction"><option value="desc"${String(filters.direction || "desc") === "desc" ? " selected" : ""}>从高到低</option><option value="asc"${String(filters.direction || "") === "asc" ? " selected" : ""}>从低到高</option></select></div>
+    <div class="field"><label for="market-breadth-limit">最多返回</label><input id="market-breadth-limit" name="limit" type="number" min="1" max="500" step="1" inputmode="numeric" value="${escapeHtml(filters.limit || "200")}"></div>
+    <div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-market-breadth-filter-clear>清除条件</button></div>
+  </form><p id="market-breadth-filter-help" class="section-note">筛选只读取已固化的完整板块快照，不会重新请求网络。板块排名覆盖东方财富 m:90+t:2 定义的板块集合，不代表经许可的纯行业分类；宽度统计也保留提供方口径。</p>`;
+  const statusCallout = running
+    ? `<aside class="callout warning" role="status" aria-live="polite"><strong>市场宽度正在刷新</strong><p>后台任务正在抓取并校验全部板块分页和三市场宽度；发布完成前继续显示上一份完整快照。</p></aside>`
+    : latestJob?.status === "failed"
+      ? `<aside class="callout danger" role="alert"><strong>最近一次市场宽度刷新失败</strong><p>已有快照没有被覆盖。请在<a href="#system">系统任务</a>中查看错误日志，再重新运行刷新。</p></aside>`
+      : requestError
+        ? `<aside class="callout danger" role="alert"><strong>市场宽度接口读取失败</strong><p>${escapeHtml(requestError)}</p></aside>`
+        : !available
+          ? `<aside class="callout warning" role="status"><strong>尚未固化市场宽度快照</strong><p>${escapeHtml(errors[0]?.message || "先运行刷新市场宽度，再查看行业排名和来源统计。")}</p></aside>`
+          : status === "stale"
+            ? `<aside class="callout warning" role="status"><strong>市场宽度快照早于当前行情</strong><p>当前显示 ${escapeHtml(snapshot.trade_date || "未知日期")} 的已固化证据，刷新前不要把它当作最新收盘宽度。</p></aside>`
+            : status === "provisional"
+              ? `<aside class="callout warning" role="status"><strong>所选市场宽度晚于完成截止</strong><p>当前快照为 ${escapeHtml(snapshot.trade_date || "未知日期")}，只能作为待复核证据。</p></aside>`
+              : available && sectors.length === 0
+                ? `<aside class="callout warning" role="status"><strong>当前筛选没有匹配板块</strong><p>来源快照仍然完整；请清除关键词或放宽筛选条件。</p></aside>`
+                : "";
+  const warningMarkup = warnings.length
+    ? `<aside class="callout warning" role="status"><strong>证据边界</strong><ul>${warnings.map((item) => `<li>${escapeHtml(breadthWarningText(item, coverage))}</li>`).join("")}</ul></aside>`
+    : "";
+  const exchangeRows = breadth.length
+    ? breadth.map((item) => `<tr>
+        <td><strong>${escapeHtml(item.exchange || "—")}</strong><span class="table-subtext">${escapeHtml(item.benchmark_name || item.benchmark_code || "—")}</span></td>
+        <td class="numeric ${tone(item.change_pct)}"><strong>${escapeHtml(breadthChangeText(item.change_pct))}</strong></td>
+        <td class="numeric"><strong>${formatInteger(item.advancers)}</strong><span class="table-subtext">上涨</span></td>
+        <td class="numeric"><strong>${formatInteger(item.decliners)}</strong><span class="table-subtext">下跌</span></td>
+        <td class="numeric"><strong>${formatInteger(item.unchanged)}</strong><span class="table-subtext">平盘</span></td>
+        <td class="numeric"><strong>${formatPercent(item.advance_share)}</strong><span class="table-subtext">上涨占比</span></td>
+        <td class="numeric ${tone(item.net_advances)}"><strong>${escapeHtml(breadthCountText(item.net_advances))}</strong><span class="table-subtext">涨跌差</span></td>
+      </tr>`).join("")
+    : emptyRow(7, available ? "来源未返回可用的交易所宽度记录" : "尚无已发布的市场宽度证据");
+  const sectorRows = sectors.length
+    ? sectors.map((item, index) => `<tr>
+        <td class="numeric">${formatInteger(index + 1)}</td>
+        <td><strong>${escapeHtml(item.name || "—")}</strong><span class="table-subtext mono">${escapeHtml(item.code || "—")}</span></td>
+        <td class="numeric ${tone(item.change_pct)}"><strong>${escapeHtml(breadthChangeText(item.change_pct))}</strong></td>
+        <td class="numeric"><strong>${formatPercent(item.advance_share)}</strong><span class="table-subtext">${formatInteger(item.constituent_count)} 成分</span></td>
+        <td class="numeric"><strong>${formatInteger(item.advancers)} / ${formatInteger(item.decliners)} / ${formatInteger(item.unchanged)}</strong><span class="table-subtext">涨 / 跌 / 平</span></td>
+        <td class="numeric">${formatPercentPoints(item.turnover_rate)}</td>
+        <td class="numeric">${formatNumber(item.volume_ratio)}</td>
+        <td class="numeric">${formatCompactMoney(item.market_cap)}</td>
+        <td class="numeric">${escapeHtml(item.quote_date || "—")}</td>
+      </tr>`).join("")
+    : emptyRow(9, available ? "没有记录符合当前筛选条件" : "尚无已发布的板块证据");
+  const bestWorst = available
+    ? `<div class="path-list">
+        <div class="path-row"><span>涨幅最高</span><code>${escapeHtml(summary.best_sector_name || "—")} ${escapeHtml(formatPercentPoints(summary.best_sector_change_pct, true))}</code></div>
+        <div class="path-row"><span>跌幅最大</span><code>${escapeHtml(summary.worst_sector_name || "—")} ${escapeHtml(formatPercentPoints(summary.worst_sector_change_pct, true))}</code></div>
+        <div class="path-row"><span>板块中位数</span><code>${escapeHtml(formatPercentPoints(summary.median_sector_change_pct, true))}</code></div>
+      </div>`
+    : `<p class="section-note">来源不可用时不显示极值，不把缺失解释为零。</p>`;
+  const orderedRevisions = [...revisions].reverse();
+  const revisionRows = orderedRevisions.length
+    ? orderedRevisions.map((item) => `<tr><td>${item.revision_id === snapshot.revision_id ? statusChip("当前", "info") : statusChip("历史", "neutral")}</td><td class="mono">${escapeHtml(item.revision_id || "—")}</td><td>${escapeHtml(item.trade_date || snapshot.trade_date || "—")}</td><td>${formatDate(item.retrieved_at, true)}</td><td class="mono">${escapeHtml(shortFingerprint(item.evidence_fingerprint))}</td></tr>`).join("")
+    : emptyRow(5, "尚无修订历史");
+  return `<section id="market-breadth-evidence" class="intelligence-dataset market-breadth-dataset">
+    ${pageIntro("市场宽度与板块排名", "用同一收盘日的来源计数观察上涨/下跌广度，再比较东方财富定义的板块集合；不自动生成交易信号。", actionButton("refresh-market-breadth", "primary"))}
+    <section class="intelligence-filter-band" aria-label="市场宽度筛选">${form}</section>
+    <section class="metric-strip" aria-label="市场宽度摘要">
+      ${metric("证据状态", breadthStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · ${coverage.sector_complete === true && coverage.breadth_complete === true ? "分页与宽度已核对" : "覆盖不可确认"}`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}
+      ${metric("上涨 / 下跌 / 平盘", available ? `${formatInteger(summary.advancers)} / ${formatInteger(summary.decliners)} / ${formatInteger(summary.unchanged)}` : "不可用", available ? "东方财富三基准来源统计" : "尚无已发布证据，不能解释为零")}
+      ${metric("上涨占比", available ? formatPercent(summary.advance_share) : "不可用", available ? `涨跌比 ${formatNumber(summary.advance_decline_ratio)} · 涨跌差 ${breadthCountText(summary.net_advances)}` : "来源宽度不可用", available ? tone(summary.advance_share - 0.5) : "tone-negative")}
+      ${metric("板块上涨 / 下跌", available ? `${formatInteger(summary.positive_sector_count)} / ${formatInteger(summary.negative_sector_count)}` : "不可用", available ? `平盘 ${formatInteger(summary.flat_sector_count)} · 显示 ${formatInteger(returnedSectorCount)} / ${formatInteger(matchedSectorCount)}` : "尚无板块证据")}
+      ${metric("板块涨跌中位数", available ? formatPercentPoints(summary.median_sector_change_pct, true) : "不可用", available ? `来源 ${formatInteger(summary.sector_count)} 个板块` : "来源计数不可用", available ? tone(summary.median_sector_change_pct) : "tone-negative")}
+    </section>
+    ${statusCallout}${warningMarkup}
+    <section class="equal-layout">
+      <article class="panel">
+        ${panelHeader("交易所宽度", "三条基准响应的上涨、下跌和平盘家数")}
+        <div class="table-wrap" aria-label="交易所宽度表"><table class="data-table compact exchange-breadth-table"><thead><tr><th>市场</th><th>指数涨跌</th><th class="numeric">上涨</th><th class="numeric">下跌</th><th class="numeric">平盘</th><th class="numeric">上涨占比</th><th class="numeric">涨跌差</th></tr></thead><tbody>${exchangeRows}</tbody></table></div>
+      </article>
+      <article class="panel">
+        ${panelHeader("板块极值", "只从当前完整板块快照计算")}
+        ${bestWorst}
+        <div class="path-list"><div class="path-row"><span>板块数据质量</span><code>${available ? `${formatInteger(coverage.sector_pages)} 页 · ${formatInteger(coverage.sector_received_count)} / ${formatInteger(coverage.sector_declared_count)} 条` : "不可用"}</code></div><div class="path-row"><span>可选指标缺失</span><code>${available ? formatInteger(quality.sector_rows_with_missing_optional_values) : "不可用"}</code></div></div>
+      </article>
+    </section>
+    <section class="panel">
+      ${panelHeader("板块排名", `${snapshot.trade_date || "日期不可用"} · ${formatInteger(returnedSectorCount)} 条显示 · ${sortLabel} ${String(filters.direction || "desc") === "desc" ? "降序" : "升序"}`)}
+      <div class="table-wrap" aria-label="板块排名宽表"><table class="data-table market-breadth-table"><thead><tr><th class="numeric">排名</th><th>板块</th><th>涨跌</th><th class="numeric">上涨占比</th><th class="numeric">涨 / 跌 / 平</th><th class="numeric">换手率</th><th class="numeric">量比</th><th class="numeric">总市值</th><th class="numeric">报价日期</th></tr></thead><tbody>${sectorRows}</tbody></table></div>
+    </section>
+    <section class="equal-layout">
+      <article class="panel">
+        ${panelHeader("来源与完整性", "复核日期、分页、统计口径和指纹")}
+        <div class="path-list"><div class="path-row"><span>交易日期</span><code>${escapeHtml(snapshot.trade_date || "—")}</code></div><div class="path-row"><span>完成截止</span><code>${escapeHtml(snapshot.freshness?.completed_session_cutoff || "—")}</code></div><div class="path-row"><span>板块来源</span><code>${escapeHtml(source.sector_endpoint || "—")} · ${escapeHtml(source.sector_filter || "—")}</code></div><div class="path-row"><span>宽度来源</span><code>${escapeHtml(source.breadth_endpoint || "—")} · ${escapeHtml(breadthSecids.join(", ") || "—")}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div>
+      </article>
+      <article class="panel">
+        ${panelHeader("不可变修订", "规范化证据相同则复用，记录变化才追加")}
+        <div class="table-wrap" aria-label="市场宽度修订历史"><table class="data-table compact"><thead><tr><th>状态</th><th>快照 ID</th><th>交易日</th><th>抓取时间</th><th>证据指纹</th></tr></thead><tbody>${revisionRows}</tbody></table></div>
+      </article>
+    </section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>市场宽度与板块排名是第三方收盘证据，不是交易所认证行情，也不是市场情绪结论。当前页面固定为 ${snapshot.authority?.research_only === true && snapshot.authority?.execution_authorized === false ? "research_only" : "权限异常，需停止使用"}；它不能修改策略、持仓、订单、风控门禁或真实交易授权。</p></aside>
+  </section>`;
+}
+
+function renderMarketIntelligence(payload) {
+  const dragonTiger = payload?.dragon_tiger || payload || {};
+  const breadth = payload?.breadth || {};
+  return `<div class="page-stack intelligence-page">
+    ${pageIntro("收盘市场情报", "先看市场宽度与板块分化，再复核龙虎榜事件；两个数据集各自披露日期、来源和完整性。")}
+    <nav class="intelligence-jump-nav" aria-label="市场情报数据集"><a href="#market-breadth-evidence">市场宽度与板块排名</a><a href="#dragon-tiger-evidence">龙虎榜收盘证据</a></nav>
+    ${renderMarketBreadth(breadth, payload?.breadth_error || "")}
+    ${renderDragonTigerIntelligence(dragonTiger, payload?.dragon_tiger_error || "")}
+  </div>`;
+}
+
+function renderDragonTigerIntelligence(data, requestError = "") {
+  data = data || {};
   const records = Array.isArray(data.records) ? data.records : [];
   const coverage = data.coverage || {};
   const dataQuality = coverage.data_quality || {};
@@ -4596,7 +4866,9 @@ function renderMarketIntelligence(data) {
     ? `<aside class="callout warning" role="status" aria-live="polite"><strong>龙虎榜正在刷新</strong><p>后台任务正在抓取并校验全部分页；发布完成前继续显示上一份完整快照，不会展示半份结果。</p></aside>`
     : latestJob?.status === "failed"
       ? `<aside class="callout danger" role="alert"><strong>最近一次刷新失败</strong><p>已有快照没有被覆盖。请在<a href="#system">系统任务</a>中查看错误日志，再重新运行刷新。</p></aside>`
-      : status === "unavailable"
+      : requestError
+        ? `<aside class="callout danger" role="alert"><strong>龙虎榜接口读取失败</strong><p>${escapeHtml(requestError)}</p></aside>`
+        : status === "unavailable"
         ? `<aside class="callout warning" role="status"><strong>尚未固化龙虎榜快照</strong><p>${escapeHtml(intelligenceUnavailableText(errors[0] || data.empty_state))}</p></aside>`
         : contentStatus === "empty" && !["stale", "provisional"].includes(status)
           ? `<aside class="callout warning" role="status"><strong>该交易日没有龙虎榜记录</strong><p>来源返回计数为 0 且分页校验完整；这与尚未刷新或网络失败是不同状态。</p></aside>`
@@ -4633,7 +4905,7 @@ function renderMarketIntelligence(data) {
   const revisionRows = orderedRevisions.length
     ? orderedRevisions.map((item) => `<tr><td>${item.revision_id === data.revision_id ? statusChip("当前", "info") : statusChip("历史", "neutral")}</td><td class="mono">${escapeHtml(item.revision_id || "—")}</td><td>${escapeHtml(item.trade_date || data.trade_date || "—")}</td><td>${formatDate(item.retrieved_at, true)}</td><td class="mono">${escapeHtml(shortFingerprint(item.evidence_fingerprint))}</td></tr>`).join("")
     : emptyRow(5, "尚无修订历史");
-  return `<div class="page-stack intelligence-page">
+  return `<section id="dragon-tiger-evidence" class="intelligence-dataset dragon-tiger-dataset">
     ${pageIntro("龙虎榜收盘证据", "逐页校验东方财富日频龙虎榜，并将完整结果固化为只读修订链。", actionButton("refresh-market-intelligence", "primary"))}
     <section class="intelligence-filter-band" aria-label="龙虎榜筛选">${filter}</section>
     <section class="metric-strip" aria-label="龙虎榜摘要">
@@ -4669,7 +4941,7 @@ function renderMarketIntelligence(data) {
       </article>
     </section>
     <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>龙虎榜是单一公开来源的收盘事件证据，不是交易所认证行情，也不等同于市场情绪。当前页面固定为 ${authority.research_only === true && authority.execution_authorized === false ? "research_only" : "权限异常，需停止使用"}；它不能修改策略、持仓、订单、风控门禁或真实交易授权。</p></aside>
-  </div>`;
+  </section>`;
 }
 
 function renderUniverse(data) {
@@ -5982,9 +6254,9 @@ async function startJob(action) {
     mergeJob(job);
     notify(`${JOB_LABELS[action] || action}已进入任务队列`);
     updateJobsUi();
-    if (action === "refresh-market-intelligence" && state.route === "intelligence") {
+    if (["refresh-market-intelligence", "refresh-market-breadth"].includes(action) && state.route === "intelligence") {
       await loadRoute();
-      restoreFocusAfterRender('[data-job-action="refresh-market-intelligence"]', "intelligence");
+      restoreFocusAfterRender(`[data-job-action="${action}"]`, "intelligence");
     }
   } catch (error) {
     notify(friendlyError(error.message), true);
@@ -6034,7 +6306,7 @@ async function pollJobs() {
     const payload = await api("/api/jobs");
     const jobs = payload.jobs || [];
     let storageRefreshMode = "";
-    let intelligenceRefreshCompleted = false;
+    let intelligenceRefreshCompleted = "";
     for (const job of jobs) {
       const previous = state.jobStates.get(job.id);
       if (previous && ["queued", "running"].includes(previous) && ["succeeded", "failed", "cancelled"].includes(job.status)) {
@@ -6058,8 +6330,8 @@ async function pollJobs() {
         ) {
           storageRefreshMode = "local";
         }
-        if (job.action === "refresh-market-intelligence") {
-          intelligenceRefreshCompleted = true;
+        if (["refresh-market-intelligence", "refresh-market-breadth"].includes(job.action)) {
+          intelligenceRefreshCompleted = job.action;
         }
       }
       state.jobStates.set(job.id, job.status);
@@ -6075,7 +6347,7 @@ async function pollJobs() {
       await reloadStorageStatus(true);
     } else if (state.route === "intelligence" && intelligenceRefreshCompleted) {
       await loadRoute();
-      restoreFocusAfterRender('[data-job-action="refresh-market-intelligence"]', "intelligence");
+      restoreFocusAfterRender(`[data-job-action="${intelligenceRefreshCompleted}"]`, "intelligence");
     }
   } catch {
     setConnection(false);
@@ -6149,6 +6421,11 @@ async function logout() {
 }
 
 document.addEventListener("click", (event) => {
+  const breadthFilterClear = event.target.closest("[data-market-breadth-filter-clear]");
+  if (breadthFilterClear) {
+    clearBreadthFilters();
+    return;
+  }
   const intelligenceFilterClear = event.target.closest("[data-intelligence-filter-clear]");
   if (intelligenceFilterClear) {
     clearIntelligenceFilters();
@@ -6488,7 +6765,10 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.id === "market-intelligence-filter-form") {
+  if (event.target.id === "market-breadth-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyBreadthFilterForm(event.target);
+  } else if (event.target.id === "market-intelligence-filter-form") {
     event.preventDefault();
     if (event.target.reportValidity()) applyIntelligenceFilterForm(event.target);
   } else if (event.target.id === "market-controls-form") {
