@@ -25,6 +25,7 @@ MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_TRANSACTION_RECORD_BYTES = 512 * 1024
 
 _TRANSACTION_ID = re.compile(r"^[0-9a-f]{32}$")
+_SAFE_CSV_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.csv$")
 _STATES = {"backing_up", "prepared", "installing", "committed"}
 
 
@@ -104,6 +105,38 @@ def install_snapshot(
     with _advisory_lock(cache_dir / TRANSACTION_LOCK_NAME):
         _recover_locked(cache_dir)
         _install_locked(cache_dir, normalized, manifest)
+
+
+def replace_manifest(cache_dir: Path, manifest: Mapping[str, object]) -> None:
+    """Atomically replace metadata for an already-installed CSV snapshot.
+
+    A cross-source audit is produced after the CSV snapshot has been published.
+    Updating only the manifest keeps the verified data files untouched while
+    still using the same transaction lock as normal snapshot readers.  The
+    complete CSV set is validated before and after the replacement so a caller
+    cannot attach metadata to a different or incomplete snapshot.
+    """
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with _advisory_lock(cache_dir / TRANSACTION_LOCK_NAME):
+        _recover_locked(cache_dir)
+        raw_files = manifest.get("files")
+        if not isinstance(raw_files, Mapping):
+            raise CacheSnapshotError("Cache manifest files section is missing or invalid")
+        csv_files = {}
+        for symbol in raw_files:
+            if not isinstance(symbol, str) or not _SAFE_CSV_NAME.fullmatch(f"{symbol}.csv"):
+                raise CacheSnapshotError("Cache manifest contains an invalid CSV name")
+            path = cache_dir / f"{symbol}.csv"
+            if not path.is_file() or path.is_symlink():
+                raise CacheSnapshotError(f"Cache snapshot CSV is unavailable: {path.name}")
+            csv_files[path.name] = path
+        if not csv_files:
+            raise CacheSnapshotError("Cannot replace a manifest without CSV files")
+        _validate_snapshot_contents(csv_files, manifest)
+        _write_json_atomic(cache_dir / "manifest.json", manifest)
+        active = _read_manifest(cache_dir / "manifest.json")
+        _validate_snapshot_contents(csv_files, active)
 
 
 def _install_locked(

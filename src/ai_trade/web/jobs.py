@@ -15,6 +15,7 @@ from ..json_utils import loads_unique_json
 
 COMMANDS: dict[str, tuple[str, ...]] = {
     "refresh-data": ("download", "--force"),
+    "cross-check-data": ("cross-check-data",),
     "refresh-market-intelligence": ("market-intelligence-refresh",),
     "refresh-market-breadth": ("market-breadth-refresh",),
     "refresh-capital-flow": ("capital-flow-refresh",),

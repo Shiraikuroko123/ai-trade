@@ -327,6 +327,18 @@ def _download_universe_locked(
             },
             manifest,
         )
+        # Independent reconciliation is an evidence attachment, not a second
+        # market-data source.  It is opt-in in custom configurations and is
+        # enabled by the bundled configuration.  Any network or comparison
+        # failure is persisted as a warning while the verified primary snapshot
+        # remains usable.
+        if (
+            isinstance(config.raw["data"].get("cross_check"), dict)
+            and config.raw["data"]["cross_check"].get("enabled") is True
+        ):
+            from .cross_check import cross_check_market_snapshot
+
+            cross_check_market_snapshot(config, lock_held=True)
         return final_paths
     finally:
         shutil.rmtree(staging, ignore_errors=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from .config import AppConfig
+from .data.cross_check import cross_source_projection
 from .data.market import MarketData
 
 
@@ -57,6 +58,10 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
         )
 
     manifest = market.manifest if isinstance(market.manifest, dict) else None
+    cross_source_check = cross_source_projection(
+        manifest,
+        file_hashes=market.file_hashes,
+    )
     source_counts: dict[str, int] = {}
     refresh_failures: list[dict[str, object]] = []
     provider_degraded = False
@@ -140,8 +145,38 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
             "Cache manifest is missing; data snapshot provenance cannot be verified"
         )
 
+    cross_status = cross_source_check.get("status")
+    cross_source_degraded = False
+    if cross_status in {"failed", "invalid"}:
+        cross_source_degraded = True
+        research_warnings.append(
+            "Independent daily-bar reconciliation found a conflict or invalid audit; "
+            "review the cross-source evidence before relying on the snapshot"
+        )
+    elif cross_status in {"warning", "unavailable"}:
+        cross_source_degraded = True
+        research_warnings.append(
+            "Independent daily-bar reconciliation is incomplete; the primary snapshot "
+            "remains available but has not been independently confirmed"
+        )
+    elif (
+        cross_status == "not_run"
+        and isinstance(config.raw["data"].get("cross_check"), dict)
+        and config.raw["data"]["cross_check"].get("enabled") is True
+    ):
+        cross_source_degraded = True
+        research_warnings.append(
+            "Independent daily-bar reconciliation has not run for this snapshot"
+        )
+
     status = "OK"
-    if not aligned or not market_data_current or manifest is None or provider_degraded:
+    if (
+        not aligned
+        or not market_data_current
+        or manifest is None
+        or provider_degraded
+        or cross_source_degraded
+    ):
         status = "WARNING"
     return {
         "status": status,
@@ -173,6 +208,7 @@ def diagnose(config: AppConfig, market: MarketData) -> dict[str, object]:
             "request_policy": manifest.get("request_policy") if manifest else None,
             "source_counts": source_counts,
             "refresh_failures": refresh_failures,
+            "cross_source_check": cross_source_check,
         },
         "live_trading": "DISABLED",
     }

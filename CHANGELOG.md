@@ -27,6 +27,14 @@ This section describes the current `main` branch, not the public `v0.12.1`
 wheel. The persistent research-digest commands, HTTP routes, and Windows task
 scripts below will remain source-only until a later release is explicitly cut.
 
+- Added a bounded independent daily-bar reconciliation for the registered
+  Eastmoney/Tencent providers. The audit binds actual per-file source routes,
+  overlapping completed sessions, explicit OHLCV tolerances, deviations, and
+  an integrity digest to `manifest.json`; a fallback file is never compared
+  with itself, and a reference outage never replaces the primary snapshot.
+- Added `cross-check-data`, the `cross-check-data` workstation job, Data/System
+  view status and per-symbol evidence, plus `docs/CROSS_SOURCE_AUDIT.md`.
+
 - Added `deterministic-perspective-audit-v1` to every new AI analysis. It
   separates technical/risk/strategy stance conflicts from unavailable
   fundamental and sentiment coverage, cites the affected evidence, records

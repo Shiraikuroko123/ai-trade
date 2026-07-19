@@ -26,6 +26,7 @@ from ..broker.shadow import import_shadow_csv, shadow_account_status
 from ..broker.scope import create_broker_ledger_scope
 from ..config import AppConfig
 from ..data.capital_flow import CapitalFlowQuery, CapitalFlowStore
+from ..data.cross_check import cross_source_projection
 from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..data.market_breadth import MarketBreadthQuery, MarketBreadthStore
@@ -856,6 +857,21 @@ class DashboardService:
             item["latest_close"] = bar.close if bar else None
             item["latest_bar_date"] = bar.date.isoformat() if bar else None
         snapshot["market_available"] = market is not None
+        snapshot["cross_source_check"] = (
+            cross_source_projection(
+                getattr(market, "manifest", None)
+                if isinstance(getattr(market, "manifest", None), dict)
+                else None,
+                file_hashes=getattr(market, "file_hashes", None),
+            )
+            if market is not None
+            else {
+                "status": "not_run",
+                "confidence": "not_available",
+                "valid": False,
+                "reason": "market_data_unavailable",
+            }
+        )
         snapshot["errors"] = [market_issue] if market_issue else []
         snapshot["generated_at"] = _now()
         return snapshot
@@ -1317,6 +1333,10 @@ class DashboardService:
         lag_days = max(0, (completed_cutoff - latest_daily_date).days)
         manifest = market.manifest if isinstance(market.manifest, dict) else None
         manifest_file = _manifest_symbol_entry(manifest, symbol)
+        cross_source_check = cross_source_projection(
+            manifest,
+            file_hashes=market.file_hashes,
+        )
         warnings = []
         if stale:
             warnings.append(
@@ -1332,6 +1352,15 @@ class DashboardService:
         if excluded_dates:
             warnings.append(
                 "One or more cache rows after the completed-session cutoff were excluded."
+            )
+        if cross_source_check.get("status") in {"failed", "invalid"}:
+            warnings.append(
+                "Independent provider reconciliation found a conflict or invalid audit; "
+                "review the cross-source evidence before relying on this snapshot."
+            )
+        elif cross_source_check.get("status") in {"warning", "unavailable", "not_run"}:
+            warnings.append(
+                "Independent provider reconciliation has not confirmed this snapshot."
             )
 
         trade_markers, markers_truncated = self._paper_trade_markers(
@@ -1376,6 +1405,7 @@ class DashboardService:
                 "amount_quality": _bounded_manifest_text(
                     manifest_file.get("amount_quality")
                 ),
+                "cross_source_check": cross_source_check,
             },
             "data_date": latest_daily_date.isoformat(),
             "snapshot": {
@@ -1449,6 +1479,9 @@ class DashboardService:
                     self.config.raw.get("broker", {}).get("account_id")
                 ),
             },
+            "cross_source_check": diagnosis.get("cache_manifest", {}).get(
+                "cross_source_check"
+            ),
         }
 
     def storage(self, *, refresh: bool = False) -> dict[str, Any]:
@@ -1856,7 +1889,15 @@ class DashboardService:
             "period": period,
             "adjustment": self.config.raw["data"].get("adjustment", "none"),
             "provider": self.config.raw["data"]["provider"],
-            "provenance": {"manifest_available": False},
+            "provenance": {
+                "manifest_available": False,
+                "cross_source_check": {
+                    "status": "not_run",
+                    "confidence": "not_available",
+                    "valid": False,
+                    "reason": "manifest_unavailable",
+                },
+            },
             "data_date": None,
             "snapshot": {
                 "id": None,
@@ -2139,6 +2180,12 @@ class DashboardService:
                 "request_policy": None,
                 "source_counts": {},
                 "refresh_failures": [],
+                "cross_source_check": {
+                    "status": "not_run",
+                    "confidence": "not_available",
+                    "valid": False,
+                    "reason": "manifest_unavailable",
+                },
             },
             "live_trading": "DISABLED",
         }

@@ -16,7 +16,13 @@
     "retry_max_seconds": 8.0,
     "retry_jitter_seconds": 0.5,
     "market_close_time": "15:30",
-    "adjustment": "forward"
+    "adjustment": "forward",
+    "cross_check": {
+      "enabled": true,
+      "reference_provider": "tencent",
+      "lookback_sessions": 5,
+      "minimum_overlap_sessions": 3
+    }
   },
   "security_master": {
     "file": "config/security_master.json",

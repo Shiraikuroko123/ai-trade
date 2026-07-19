@@ -2475,6 +2475,81 @@ progress {
   font-weight: 650;
 }
 
+.cross-source-audit .screen-quality-heading {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cross-source-audit .screen-quality-heading > div:first-child {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.cross-source-audit .screen-quality-heading .action-row {
+  align-items: center;
+}
+
+.cross-source-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+}
+
+.cross-source-summary-grid > div {
+  border-inline-end: 1px solid var(--rule);
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.35rem 0.75rem;
+}
+
+.cross-source-summary-grid > div:first-child {
+  padding-inline-start: 0;
+}
+
+.cross-source-summary-grid > div:last-child {
+  border-inline-end: 0;
+}
+
+.cross-source-summary-grid span {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+}
+
+.cross-source-summary-grid strong {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.cross-source-audit > .section-note {
+  border-top: 1px solid var(--rule);
+  margin: 0.65rem 0 0;
+  padding-top: 0.55rem;
+}
+
+.cross-source-details {
+  border-top: 1px solid var(--rule);
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+}
+
+.cross-source-details summary {
+  color: var(--teal-hover);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.cross-source-details .table-wrap {
+  margin-top: 0.55rem;
+}
+
+.cross-source-details table {
+  min-width: 850px;
+}
+
 .screen-methodology details {
   border-bottom: 1px solid var(--rule);
   border-top: 1px solid var(--rule);
@@ -4730,6 +4805,30 @@ progress {
 }
 
 @media (max-width: 560px) {
+  .cross-source-audit .screen-quality-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cross-source-audit .screen-quality-heading .action-row {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .cross-source-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cross-source-summary-grid > div {
+    border-bottom: 1px solid var(--rule);
+    border-inline-end: 0;
+    padding: 0.45rem 0;
+  }
+
+  .cross-source-summary-grid > div:last-child {
+    border-bottom: 0;
+  }
+
   .universe-filter-form,
   .intelligence-filter-form,
   .breadth-filter-form,

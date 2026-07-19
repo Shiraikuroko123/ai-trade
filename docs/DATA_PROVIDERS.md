@@ -29,6 +29,17 @@ Provider names are normalized to lowercase during configuration loading. The
 primary and fallback cannot be the same provider. `none` disables the network
 fallback and leaves the validated local cache as the final route.
 
+## Independent cross-check
+
+The optional `data.cross_check` block runs a bounded recent-session audit after
+the snapshot is published. It uses a different registered provider, compares
+OHLCV with explicit tolerances, and stores the result under
+`manifest.json -> cross_source_check`. A file supplied by the fallback is
+never compared with that same provider; the auditor tries the configured
+primary instead and records an unavailable/warning result if it cannot be
+reached. See [CROSS_SOURCE_AUDIT.md](CROSS_SOURCE_AUDIT.md) for the status
+semantics and command examples.
+
 AKShare, Tushare, Yahoo, TDX and WenCai are not registered yet. A configuration
 that names one of them fails at startup instead of pretending that the source
 was used. This is intentional: each adapter needs an explicit license review,
@@ -56,6 +67,8 @@ Each refresh records the normalized provider chain in
 - `request_policy.provider_chain`
 - `request_policy.primary_provider_circuit_breaker`
 - per-file `source`, `network_errors`, `fallback_reason`, and provider metadata
+- `cross_source_check` status, provider pair, date overlap, deviation summary,
+  and an audit digest bound to the active CSV hashes
 
 The top-level `provider` remains the configured primary provider. A file may
 still have a fallback source; that distinction is preserved so a report never

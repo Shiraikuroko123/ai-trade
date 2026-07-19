@@ -49,6 +49,7 @@ const MARKET_OSCILLATORS = {
 
 const JOB_LABELS = {
   "refresh-data": "刷新行情",
+  "cross-check-data": "跨源核对",
   backtest: "运行回测",
   "walk-forward": "滚动验证",
   validate: "稳健性验证",
@@ -1609,6 +1610,9 @@ function marketProvenanceSummary(provenance) {
       provider_reported_rounded: "提供方四舍五入成交额",
       calculated: "本地估算成交额",
     }[provenance.amount_quality] || provenance.amount_quality,
+    provenance.cross_source_check
+      ? `跨源核对${crossSourceStatusLabel(provenance.cross_source_check.status)}`
+      : "跨源核对未运行",
   ];
   return values.filter(Boolean).join(" · ");
 }
@@ -1696,6 +1700,7 @@ function renderMarket(data) {
   const configuredProvider = marketProviderLabel(chart.provider);
   const adjustment = marketAdjustmentLabel(chart.adjustment);
   const snapshot = chart.snapshot || {};
+  const crossCheck = chart.provenance?.cross_source_check || {};
   const chartBody = bars.length >= 2
     ? `<figure class="market-chart-figure">
         <div id="market-kline-chart" class="market-kline-chart" role="img" tabindex="0" aria-label="${escapeHtml(chartSummary)}" aria-describedby="market-chart-summary">
@@ -1794,6 +1799,7 @@ function renderMarket(data) {
             <div class="path-row"><span>快照标识</span><code>${escapeHtml(snapshot.id || snapshot.snapshot_id || chart.snapshot_id || "—")}</code></div>
             <div class="path-row"><span>清单指纹</span><code>${escapeHtml(marketSnapshotFingerprint(snapshot, "manifest_sha256"))}</code></div>
             <div class="path-row"><span>行情指纹</span><code>${escapeHtml(marketSnapshotFingerprint(snapshot, "file_sha256"))}</code></div>
+            <div class="path-row"><span>跨源核对</span><code>${escapeHtml(`${crossSourceStatusLabel(crossCheck.status)} · ${marketProviderLabel(crossCheck.reference_provider || "未配置")}`)}</code></div>
           </div>
         </article>
         <article class="panel">
@@ -5411,6 +5417,7 @@ function renderUniverseEnhanced(data) {
   const quality = screen.data_quality || {};
   const sourceSummary = screen.source_summary || {};
   const returnedSourceSummary = screen.returned_source_summary || {};
+  const crossCheck = data.cross_source_check || {};
   const primarySource = returnedSourceSummary.providers?.[0] || sourceSummary.providers?.[0];
   const sourceValue = primarySource
     ? `${screenSourceLabel(primarySource.provider)} ${formatInteger(primarySource.count)} / ${formatInteger(returnedSourceSummary.instrument_count ?? sourceSummary.instrument_count ?? 0)}`
@@ -5477,6 +5484,7 @@ function renderUniverseEnhanced(data) {
       ${metric("来源提供方", sourceValue, fallbackUsed ? "包含回退来源，需核对数据边界" : "返回结果的主要来源", fallbackUsed ? "tone-warning" : "tone-info")}
       ${metric("覆盖 / 滞后", coverageMedian == null ? "—" : `${formatNumber(coverageMedian, 1)}%`, maxLag == null || maxLag === 0 ? "未发现日期滞后" : `最大滞后 ${formatInteger(maxLag)} 日`, maxLag > 0 ? "tone-warning" : qualityStatus)}
     </section>
+    ${crossSourceAuditMarkup(crossCheck)}
     ${emptyMarkup}${warningMarkup}
     <section class="panel">
       ${panelHeader("横向研究结果", `${data.date || "—"} 的同一快照 · ${screenSortLabel(filters.sort, filters.direction)} · ${screen.completed_session_cutoff ? `完成截止 ${screen.completed_session_cutoff}` : "完成截止待确认"}`)}
@@ -5505,6 +5513,87 @@ function screenSortLabel(value, direction) {
 function screenStatusLabel(value, marketAvailable) {
   if (!marketAvailable || value === "unavailable") return "行情不可用";
   return { ok: "完整", partial: "部分可用", empty: "无匹配", loading: "加载中" }[value] || "待确认";
+}
+
+function crossSourceStatusLabel(value) {
+  return {
+    passed: "已通过",
+    failed: "发现不一致",
+    warning: "核对未完整",
+    unavailable: "参考源不可用",
+    not_run: "尚未运行",
+    invalid: "审计无效",
+  }[String(value || "not_run").toLowerCase()] || "待确认";
+}
+
+function crossSourceStatusKind(value) {
+  return {
+    passed: "success",
+    failed: "danger",
+    warning: "warning",
+    unavailable: "warning",
+    not_run: "neutral",
+    invalid: "danger",
+  }[String(value || "not_run").toLowerCase()] || "neutral";
+}
+
+function crossSourceReason(value) {
+  return {
+    cross_check_disabled: "配置已关闭独立核对",
+    cross_check_not_run: "当前快照尚无独立核对记录",
+    manifest_unavailable: "行情清单不可用",
+    market_data_unavailable: "行情快照不可用",
+    reference_provider_not_configured: "尚未配置不同于主源的参考源",
+    reference_provider_unregistered: "参考源未注册",
+    reference_provider_must_differ_from_primary: "参考源与主源相同",
+    no_symbols_checked: "没有可核对的证券",
+    audit_dataset_digest_mismatch: "审计绑定的数据指纹与当前快照不一致",
+    audit_digest_mismatch: "审计摘要校验失败",
+    audit_file_digest_mismatch: "审计文件指纹与当前行情不一致",
+    actual_source_provider_unknown: "当前文件的实际来源无法从清单确认",
+    reference_matches_actual_source: "参考源与当前文件的实际来源相同，未执行自检",
+    reference_provider_circuit_open: "参考源连续传输失败，后续证券已停止重复请求",
+    reference_provider_request_failed: "参考源请求失败",
+    reference_provider_unavailable: "至少一个证券的独立参考源不可用",
+    insufficient_reference_overlap: "参考源日期重合不足",
+    independent_provider_not_available: "没有可证明独立的参考来源",
+  }[String(value || "")] || value || "没有额外异常说明";
+}
+
+function crossSourceAuditMarkup(check, compact = false) {
+  const value = check && typeof check === "object" ? check : {};
+  const summary = value.summary || {};
+  const symbols = Array.isArray(value.symbols) ? value.symbols : [];
+  const rows = symbols.map((item) => {
+    const deviations = item.max_deviation || {};
+    const priceDeviation = Math.max(
+      ...["open", "high", "low", "close"].map((field) => finite(deviations[field]) || 0),
+    );
+    return `<tr>
+      <td class="mono">${escapeHtml(item.symbol || "—")}</td>
+      <td>${statusChip(crossSourceStatusLabel({ matched: "passed", mismatch: "failed", insufficient_overlap: "warning", reference_unavailable: "unavailable", not_independent: "warning" }[item.status] || item.status), crossSourceStatusKind({ matched: "passed", mismatch: "failed", insufficient_overlap: "warning", reference_unavailable: "unavailable", not_independent: "warning" }[item.status] || item.status))}<span class="table-subtext">${escapeHtml(crossSourceReason(item.reason))}</span></td>
+      <td class="numeric">${formatInteger(item.overlap_sessions)} / ${formatInteger(item.requested_sessions)}</td>
+      <td class="numeric">${formatPercent(priceDeviation)}</td>
+      <td class="numeric">${formatPercent(deviations.volume)}</td>
+      <td class="numeric">${formatPercent(deviations.amount)}</td>
+      <td><span class="mono">${escapeHtml(item.reference_latest || "—")}</span><span class="table-subtext">${escapeHtml(`${marketProviderLabel(item.actual_provider || "未知")} → ${marketProviderLabel(item.reference_provider || "未知")}`)}</span></td>
+    </tr>`;
+  }).join("");
+  const detail = rows ? `<details class="cross-source-details"><summary>查看逐证券核对（${symbols.length}）</summary><div class="table-wrap"><table class="data-table compact"><thead><tr><th>证券</th><th>结论</th><th class="numeric">重合 / 请求</th><th class="numeric">最大价格偏差</th><th class="numeric">成交量偏差</th><th class="numeric">成交额偏差</th><th>参考源截止</th></tr></thead><tbody>${rows}</tbody></table></div></details>` : "";
+  return `<section class="screen-quality-band cross-source-audit" aria-labelledby="cross-source-audit-title">
+    <div class="screen-quality-heading">
+      <div><strong id="cross-source-audit-title">独立跨源核对</strong><span>只比较最近已完成日线，不替换主快照或生成交易指令</span></div>
+      <div class="action-row">${statusChip(crossSourceStatusLabel(value.status), crossSourceStatusKind(value.status))}${actionButton("cross-check-data", "secondary")}</div>
+    </div>
+    <div class="cross-source-summary-grid">
+      <div><span>数据源组合</span><strong>${escapeHtml(`${marketProviderLabel(value.primary_provider || "未说明")} / ${marketProviderLabel(value.reference_provider || "未配置")}`)}</strong></div>
+      <div><span>核对结果</span><strong>${formatInteger(summary.matched)} 通过 · ${formatInteger(summary.mismatch)} 不一致</strong></div>
+      <div><span>最小重合</span><strong>${formatInteger(value.minimum_overlap_sessions)} 个交易日</strong></div>
+      <div><span>审计时间</span><strong>${value.generated_at ? formatDate(value.generated_at, true) : "—"}</strong></div>
+    </div>
+    ${value.status !== "passed" ? `<p class="section-note" role="status">${escapeHtml(crossSourceReason(value.reason))}。主数据仍按原来源保留；在核对完整前不得把它描述为独立确认。</p>` : `<p class="section-note">本次结果只证明两个公开来源在披露容差内一致，不等同于交易所认证，也不会提升交易权限。</p>`}
+    ${compact ? "" : detail}
+  </section>`;
 }
 
 function screenSourceLabel(value) {
@@ -6345,6 +6434,8 @@ function renderSystem(payload) {
         ${metric("券商模式", brokerModeLabel(data.broker?.mode), data.broker?.adapter ? `适配器 ${data.broker.adapter}` : "未安装真实交易适配器")}
       </section>
 
+      ${crossSourceAuditMarkup(data.cross_source_check || {}, true)}
+
       <section class="split-layout">
         <article class="panel">
           ${panelHeader("后台任务", "同类任务会自动去重，任一时刻串行执行")}
@@ -6790,6 +6881,7 @@ async function pollJobs() {
     const jobs = payload.jobs || [];
     let storageRefreshMode = "";
     let intelligenceRefreshCompleted = "";
+    let marketEvidenceRefreshCompleted = false;
     for (const job of jobs) {
       const previous = state.jobStates.get(job.id);
       if (previous && ["queued", "running"].includes(previous) && ["succeeded", "failed", "cancelled"].includes(job.status)) {
@@ -6816,6 +6908,9 @@ async function pollJobs() {
         if (["refresh-market-intelligence", "refresh-market-breadth", "refresh-capital-flow"].includes(job.action)) {
           intelligenceRefreshCompleted = job.action;
         }
+        if (["refresh-data", "cross-check-data"].includes(job.action)) {
+          marketEvidenceRefreshCompleted = true;
+        }
       }
       state.jobStates.set(job.id, job.status);
     }
@@ -6831,6 +6926,9 @@ async function pollJobs() {
     } else if (state.route === "intelligence" && intelligenceRefreshCompleted) {
       await loadRoute();
       restoreFocusAfterRender(`[data-job-action="${intelligenceRefreshCompleted}"]`, "intelligence");
+    } else if (marketEvidenceRefreshCompleted && ["overview", "market", "universe", "system"].includes(state.route)) {
+      await loadRoute();
+      restoreFocusAfterRender('[data-job-action="cross-check-data"]');
     }
   } catch {
     setConnection(false);

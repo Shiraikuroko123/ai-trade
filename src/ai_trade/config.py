@@ -466,6 +466,48 @@ def _validate_data_transport(data: dict[str, Any]) -> None:
             )
     if parsed["retry_max_seconds"] < parsed["retry_base_seconds"]:
         raise ValueError("data.retry_max_seconds must not be below retry_base_seconds")
+    _validate_cross_source_check(data, supported_providers)
+
+
+def _validate_cross_source_check(
+    data: dict[str, Any], supported_providers: set[str]
+) -> None:
+    raw = data.get("cross_check")
+    if raw is None:
+        return
+    if not isinstance(raw, dict):
+        raise ValueError("data.cross_check must be an object")
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("data.cross_check.enabled must be boolean")
+    reference = raw.get("reference_provider", data.get("fallback_provider", "tencent"))
+    if not isinstance(reference, str) or reference.strip().lower() not in supported_providers:
+        supported = ", ".join(sorted(supported_providers))
+        raise ValueError(
+            "data.cross_check.reference_provider must be one of "
+            f"{supported}; got {reference!r}"
+        )
+    reference = reference.strip().lower()
+    if reference == str(data.get("provider", "eastmoney")).strip().lower():
+        raise ValueError(
+            "data.cross_check.reference_provider must differ from data.provider"
+        )
+    lookback = raw.get("lookback_sessions", 5)
+    if isinstance(lookback, bool) or not isinstance(lookback, int):
+        raise ValueError("data.cross_check.lookback_sessions must be an integer")
+    if not 1 <= lookback <= 20:
+        raise ValueError("data.cross_check.lookback_sessions must be between 1 and 20")
+    minimum_overlap = raw.get("minimum_overlap_sessions", min(3, lookback))
+    if isinstance(minimum_overlap, bool) or not isinstance(minimum_overlap, int):
+        raise ValueError(
+            "data.cross_check.minimum_overlap_sessions must be an integer"
+        )
+    if not 1 <= minimum_overlap <= lookback:
+        raise ValueError(
+            "data.cross_check.minimum_overlap_sessions must be between 1 and "
+            "lookback_sessions"
+        )
+    raw["reference_provider"] = reference
 
 
 def _validate_costs(costs: CostSettings) -> None:

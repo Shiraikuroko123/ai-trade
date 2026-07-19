@@ -53,6 +53,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="Overwrite existing cache"
     )
 
+    cross_check = subparsers.add_parser(
+        "cross-check-data",
+        help="Reconcile the installed daily snapshot with an independent provider",
+    )
+    cross_check.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Configured six-digit symbol; repeat to limit the audit",
+    )
+
     market_intelligence = subparsers.add_parser(
         "market-intelligence-refresh",
         help="Refresh Dragon Tiger List evidence for one completed market date",
@@ -439,6 +450,17 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.command == "cross-check-data":
+            _ensure_cache(config)
+            from .data.cross_check import cross_check_market_snapshot
+
+            result = cross_check_market_snapshot(
+                config,
+                symbols=args.symbols,
+                force=True,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result.get("persisted") is True else 1
         if args.command == "market-intelligence-refresh":
             on_date = _parse_cli_iso_date(args.date, "date")
             if on_date is None:

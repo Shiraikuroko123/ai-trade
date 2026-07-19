@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[架构](docs/ARCHITECTURE.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 `v0.12.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、可恢复缓存事务、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
@@ -34,6 +34,7 @@
 19. 把东方财富指定交易日的全部板块分页与上证、深证、北证三条宽度响应联合校验后固化为另一条不可变修订链，提供可筛选板块排名和涨跌宽度；来源板块集合不冒充纯行业分类，也不生成交易信号。
 20. 把东方财富指定交易日的全部 `m:90+t:2` 板块分页校验后固化为第三条不可变修订链，披露主力及超大单、大单、中单、小单净额和占比；保留提供方空值、单位、日期、分页、指纹和重叠板块警告，不把板块行合计当作全市场资金流。
 21. 在当前登录账户下把规则告警和失败扫描幂等汇总为本地通知，保留来源与证据指纹，并用追加式动作记录未读、已读和归档；本地收件箱不会确认原告警、发送外部推送或取得交易权限。
+22. 对最近完整日线执行可选的跨源一致性审计，将逐证券实际来源、独立参考源、日期重合、最大偏差和审计指纹写入行情 manifest；回退源供数时禁止同源自检，核对失败也不会替换主快照或提升交易权限。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
@@ -362,6 +363,7 @@ ai-trade/
 - 默认先串行请求东方财富；主源失败时使用腾讯财经日线回退，若刷新级传输熔断已打开，后续标的会跳过重复的主源请求。两个网络源都失败后，才允许降级到距截止日不超过 7 天的本地已校验缓存。
 - 全部候选文件先写入临时快照，全部下载成功并通过 schema、日期、数值和 OHLC 校验后才作为一套发布。
 - `data/cache/manifest.json` 记录请求上界、实际共同完成交易日、每个标的的来源路由、网络错误、回退原因、最新日期和 SHA-256；腾讯增量模式还会认证旧 manifest、旧文件哈希、复权口径和历史起点，并记录保留历史的来源与种子哈希。
+- 默认刷新后用不同提供方核对最近 5 个完整交易日；若本次文件实际来自腾讯回退，则改用东方财富作为参考，东方财富仍失败时明确记录“参考源不可用”，不会把腾讯与自身比较后标记通过。结果、容差和逐证券偏差位于 `manifest.json -> cross_source_check`，详见 [跨源日线审计](docs/CROSS_SOURCE_AUDIT.md)。
 - 腾讯历史 K 线成交额按当前接口观测到的两位“万元”量化保留，即 100 元分辨率；只有在按四舍五入解释时，名义单条误差界限才是 50 元。最新日若可与报价接口严格对应，会用报价字段覆盖并在 manifest 中标记。流动性和容量判断应考虑这一非交易所担保的精度边界。
 - `MarketData` 会核对 manifest 中的 SHA-256；混合快照或手工改坏的缓存会被拒绝。
 - `doctor` 显示共同数据截止日、各标的覆盖范围、哈希及被排除的未完成日期。
@@ -378,6 +380,7 @@ ai-trade/
 ```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli doctor
 .\.venv\Scripts\python.exe -m ai_trade.cli download --force
+.\.venv\Scripts\python.exe -m ai_trade.cli cross-check-data
 ```
 
 仅为区分系统代理链路与直连链路时，可以在当前 PowerShell 临时设置 `$env:AI_TRADE_EASTMONEY_PROXY_MODE='direct'` 后执行一次刷新，完成后用 `Remove-Item Env:AI_TRADE_EASTMONEY_PROXY_MODE` 清除。不要轮换身份、伪造 Cookie 或高频请求规避数据提供方限制；对稳定性和许可有生产要求时，应接入有授权与 SLA 的行情供应商。
