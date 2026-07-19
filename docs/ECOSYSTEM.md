@@ -56,6 +56,16 @@ authoritative paper and broker ledgers.
 | Host-independent tamper evidence | Not implemented | Local SHA-256 and cross-record validation are not signatures or WORM storage. A local administrator can recalculate records or delete a newest chain tail; monitoring state is not included in the R2 market-cache backup. |
 | Minute/Tick/Level-2 monitoring and live execution | Not implemented | The current monitor uses completed daily data and remains `research_only`; it cannot change strategy, accounting, broker permissions, or orders. |
 
+## Assistant Research Synthesis Status
+
+| Reference capability | Status | AI Trade boundary |
+|---|---|---|
+| Technical, risk, and strategy-gate role separation | Complete for deterministic closing evidence | Each perspective cites the same validated completed-bar evidence; it is a review matrix, not three autonomous agents. |
+| Fundamental and sentiment roles | Coverage contract only | Both views remain explicitly `UNAVAILABLE` until independently validated data and methodology are added. Dragon-Tiger List, board breadth, and capital-flow evidence do not silently make sentiment available. |
+| Perspective conflict and coverage-gap audit | Complete within the assistant record | `deterministic-perspective-audit-v1` separates real stance conflicts from missing coverage, records evidence references and manual resolution requirements, and is reconstructed during internal validation. |
+| Model conclusion authority guard | Complete for the optional single configured model | A model may preserve or tighten the deterministic research conclusion. An attempted relaxation is blocked and recorded; it cannot change strategy, accounting, positions, orders, or permissions. |
+| Multiple-model parallel analysis, weighting, voting, or judge model | Not implemented | The audit must not be described as MoA or consensus voting. Adding models would first require provider isolation, deterministic aggregation, cost and failure accounting, and conflict evidence that remains `research_only`. |
+
 ## Market Intelligence Status
 
 | Reference capability | Status | AI Trade boundary |

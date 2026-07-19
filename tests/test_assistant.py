@@ -4,13 +4,19 @@ import json
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from ai_trade.assistant import AssistantEngine
-from ai_trade.assistant.features import ALLOWED_CONCLUSIONS, RESEARCH_PERSPECTIVE_KEYS
+from ai_trade.assistant.engine import _validate_result
+from ai_trade.assistant.features import (
+    ALLOWED_CONCLUSIONS,
+    RESEARCH_PERSPECTIVE_KEYS,
+    build_perspective_conflict_audit,
+)
 from ai_trade.assistant.store import MAX_ANALYSIS_RECORD_BYTES, AssistantRecordStore
 from ai_trade.assistant.provider import (
     AssistantProviderError,
@@ -94,6 +100,12 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertTrue(
                 all(item["stance"] == "NOT_AVAILABLE" for item in unavailable.values())
             )
+            audit = result["conflict_audit"]
+            self.assertEqual(audit["status"], "INCOMPLETE")
+            self.assertEqual(audit["conflict_count"], 0)
+            self.assertEqual(audit["coverage_gap_count"], 2)
+            self.assertEqual(audit["authority"], "research_only")
+            self.assertFalse(audit["execution_authorized"])
 
             records = list((Path(temporary) / "state" / "assistant").rglob("*.json"))
             self.assertEqual(len(records), 1)
@@ -128,28 +140,36 @@ class AssistantEngineTests(unittest.TestCase):
 
             alice = engine.history("alice")
             bob = engine.history("bob")
-            self.assertEqual({row["analysis_id"] for row in alice}, {
-                first["analysis_id"], second["analysis_id"]
-            })
-            self.assertEqual([row["analysis_id"] for row in bob], [other["analysis_id"]])
+            self.assertEqual(
+                {row["analysis_id"] for row in alice},
+                {first["analysis_id"], second["analysis_id"]},
+            )
+            self.assertEqual(
+                [row["analysis_id"] for row in bob], [other["analysis_id"]]
+            )
             self.assertTrue(second["comparison"]["available"])
             self.assertEqual(
                 second["comparison"]["previous_analysis_id"], first["analysis_id"]
             )
             self.assertFalse(second["comparison"]["data_advanced"])
-            user_directories = [path for path in engine._store.root.iterdir() if path.is_dir()]
+            user_directories = [
+                path for path in engine._store.root.iterdir() if path.is_dir()
+            ]
             self.assertEqual(len(user_directories), 2)
             self.assertNotIn("alice", {path.name for path in user_directories})
 
     def test_input_validation_and_model_configuration_gate(self):
-        with tempfile.TemporaryDirectory() as temporary, patch.dict(
-            os.environ,
-            {
-                "AI_TRADE_AI_API_KEY": "",
-                "AI_TRADE_AI_MODEL": "",
-                "AI_TRADE_AI_BASE_URL": "",
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.dict(
+                os.environ,
+                {
+                    "AI_TRADE_AI_API_KEY": "",
+                    "AI_TRADE_AI_MODEL": "",
+                    "AI_TRADE_AI_BASE_URL": "",
+                },
+                clear=False,
+            ),
         ):
             engine = AssistantEngine(_config(Path(temporary)))
             market = _Market(_bars(80))
@@ -168,20 +188,25 @@ class AssistantEngineTests(unittest.TestCase):
     def test_status_never_exposes_key_or_base_url(self):
         secret = "assistant-secret-key-123"
         base = "https://models.example.test/v1"
-        with tempfile.TemporaryDirectory() as temporary, patch.dict(
-            os.environ,
-            {
-                "AI_TRADE_AI_API_KEY": secret,
-                "AI_TRADE_AI_MODEL": "example-model",
-                "AI_TRADE_AI_BASE_URL": base,
-            },
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.dict(
+                os.environ,
+                {
+                    "AI_TRADE_AI_API_KEY": secret,
+                    "AI_TRADE_AI_MODEL": "example-model",
+                    "AI_TRADE_AI_BASE_URL": base,
+                },
+                clear=False,
+            ),
         ):
             status = AssistantEngine(_config(Path(temporary))).status()
             rendered = json.dumps(status)
             self.assertTrue(status["model_configured"])
             self.assertEqual(status["supported_modes"], ["local", "model"])
             self.assertEqual(status["research_views"], list(RESEARCH_PERSPECTIVE_KEYS))
+            self.assertFalse(status["conflict_audit"]["multi_model_voting"])
+            self.assertFalse(status["conflict_audit"]["execution_authorized"])
             self.assertNotIn(secret, rendered)
             self.assertNotIn(base, rendered)
             self.assertNotIn("base_url", rendered)
@@ -200,16 +225,79 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertEqual(result["assessment"]["risk_budget_pct"], 0)
             self.assertTrue(result["validation"]["model_enhanced"])
             self.assertEqual(result["validation"]["usage"]["total_tokens"], 30)
+            audit = result["conflict_audit"]
+            self.assertIn(
+                "model_authority_guard",
+                {item["conflict_id"] for item in audit["conflicts"]},
+            )
+            self.assertTrue(audit["model_review"]["relaxation_blocked"])
+            self.assertEqual(audit["model_review"]["effective_conclusion"], "NO_ACTION")
             self.assertEqual(
                 {item["key"] for item in result["perspectives"]},
                 set(RESEARCH_PERSPECTIVE_KEYS),
             )
             self.assertEqual(
                 next(
-                    item for item in result["perspectives"] if item["key"] == "strategy_gate"
+                    item
+                    for item in result["perspectives"]
+                    if item["key"] == "strategy_gate"
                 )["stance"],
                 "CAUTION",
             )
+
+    def test_perspective_audit_detects_direct_technical_risk_disagreement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            engine = AssistantEngine(_config(Path(temporary)))
+            result = engine.analyze(_Market(_bars(220, daily_return=0.002)), "510300")
+            perspectives = deepcopy(result["perspectives"])
+            for item in perspectives:
+                if item["key"] == "technical":
+                    item["stance"] = "ADVERSE"
+                elif item["key"] == "risk":
+                    item["stance"] = "SUPPORTIVE"
+            audit = build_perspective_conflict_audit(
+                perspectives,
+                result["assessment"],
+                model_review=result["conflict_audit"]["model_review"],
+            )
+            self.assertEqual(audit["status"], "REVIEW_REQUIRED")
+            self.assertIn(
+                "direction_risk_divergence",
+                {item["conflict_id"] for item in audit["conflicts"]},
+            )
+            self.assertEqual(audit["coverage_gap_count"], 2)
+
+    def test_tampered_perspective_audit_fails_internal_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            engine = AssistantEngine(_config(Path(temporary)))
+            result = engine.analyze(_Market(_bars(220)), "510300")
+            result["conflict_audit"]["summary"] = "篡改后的审计摘要"
+            errors = _validate_result(result)
+            self.assertTrue(
+                any("does not match its evidence" in error for error in errors)
+            )
+
+    def test_rebuilt_audit_cannot_hide_a_blocked_model_relaxation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            engine = AssistantEngine(_config(Path(temporary)))
+            engine._settings = SimpleNamespace(model="test-model")
+            engine._provider = _PermissiveProvider()
+            result = engine.analyze(
+                _Market(_bars(220, daily_return=-0.004)),
+                "510300",
+                mode="model",
+            )
+            concealed_review = deepcopy(result["conflict_audit"]["model_review"])
+            concealed_review["relaxation_blocked"] = False
+            result["conflict_audit"] = build_perspective_conflict_audit(
+                result["perspectives"],
+                result["assessment"],
+                model_review=concealed_review,
+            )
+
+            errors = _validate_result(result)
+
+            self.assertIn("perspective conflict relaxation flag is invalid", errors)
 
     def test_model_failure_falls_back_without_leaking_transport_details(self):
         with tempfile.TemporaryDirectory() as temporary:

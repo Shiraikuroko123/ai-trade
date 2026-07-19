@@ -41,6 +41,40 @@ view, missing evidence reference, or incomplete coverage. Model-enhanced mode
 can change wording and can only tighten the local conclusion; it cannot change
 the coverage status or introduce uncited facts.
 
+## Deterministic Perspective Conflict Audit
+
+Every new analysis on `main` includes `conflict_audit`, produced by
+`deterministic-perspective-audit-v1`. It compares the registered perspective
+stances after the local rules and optional model wording layer have finished.
+It is not a multi-model vote, an ensemble score, a confidence probability, or
+an execution decision.
+
+The audit keeps two classes of evidence separate:
+
+| Class | Meaning |
+|---|---|
+| `conflicts` | An available technical, risk, or strategy-gate view materially disagrees with another available view, or a model attempted to relax the deterministic conclusion. |
+| `coverage_gaps` | A registered view is `UNAVAILABLE`; absence is not counted as disagreement or silently converted into consensus. |
+
+Its status is `REVIEW_REQUIRED` when at least one conflict exists,
+`INCOMPLETE` when there are no conflicts but one or more coverage gaps, and
+`ALIGNED` only when every registered view has data and no conflict is found.
+Each conflict records a stable conflict ID, affected perspective keys, evidence
+references, explanation, and manual resolution requirement. Current conflict
+IDs cover technical/risk divergence, strategy/technical divergence,
+strategy/risk divergence, a stricter risk override, and the model-authority
+guard.
+
+`model_review` records the deterministic conclusion, the model-proposed
+conclusion when a valid response was applied, the effective conclusion, and
+whether relaxation was blocked or the result was tightened. Internal
+validation reconstructs the complete audit from the perspective evidence and
+checks these conclusion-order invariants before saving the record. A changed
+count, summary, conflict row, coverage row, guard flag, or effective conclusion
+fails validation. Historical records created before this field remain readable;
+the workstation labels their audit as unavailable and asks the user to rerun
+the analysis instead of inferring a result retroactively.
+
 Enforcement outside the model must keep `authority="research_only"` and reject any result that tries to create an order intent, target position, quantity, entry price, stop, take-profit instruction, portfolio mutation, paper-promotion fact, sandbox reconciliation, live authorization, or changed kill-switch state. A timeout, stale snapshot, malformed response, unknown conclusion, or provider failure fails closed.
 
 ## Windows Model Configuration

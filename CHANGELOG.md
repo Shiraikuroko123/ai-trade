@@ -27,6 +27,18 @@ This section describes the current `main` branch, not the public `v0.12.1`
 wheel. The persistent research-digest commands, HTTP routes, and Windows task
 scripts below will remain source-only until a later release is explicitly cut.
 
+- Added `deterministic-perspective-audit-v1` to every new AI analysis. It
+  separates technical/risk/strategy stance conflicts from unavailable
+  fundamental and sentiment coverage, cites the affected evidence, records
+  manual resolution requirements, and exposes an explicit `research_only`
+  authority boundary.
+- Added model-review invariants for deterministic, proposed, and effective
+  conclusions. A model attempt to relax the local result is blocked and logged
+  as an authority-guard conflict; the validator reconstructs the complete audit
+  before saving. This is not multi-model voting and has no execution authority.
+- Added a dense, responsive conflict-audit ledger to AI Analysis, including
+  textual conflict and gap counts, model-guard state, a clear legacy-record
+  rerun state, and audit status in the local history table.
 - Added a third read-only closing-market intelligence dataset for Eastmoney's
   provider-defined `m:90+t:2` board capital flow. The bounded refresh validates
   all pages, stable counts, exact fields, unique board identities, quote dates,

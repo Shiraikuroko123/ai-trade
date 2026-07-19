@@ -3,13 +3,7 @@ import unittest
 from pathlib import Path
 
 
-ASSET_ROOT = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "ai_trade"
-    / "web"
-    / "assets"
-)
+ASSET_ROOT = Path(__file__).resolve().parents[1] / "src" / "ai_trade" / "web" / "assets"
 
 
 class WebUiContractTests(unittest.TestCase):
@@ -25,10 +19,13 @@ class WebUiContractTests(unittest.TestCase):
             r'id="job-indicator"[^>]+role="status"[^>]+aria-live="polite"',
         )
         self.assertIn('id="table-scroll-help" class="sr-only"', self.html)
-        self.assertIn('region.tabIndex = 0;', self.javascript)
+        self.assertIn("region.tabIndex = 0;", self.javascript)
         self.assertIn('region.setAttribute("role", "region")', self.javascript)
-        self.assertIn('region.setAttribute("aria-describedby", "table-scroll-help")', self.javascript)
-        self.assertIn('tableRegion.scrollLeft + 96', self.javascript)
+        self.assertIn(
+            'region.setAttribute("aria-describedby", "table-scroll-help")',
+            self.javascript,
+        )
+        self.assertIn("tableRegion.scrollLeft + 96", self.javascript)
         self.assertIn(".table-wrap:focus-visible", self.css)
 
     def test_network_failures_use_actionable_local_copy(self):
@@ -43,7 +40,7 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn('role="img" tabindex="0"', self.javascript)
         self.assertIn('aria-describedby="market-chart-summary"', self.javascript)
         self.assertIn('id="market-chart-summary"', self.javascript)
-        self.assertIn('descendant.tabIndex = -1;', self.javascript)
+        self.assertIn("descendant.tabIndex = -1;", self.javascript)
         self.assertIn('aria-describedby="${escapeHtml(id)}-summary"', self.javascript)
         self.assertIn('class="chart-caption"', self.javascript)
 
@@ -66,8 +63,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.12.1-ui26-local-notifications", self.html)
-        self.assertIn("app.js?v=0.12.1-ui26-local-notifications", self.html)
+        self.assertIn("app.css?v=0.12.1-ui27-perspective-audit", self.html)
+        self.assertIn("app.js?v=0.12.1-ui27-perspective-audit", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -101,7 +98,9 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("pulseRegion.scrollLeft + step", self.javascript)
         self.assertIn("真实交易锁定", self.javascript)
         self.assertIn(".market-pulse-track:focus-visible", self.css)
-        self.assertIn('window.scrollTo({ top: 0, left: 0, behavior: "auto" })', self.javascript)
+        self.assertIn(
+            'window.scrollTo({ top: 0, left: 0, behavior: "auto" })', self.javascript
+        )
 
     def test_monitoring_is_persistent_auditable_and_actionable(self):
         self.assertIn('data-route="monitoring"', self.html)
@@ -131,7 +130,9 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("state.monitoringActionBusy", self.javascript)
         self.assertIn("expected_revision", self.javascript)
         self.assertIn("expected_state_fingerprint", self.javascript)
-        self.assertIn("scan.config_revision ?? data.configuration?.revision", self.javascript)
+        self.assertIn(
+            "scan.config_revision ?? data.configuration?.revision", self.javascript
+        )
         self.assertIn("scan.snapshot_evidence_fingerprint", self.javascript)
         self.assertIn("scan.manifest_sha256", self.javascript)
         self.assertIn('aria-label="本地通知"', self.javascript)
@@ -170,8 +171,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn('class="trade-side-code" aria-hidden="true"', self.javascript)
         self.assertIn("BUY", self.javascript)
         self.assertIn("SELL", self.javascript)
-        self.assertIn('metric-strip-priority portfolio-risk-strip', self.javascript)
-        self.assertIn('metric-strip-priority risk-metric-strip', self.javascript)
+        self.assertIn("metric-strip-priority portfolio-risk-strip", self.javascript)
+        self.assertIn("metric-strip-priority risk-metric-strip", self.javascript)
         self.assertIn("现金缓冲", self.javascript)
 
     def test_research_perspectives_show_coverage_and_evidence_boundaries(self):
@@ -180,6 +181,34 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("缺失数据不会被模型补写", self.javascript)
         self.assertIn("perspective-ledger", self.css)
         self.assertIn("perspective-unavailable", self.css)
+
+    def test_perspective_conflict_audit_is_textual_auditable_and_responsive(self):
+        self.assertIn("function assistantConflictAuditMarkup", self.javascript)
+        self.assertIn("function assistantAuditAvailable", self.javascript)
+        self.assertIn('audit.authority === "research_only"', self.javascript)
+        self.assertIn("audit.execution_authorized === false", self.javascript)
+        self.assertIn("视角冲突审计", self.javascript)
+        self.assertIn("冲突审计不可用", self.javascript)
+        self.assertIn("重新运行一次分析", self.javascript)
+        self.assertIn("视角冲突", self.javascript)
+        self.assertIn("数据覆盖缺口", self.javascript)
+        self.assertIn("模型权限守卫", self.javascript)
+        self.assertIn("不是多模型投票", self.javascript)
+        self.assertIn("仅研究 · 无执行权限", self.javascript)
+        self.assertIn('<ul class="assistant-audit-list">', self.javascript)
+        self.assertIn('<dl class="assistant-model-review">', self.javascript)
+        self.assertIn("assistant-history-table", self.css)
+        self.assertIn("min-width: 980px", self.css)
+        mobile_start = self.css.index("@media (max-width: 820px)")
+        narrow_start = self.css.index("@media (max-width: 560px)")
+        reduced_motion_start = self.css.index("@media (prefers-reduced-motion: reduce)")
+        self.assertIn(".assistant-audit-columns", self.css[mobile_start:narrow_start])
+        self.assertIn(
+            "grid-template-columns: minmax(0, 1fr)", self.css[mobile_start:narrow_start]
+        )
+        self.assertIn(
+            ".assistant-model-review", self.css[narrow_start:reduced_motion_start]
+        )
 
     def test_universe_screen_has_bounded_filters_and_auditable_states(self):
         self.assertIn("/api/universe/screen", self.javascript)
@@ -209,22 +238,35 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("该交易日没有龙虎榜记录", self.javascript)
         self.assertIn("非交易所认证", self.javascript)
         self.assertIn("不等同于市场情绪", self.javascript)
-        self.assertIn("不能修改策略、持仓、订单、风控门禁或真实交易授权", self.javascript)
+        self.assertIn(
+            "不能修改策略、持仓、订单、风控门禁或真实交易授权", self.javascript
+        )
         self.assertIn("filters.trade_date ?? filters.date", self.javascript)
         self.assertIn("summary.returned_count ?? records.length", self.javascript)
-        self.assertIn("coverage.declared_count ?? summary.record_count", self.javascript)
+        self.assertIn(
+            "coverage.declared_count ?? summary.record_count", self.javascript
+        )
         self.assertIn("freshness.completed_session_cutoff", self.javascript)
         self.assertIn("coverage.received_count", self.javascript)
         self.assertIn("summary.buy_amount", self.javascript)
-        self.assertIn("status === \"provisional\"", self.javascript)
-        self.assertIn("const orderedRevisions = [...revisions].reverse()", self.javascript)
+        self.assertIn('status === "provisional"', self.javascript)
+        self.assertIn(
+            "const orderedRevisions = [...revisions].reverse()", self.javascript
+        )
         self.assertNotIn("orderedRevisions.slice", self.javascript)
         self.assertIn("规范化证据相同则复用，记录变化才追加", self.javascript)
-        self.assertIn("value === null || value === undefined || value === \"\"", self.javascript)
+        self.assertIn(
+            'value === null || value === undefined || value === ""', self.javascript
+        )
         self.assertIn("async function applyIntelligenceFilterForm", self.javascript)
         self.assertIn("async function clearIntelligenceFilters", self.javascript)
-        self.assertIn("restoreFocusAfterRender('#market-intelligence-filter-form", self.javascript)
-        self.assertIn('restoreFocusAfterRender("[data-intelligence-filter-clear]"', self.javascript)
+        self.assertIn(
+            "restoreFocusAfterRender('#market-intelligence-filter-form", self.javascript
+        )
+        self.assertIn(
+            'restoreFocusAfterRender("[data-intelligence-filter-clear]"',
+            self.javascript,
+        )
         self.assertIn('contentStatus === "empty"', self.javascript)
         self.assertIn("该日来源经完整校验返回 0 条记录", self.javascript)
         self.assertIn("尚无已发布证据，不能解释为零值", self.javascript)
@@ -249,8 +291,13 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("平盘", self.javascript)
         self.assertIn("async function applyBreadthFilterForm", self.javascript)
         self.assertIn("async function clearBreadthFilters", self.javascript)
-        self.assertIn("restoreFocusAfterRender('#market-breadth-filter-form", self.javascript)
-        self.assertIn('restoreFocusAfterRender("[data-market-breadth-filter-clear]"', self.javascript)
+        self.assertIn(
+            "restoreFocusAfterRender('#market-breadth-filter-form", self.javascript
+        )
+        self.assertIn(
+            'restoreFocusAfterRender("[data-market-breadth-filter-clear]"',
+            self.javascript,
+        )
         self.assertIn("market-breadth-table", self.css)
         self.assertIn("min-width: 1220px", self.css)
         self.assertIn("market-breadth-dataset > .metric-strip", self.css)
@@ -263,9 +310,14 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn('data-intelligence-jump="capital-flow-evidence"', self.javascript)
         self.assertIn('href="#intelligence" data-intelligence-jump', self.javascript)
         self.assertIn("function jumpToIntelligenceDataset", self.javascript)
-        self.assertIn('event.target.closest("[data-intelligence-jump]")', self.javascript)
-        self.assertIn('target.focus({ preventScroll: true })', self.javascript)
-        self.assertIn('target.scrollIntoView({ behavior: "auto", block: "start" })', self.javascript)
+        self.assertIn(
+            'event.target.closest("[data-intelligence-jump]")', self.javascript
+        )
+        self.assertIn("target.focus({ preventScroll: true })", self.javascript)
+        self.assertIn(
+            'target.scrollIntoView({ behavior: "auto", block: "start" })',
+            self.javascript,
+        )
         self.assertIn('document.querySelector(".topbar")', self.javascript)
         self.assertIn("targetTop - coveredThrough - clearance", self.javascript)
         self.assertIn(".intelligence-dataset:focus-visible", self.css)
@@ -283,12 +335,19 @@ class WebUiContractTests(unittest.TestCase):
             self.assertIn(direction_label, self.javascript)
         self.assertIn("async function applyCapitalFlowFilterForm", self.javascript)
         self.assertIn("async function clearCapitalFlowFilters", self.javascript)
-        self.assertIn("restoreFocusAfterRender('#capital-flow-filter-form", self.javascript)
-        self.assertIn('restoreFocusAfterRender("[data-capital-flow-filter-clear]"', self.javascript)
+        self.assertIn(
+            "restoreFocusAfterRender('#capital-flow-filter-form", self.javascript
+        )
+        self.assertIn(
+            'restoreFocusAfterRender("[data-capital-flow-filter-clear]"',
+            self.javascript,
+        )
         self.assertIn("capital-flow-table", self.css)
         self.assertIn("min-width: 1480px", self.css)
         self.assertIn("capital-flow-dataset > .metric-strip", self.css)
-        intelligence_dataset_css = self.css.split(".intelligence-dataset {", 1)[1].split("}", 1)[0]
+        intelligence_dataset_css = self.css.split(".intelligence-dataset {", 1)[
+            1
+        ].split("}", 1)[0]
         self.assertIn("max-width: 100%", intelligence_dataset_css)
         self.assertIn("min-width: 0", intelligence_dataset_css)
         self.assertNotIn("coverage.reported_count", self.javascript)
@@ -299,11 +358,17 @@ class WebUiContractTests(unittest.TestCase):
         narrow_start = self.css.index("@media (max-width: 560px)")
         reduced_motion_start = self.css.index("@media (prefers-reduced-motion: reduce)")
         self.assertIn(".intelligence-filter-form", self.css[mobile_start:narrow_start])
-        self.assertIn(".intelligence-filter-form", self.css[narrow_start:reduced_motion_start])
+        self.assertIn(
+            ".intelligence-filter-form", self.css[narrow_start:reduced_motion_start]
+        )
         self.assertIn(".breadth-filter-form", self.css[mobile_start:narrow_start])
-        self.assertIn(".breadth-filter-form", self.css[narrow_start:reduced_motion_start])
+        self.assertIn(
+            ".breadth-filter-form", self.css[narrow_start:reduced_motion_start]
+        )
         self.assertIn(".capital-flow-filter-form", self.css[mobile_start:narrow_start])
-        self.assertIn(".capital-flow-filter-form", self.css[narrow_start:reduced_motion_start])
+        self.assertIn(
+            ".capital-flow-filter-form", self.css[narrow_start:reduced_motion_start]
+        )
 
     def test_shadow_review_is_a_read_only_auditable_workflow(self):
         self.assertIn('["shadow", "影子复盘"]', self.javascript)
@@ -335,7 +400,9 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("不要重复提交，也不要删除或改写账本行", self.javascript)
         self.assertIn("账户 ${scope.account_reference", self.javascript)
         self.assertIn("不同适配器、账户、环境或配置意外混用", self.javascript)
-        self.assertIn("不会写入沙箱晋级证据、改变策略或解除真实下单门禁", self.javascript)
+        self.assertIn(
+            "不会写入沙箱晋级证据、改变策略或解除真实下单门禁", self.javascript
+        )
         self.assertIn(".broker-order-table", self.css)
         self.assertIn("min-width: 1120px", self.css)
         self.assertIn("repeat(5, minmax(0, 1fr))", self.css)

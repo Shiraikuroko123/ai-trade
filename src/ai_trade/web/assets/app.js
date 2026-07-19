@@ -3110,6 +3110,7 @@ const ASSISTANT_CONCLUSIONS = {
   REVIEW_CANDIDATE: "研究候选",
   REDUCE_RISK: "降低风险",
 };
+const ASSISTANT_AUDIT_METHOD = "deterministic-perspective-audit-v1";
 
 function renderAssistant(data) {
   const status = data.status || {};
@@ -3221,6 +3222,8 @@ function assistantResultMarkup(result) {
       ${panelHeader("研究视角", assistantPerspectiveSummary(result.perspectives))}
       ${assistantPerspectivesMarkup(result.perspectives)}
     </section>
+
+    ${assistantConflictAuditPanel(result.conflict_audit)}
 
     <section class="panel">
       ${panelHeader("价格结构", `${result.lookback || points.length} 个交易日 · ${escapeHtml(modeLabel)}`)}
@@ -3352,6 +3355,128 @@ function assistantPerspectiveKind(value, available) {
   }[String(value || "").toUpperCase()] || "neutral";
 }
 
+function assistantConflictAuditPanel(audit) {
+  const available = assistantAuditAvailable(audit);
+  const headerNote = available
+    ? `${assistantAuditStatusLabel(audit.status)} · 冲突 ${audit.conflicts.length} 项 · 覆盖缺口 ${audit.coverage_gaps.length} 项`
+    : "审计不可用 · 需要重新运行分析";
+  return `<section class="panel assistant-audit-panel" aria-label="视角冲突审计">
+    ${panelHeader("视角冲突审计", headerNote)}
+    ${assistantConflictAuditMarkup(available ? audit : null)}
+  </section>`;
+}
+
+function assistantAuditAvailable(audit) {
+  return Boolean(
+    audit && typeof audit === "object"
+      && audit.method === ASSISTANT_AUDIT_METHOD
+      && audit.authority === "research_only"
+      && audit.execution_authorized === false
+      && ["REVIEW_REQUIRED", "INCOMPLETE", "ALIGNED"].includes(audit.status)
+      && Array.isArray(audit.conflicts)
+      && Array.isArray(audit.coverage_gaps)
+      && audit.model_review && typeof audit.model_review === "object"
+  );
+}
+
+function assistantConflictAuditMarkup(audit) {
+  if (!audit) {
+    return `<div class="empty-state compact-empty assistant-audit-unavailable" role="status"><strong>冲突审计不可用</strong><p>这是旧版分析记录；重新运行一次分析后会生成视角分歧、覆盖缺口和模型权限守卫记录。</p></div>`;
+  }
+  const conflicts = audit.conflicts;
+  const gaps = audit.coverage_gaps;
+  const review = audit.model_review;
+  const guard = assistantModelGuardState(review);
+  const summary = audit.summary || (conflicts.length
+    ? `发现 ${conflicts.length} 项视角分歧，需要人工复核。`
+    : gaps.length
+      ? `已覆盖视角没有实质分歧，仍有 ${gaps.length} 个数据覆盖缺口。`
+      : "已登记视角当前没有实质分歧或覆盖缺口。");
+  return `
+    <div class="assistant-audit-status" role="status" aria-label="冲突审计摘要">
+      <div><span>审计状态</span><strong>${escapeHtml(assistantAuditStatusLabel(audit.status))}</strong></div>
+      <div><span>视角冲突</span><strong>${formatInteger(conflicts.length)} 项</strong></div>
+      <div><span>覆盖缺口</span><strong>${formatInteger(gaps.length)} 项</strong></div>
+      <div><span>权限边界</span><strong>${audit.execution_authorized === false ? "仅研究 · 无执行权限" : "权限状态异常"}</strong></div>
+    </div>
+    <p class="assistant-audit-summary">${escapeHtml(summary)}</p>
+    <div class="assistant-audit-columns">
+      <section class="assistant-audit-section" aria-labelledby="assistant-conflicts-title">
+        <h3 id="assistant-conflicts-title">视角分歧 <span>${formatInteger(conflicts.length)} 项</span></h3>
+        ${conflicts.length ? `<ul class="assistant-audit-list">${conflicts.map((item) => {
+          const perspectiveLabels = Array.isArray(item.perspective_keys)
+            ? item.perspective_keys.map(assistantPerspectiveKeyLabel).join(" · ")
+            : "未登记";
+          const evidenceIds = Array.isArray(item.evidence_ids) && item.evidence_ids.length
+            ? item.evidence_ids.join(" · ")
+            : "无直接证据引用";
+          return `<li class="assistant-audit-row">
+            <div class="assistant-audit-row-head"><strong>${escapeHtml(item.title || "未命名分歧")}</strong>${statusChip("需人工复核", "warning")}</div>
+            <p>${escapeHtml(item.summary || "当前视角给出不一致结论。")}</p>
+            <dl class="assistant-audit-row-meta">
+              <div><dt>涉及视角</dt><dd>${escapeHtml(perspectiveLabels)}</dd></div>
+              <div><dt>证据引用</dt><dd><code>${escapeHtml(evidenceIds)}</code></dd></div>
+            </dl>
+            <p class="assistant-audit-resolution"><strong>处理要求：</strong>${escapeHtml(item.resolution || "保留研究状态并由人工复核。")}</p>
+          </li>`;
+        }).join("")}</ul>` : `<p class="assistant-audit-empty">未发现已覆盖视角之间的实质分歧。</p>`}
+      </section>
+      <section class="assistant-audit-section" aria-labelledby="assistant-gaps-title">
+        <h3 id="assistant-gaps-title">数据覆盖缺口 <span>${formatInteger(gaps.length)} 项</span></h3>
+        ${gaps.length ? `<ul class="assistant-audit-list">${gaps.map((item) => {
+          const evidenceIds = Array.isArray(item.evidence_ids) && item.evidence_ids.length
+            ? item.evidence_ids.join(" · ")
+            : "尚无可引用数据";
+          return `<li class="assistant-audit-row assistant-audit-gap">
+            <div class="assistant-audit-row-head"><strong>${escapeHtml(item.label || assistantPerspectiveKeyLabel(item.perspective_key))}</strong>${statusChip("数据不可用", "warning")}</div>
+            <p>${escapeHtml(item.summary || "该研究视角尚无经过校验的数据。")}</p>
+            <dl class="assistant-audit-row-meta">
+              <div><dt>视角</dt><dd>${escapeHtml(assistantPerspectiveKeyLabel(item.perspective_key))}</dd></div>
+              <div><dt>证据引用</dt><dd><code>${escapeHtml(evidenceIds)}</code></dd></div>
+            </dl>
+            <p class="assistant-audit-resolution"><strong>补齐条件：</strong>${escapeHtml(item.resolution || "接入并校验对应数据源后再评估。")}</p>
+          </li>`;
+        }).join("")}</ul>` : `<p class="assistant-audit-empty">已登记研究视角均有可用数据覆盖。</p>`}
+      </section>
+    </div>
+    <section class="assistant-model-guard" aria-labelledby="assistant-model-guard-title">
+      <div class="assistant-model-guard-head"><h3 id="assistant-model-guard-title">模型权限守卫</h3>${statusChip(guard.label, guard.kind)}</div>
+      <dl class="assistant-model-review">
+        <div><dt>确定性结论</dt><dd>${escapeHtml(assistantConclusionLabel(review.deterministic_conclusion))}</dd></div>
+        <div><dt>模型建议</dt><dd>${review.proposed_conclusion ? escapeHtml(assistantConclusionLabel(review.proposed_conclusion)) : "未产生"}</dd></div>
+        <div><dt>最终研究结论</dt><dd>${escapeHtml(assistantConclusionLabel(review.effective_conclusion))}</dd></div>
+        <div><dt>审计方法</dt><dd><code>${escapeHtml(audit.method || "未登记")}</code></dd></div>
+      </dl>
+      <p>这是确定性权限校验，不是多模型投票。模型不能放宽本地结论，也不能生成订单、改动持仓或取得交易授权。</p>
+    </section>`;
+}
+
+function assistantAuditStatusLabel(value) {
+  return {
+    REVIEW_REQUIRED: "需要人工复核",
+    INCOMPLETE: "覆盖不完整",
+    ALIGNED: "已覆盖视角一致",
+  }[String(value || "").toUpperCase()] || "审计状态未知";
+}
+
+function assistantPerspectiveKeyLabel(value) {
+  return {
+    technical: "技术面",
+    risk: "风险面",
+    fundamental_coverage: "基本面覆盖",
+    sentiment_coverage: "情绪覆盖",
+    strategy_gate: "策略门禁",
+  }[String(value || "")] || String(value || "未知视角");
+}
+
+function assistantModelGuardState(review) {
+  if (!review?.attempted) return { label: "未调用模型 · 本地结论生效", kind: "neutral" };
+  if (!review.applied) return { label: "模型未应用 · 本地结论保留", kind: "warning" };
+  if (review.relaxation_blocked) return { label: "已阻断模型放宽", kind: "warning" };
+  if (review.tightened) return { label: "更严格结论已生效", kind: "info" };
+  return { label: "模型未放宽结论", kind: "success" };
+}
+
 function assistantDecisionPath(items) {
   if (!Array.isArray(items) || !items.length) return `<p class="section-note">暂无决策路径。</p>`;
   return `<ol class="decision-path">${items.map((item) => {
@@ -3415,20 +3540,30 @@ function assistantHistoryMarkup(history, activeId) {
   return `
     <section class="panel">
       ${panelHeader("分析历史", "按当前登录账户隔离保存在本机")}
-      <div class="table-wrap">
+      <div class="table-wrap assistant-history-table">
         <table class="data-table compact">
-          <thead><tr><th>生成时间</th><th>标的</th><th>数据日期</th><th>模式</th><th>结论</th><th>查看</th></tr></thead>
+          <thead><tr><th>生成时间</th><th>标的</th><th>数据日期</th><th>模式</th><th>结论</th><th>冲突审计</th><th>查看</th></tr></thead>
           <tbody>${history.length ? history.map((item) => `<tr${item.analysis_id === activeId ? ` class="active-history-row"` : ""}>
             <td>${formatDate(item.created_at, true)}</td>
             <td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || instrumentName(item.symbol))}</span></td>
             <td class="mono">${escapeHtml(item.data_date || "—")}</td>
             <td>${escapeHtml(item.mode === "model" ? (item.validation?.model_enhanced ? "模型增强" : "模型回退") : "本地规则")}</td>
             <td>${statusChip(assistantConclusionLabel(item.assessment?.conclusion || item.conclusion), assistantConclusionKind(item.assessment?.conclusion || item.conclusion))}</td>
+            <td>${assistantAuditHistoryMarkup(item.conflict_audit)}</td>
             <td><button class="button secondary history-button" type="button" data-assistant-history="${escapeHtml(item.analysis_id)}" aria-label="查看${escapeHtml(item.symbol || "该标的")}的分析记录">查看</button></td>
-          </tr>`).join("") : emptyRow(6, "尚无分析记录")}</tbody>
+          </tr>`).join("") : emptyRow(7, "尚无分析记录")}</tbody>
         </table>
       </div>
     </section>`;
+}
+
+function assistantAuditHistoryMarkup(audit) {
+  if (!assistantAuditAvailable(audit)) {
+    return statusChip("未生成 · 重新分析", "neutral");
+  }
+  const label = `${assistantAuditStatusLabel(audit.status)} · 冲突 ${audit.conflicts.length} / 缺口 ${audit.coverage_gaps.length}`;
+  const kind = audit.conflicts.length ? "warning" : audit.coverage_gaps.length ? "info" : "success";
+  return statusChip(label, kind);
 }
 
 function assistantConclusionLabel(value) {

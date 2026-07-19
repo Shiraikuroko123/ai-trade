@@ -20,6 +20,8 @@ RESEARCH_PERSPECTIVE_KEYS = (
     "strategy_gate",
 )
 
+PERSPECTIVE_AUDIT_METHOD = "deterministic-perspective-audit-v1"
+
 
 def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
     if not bars:
@@ -28,7 +30,9 @@ def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
     closes = [float(bar.close) for bar in bars]
     ema20_values = _ema(closes, 20)
     ema50_values = _ema(closes, 50)
-    returns = [closes[index] / closes[index - 1] - 1.0 for index in range(1, len(closes))]
+    returns = [
+        closes[index] / closes[index - 1] - 1.0 for index in range(1, len(closes))
+    ]
     latest = bars[-1]
 
     return_1d = _period_return(closes, 1)
@@ -36,9 +40,7 @@ def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
     return_20d = _period_return(closes, 20)
     return_60d = _period_return(closes, 60)
     volatility20 = (
-        statistics.stdev(returns[-20:]) * math.sqrt(252)
-        if len(returns) >= 2
-        else None
+        statistics.stdev(returns[-20:]) * math.sqrt(252) if len(returns) >= 2 else None
     )
     atr14 = _atr(bars, 14)
     atr14_pct = atr14 / closes[-1] if atr14 is not None and closes[-1] else None
@@ -56,12 +58,20 @@ def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
             breakout = "DOWN"
 
     trend = _trend(closes[-1], ema20_values[-1], ema50_values[-1], return_20d)
-    regime = "INSUFFICIENT" if len(bars) < 51 else "TREND" if trend != "MIXED" else "RANGE"
+    regime = (
+        "INSUFFICIENT" if len(bars) < 51 else "TREND" if trend != "MIXED" else "RANGE"
+    )
     volatility = _volatility_label(volatility20, atr14_pct)
     score = _score(trend, return_20d, rsi14, volatility, breakout, len(bars))
     risk_level = _risk_level(volatility, return_1d, atr14_pct)
     conclusion = _conclusion(regime, trend, score, risk_level)
-    gate = "STOP" if conclusion in {"NO_ACTION", "REDUCE_RISK"} else "WATCH" if conclusion == "WATCH" else "PROCEED"
+    gate = (
+        "STOP"
+        if conclusion in {"NO_ACTION", "REDUCE_RISK"}
+        else "WATCH"
+        if conclusion == "WATCH"
+        else "PROCEED"
+    )
 
     features = {
         "close": _rounded(closes[-1]),
@@ -257,6 +267,166 @@ def build_research_perspectives(
     ]
 
 
+def build_perspective_conflict_audit(
+    perspectives: Sequence[dict[str, Any]],
+    assessment: dict[str, Any],
+    *,
+    model_review: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare research views without turning them into trading votes."""
+    by_key = {
+        str(item.get("key")): item
+        for item in perspectives
+        if isinstance(item, dict) and item.get("key") in RESEARCH_PERSPECTIVE_KEYS
+    }
+    if set(by_key) != set(RESEARCH_PERSPECTIVE_KEYS):
+        raise ValueError("Research perspective coverage is incomplete")
+
+    conflicts: list[dict[str, Any]] = []
+
+    def evidence_for(*keys: str) -> list[str]:
+        values = {
+            evidence_id
+            for key in keys
+            for evidence_id in by_key[key].get("evidence_ids", [])
+            if isinstance(evidence_id, str)
+        }
+        return sorted(values)
+
+    def append_conflict(
+        conflict_id: str,
+        *,
+        title: str,
+        summary: str,
+        perspective_keys: list[str],
+        resolution: str,
+    ) -> None:
+        conflicts.append(
+            {
+                "conflict_id": conflict_id,
+                "severity": "WARNING",
+                "title": title,
+                "summary": summary,
+                "perspective_keys": perspective_keys,
+                "evidence_ids": evidence_for(*perspective_keys),
+                "resolution": resolution,
+            }
+        )
+
+    technical = str(by_key["technical"].get("stance"))
+    risk = str(by_key["risk"].get("stance"))
+    strategy = str(by_key["strategy_gate"].get("stance"))
+    if (technical, risk) in {
+        ("SUPPORTIVE", "ADVERSE"),
+        ("ADVERSE", "SUPPORTIVE"),
+    }:
+        append_conflict(
+            "direction_risk_divergence",
+            title="方向与风险证据分歧",
+            summary=(
+                "技术方向和近期波动风险给出相反侧重，不能只依据其中一个视角推进复核。"
+            ),
+            perspective_keys=["technical", "risk"],
+            resolution="等待新收盘证据，或由人工同时核对趋势、波动和组合暴露。",
+        )
+    if strategy == "REVIEW" and technical != "SUPPORTIVE":
+        append_conflict(
+            "strategy_technical_divergence",
+            title="策略门禁与技术证据分歧",
+            summary="策略门禁进入候选复核，但技术面没有形成支持性一致证据。",
+            perspective_keys=["technical", "strategy_gate"],
+            resolution="保持研究状态，重新核对门禁来源和技术证据后再由人工判断。",
+        )
+    if strategy == "REVIEW" and risk in {"CAUTION", "ADVERSE"}:
+        append_conflict(
+            "strategy_risk_divergence",
+            title="策略门禁与风险证据分歧",
+            summary="策略门禁进入候选复核，但风险面仍要求谨慎或显示不利。",
+            perspective_keys=["risk", "strategy_gate"],
+            resolution="不得扩大研究风险预算；先核对波动和风险约束。",
+        )
+    if strategy == "ADVERSE" and technical == "SUPPORTIVE":
+        append_conflict(
+            "risk_override",
+            title="风险结论覆盖支持性技术信号",
+            summary="技术面偏支持，但确定性风险结论更严格，当前不能据此扩大复核权限。",
+            perspective_keys=["technical", "risk", "strategy_gate"],
+            resolution="保留更严格的风险结论，并由人工复核现有暴露。",
+        )
+    if model_review.get("relaxation_blocked") is True:
+        append_conflict(
+            "model_authority_guard",
+            title="模型放宽结论已被阻断",
+            summary="模型建议的研究结论比确定性本地结论更宽松，权限守卫已保留本地结论。",
+            perspective_keys=["strategy_gate"],
+            resolution="模型输出只作文字复核，不得提升候选级别或研究风险预算。",
+        )
+
+    coverage_gaps = [
+        {
+            "perspective_key": key,
+            "label": str(by_key[key].get("label") or key),
+            "summary": str(by_key[key].get("summary") or "该视角数据不可用。"),
+            "evidence_ids": [
+                value
+                for value in by_key[key].get("evidence_ids", [])
+                if isinstance(value, str)
+            ],
+            "resolution": str(
+                by_key[key].get("limitation") or "接入并校验对应数据源后再评估。"
+            ),
+        }
+        for key in RESEARCH_PERSPECTIVE_KEYS
+        if by_key[key].get("status") == "UNAVAILABLE"
+    ]
+    conflict_count = len(conflicts)
+    gap_count = len(coverage_gaps)
+    status = (
+        "REVIEW_REQUIRED"
+        if conflict_count
+        else "INCOMPLETE"
+        if gap_count
+        else "ALIGNED"
+    )
+    if conflict_count:
+        summary = (
+            f"发现 {conflict_count} 项需要人工复核的视角分歧；"
+            f"另有 {gap_count} 个数据覆盖缺口。"
+        )
+    elif gap_count:
+        summary = (
+            f"已覆盖视角未发现实质分歧；仍有 {gap_count} 个数据覆盖缺口，"
+            "不能视为完整共识。"
+        )
+    else:
+        summary = "全部已登记视角均有数据，当前未发现实质分歧。"
+
+    normalized_review = {
+        "mode": str(model_review.get("mode") or "local"),
+        "attempted": model_review.get("attempted") is True,
+        "applied": model_review.get("applied") is True,
+        "deterministic_conclusion": model_review.get("deterministic_conclusion"),
+        "proposed_conclusion": model_review.get("proposed_conclusion"),
+        "effective_conclusion": model_review.get(
+            "effective_conclusion", assessment.get("conclusion")
+        ),
+        "relaxation_blocked": model_review.get("relaxation_blocked") is True,
+        "tightened": model_review.get("tightened") is True,
+    }
+    return {
+        "method": PERSPECTIVE_AUDIT_METHOD,
+        "status": status,
+        "summary": summary,
+        "conflict_count": conflict_count,
+        "coverage_gap_count": gap_count,
+        "conflicts": conflicts,
+        "coverage_gaps": coverage_gaps,
+        "model_review": normalized_review,
+        "authority": "research_only",
+        "execution_authorized": False,
+    }
+
+
 def _validate_bars(bars: Sequence[Any]) -> None:
     previous_date = None
     for index, bar in enumerate(bars):
@@ -397,19 +567,112 @@ def _evidence(
     gate: str,
 ) -> list[dict[str, Any]]:
     rows = [
-        ("price.close", "最新收盘", features["close"], "用于确认分析截止价格", "neutral"),
-        ("trend.ema20", "EMA20", features["ema20"], "短周期趋势参考", "positive" if trend == "UP" else "negative" if trend == "DOWN" else "neutral"),
-        ("trend.ema50", "EMA50", features["ema50"], f"趋势状态为 {_label(trend)}，市场结构为 {_label(regime)}", "positive" if trend == "UP" else "negative" if trend == "DOWN" else "neutral"),
-        ("momentum.return20", "20 日收益", features["return_20d"], "仅描述历史动量，不代表未来收益", "positive" if (features["return_20d"] or 0) > 0 else "negative" if (features["return_20d"] or 0) < 0 else "neutral"),
-        ("momentum.rsi14", "RSI14", features["rsi14"], "识别短期过热或过弱状态", "warning" if features["rsi14"] is not None and (features["rsi14"] >= 78 or features["rsi14"] <= 25) else "neutral"),
-        ("risk.volatility20", "20 日年化波动", features["annualized_volatility_20d"], f"波动分级为 {_label(volatility)}", "warning" if volatility == "HIGH" else "neutral"),
-        ("risk.atr14_pct", "ATR14 / 收盘", features["atr14_pct"], "衡量近期单日价格波动尺度", "warning" if (features["atr14_pct"] or 0) >= 0.055 else "neutral"),
-        ("structure.support20", "20 日支撑参考", features["support20"], "近期窗口低点，不是保证有效的止损位", "neutral"),
-        ("structure.resistance20", "20 日阻力参考", features["resistance20"], "近期窗口高点，不是保证有效的目标价", "neutral"),
-        ("structure.last_candle", "最新 K 线结构", features["last_candle"], f"20 日突破状态为 {_label(features['breakout20'])}", "neutral"),
-        ("coverage.fundamentals", "基本面数据覆盖", "UNAVAILABLE", "当前快照没有财务报表、估值和公司行动数据", "warning"),
-        ("coverage.sentiment", "情绪数据覆盖", "UNAVAILABLE", "当前快照没有新闻、公告、资金流和情绪数据", "warning"),
-        ("strategy.gate", "策略研究门禁", gate, "只表示研究复核范围，不是交易授权", "warning" if gate != "PROCEED" else "neutral"),
+        (
+            "price.close",
+            "最新收盘",
+            features["close"],
+            "用于确认分析截止价格",
+            "neutral",
+        ),
+        (
+            "trend.ema20",
+            "EMA20",
+            features["ema20"],
+            "短周期趋势参考",
+            "positive"
+            if trend == "UP"
+            else "negative"
+            if trend == "DOWN"
+            else "neutral",
+        ),
+        (
+            "trend.ema50",
+            "EMA50",
+            features["ema50"],
+            f"趋势状态为 {_label(trend)}，市场结构为 {_label(regime)}",
+            "positive"
+            if trend == "UP"
+            else "negative"
+            if trend == "DOWN"
+            else "neutral",
+        ),
+        (
+            "momentum.return20",
+            "20 日收益",
+            features["return_20d"],
+            "仅描述历史动量，不代表未来收益",
+            "positive"
+            if (features["return_20d"] or 0) > 0
+            else "negative"
+            if (features["return_20d"] or 0) < 0
+            else "neutral",
+        ),
+        (
+            "momentum.rsi14",
+            "RSI14",
+            features["rsi14"],
+            "识别短期过热或过弱状态",
+            "warning"
+            if features["rsi14"] is not None
+            and (features["rsi14"] >= 78 or features["rsi14"] <= 25)
+            else "neutral",
+        ),
+        (
+            "risk.volatility20",
+            "20 日年化波动",
+            features["annualized_volatility_20d"],
+            f"波动分级为 {_label(volatility)}",
+            "warning" if volatility == "HIGH" else "neutral",
+        ),
+        (
+            "risk.atr14_pct",
+            "ATR14 / 收盘",
+            features["atr14_pct"],
+            "衡量近期单日价格波动尺度",
+            "warning" if (features["atr14_pct"] or 0) >= 0.055 else "neutral",
+        ),
+        (
+            "structure.support20",
+            "20 日支撑参考",
+            features["support20"],
+            "近期窗口低点，不是保证有效的止损位",
+            "neutral",
+        ),
+        (
+            "structure.resistance20",
+            "20 日阻力参考",
+            features["resistance20"],
+            "近期窗口高点，不是保证有效的目标价",
+            "neutral",
+        ),
+        (
+            "structure.last_candle",
+            "最新 K 线结构",
+            features["last_candle"],
+            f"20 日突破状态为 {_label(features['breakout20'])}",
+            "neutral",
+        ),
+        (
+            "coverage.fundamentals",
+            "基本面数据覆盖",
+            "UNAVAILABLE",
+            "当前快照没有财务报表、估值和公司行动数据",
+            "warning",
+        ),
+        (
+            "coverage.sentiment",
+            "情绪数据覆盖",
+            "UNAVAILABLE",
+            "当前快照没有新闻、公告、资金流和情绪数据",
+            "warning",
+        ),
+        (
+            "strategy.gate",
+            "策略研究门禁",
+            gate,
+            "只表示研究复核范围，不是交易授权",
+            "warning" if gate != "PROCEED" else "neutral",
+        ),
     ]
     return [
         {
@@ -446,7 +709,12 @@ def _assessment_refs(conclusion: str, all_refs: list[str]) -> list[str]:
     selected = {
         "NO_ACTION": ["trend.ema20", "trend.ema50", "momentum.return20"],
         "WATCH": ["trend.ema20", "trend.ema50", "momentum.rsi14", "risk.volatility20"],
-        "REVIEW_CANDIDATE": ["trend.ema20", "trend.ema50", "momentum.return20", "risk.atr14_pct"],
+        "REVIEW_CANDIDATE": [
+            "trend.ema20",
+            "trend.ema50",
+            "momentum.return20",
+            "risk.atr14_pct",
+        ],
         "REDUCE_RISK": ["risk.volatility20", "risk.atr14_pct", "momentum.return20"],
     }[conclusion]
     return [value for value in selected if value in all_refs]
@@ -502,20 +770,30 @@ def _decision_path(
         {
             "step": "trend_gate",
             "label": "趋势指标是否一致",
-            "outcome": "PASS" if trend == "UP" else "REVIEW" if trend == "MIXED" else "STOP",
+            "outcome": "PASS"
+            if trend == "UP"
+            else "REVIEW"
+            if trend == "MIXED"
+            else "STOP",
             "evidence_ids": ["trend.ema20", "trend.ema50", "momentum.return20"],
         },
         {
             "step": "assessment",
             "label": "形成研究权限内结论",
             "outcome": conclusion,
-            "evidence_ids": ["momentum.rsi14", "structure.support20", "structure.resistance20"],
+            "evidence_ids": [
+                "momentum.rsi14",
+                "structure.support20",
+                "structure.resistance20",
+            ],
         },
     ]
 
 
 def _rounded(value: float | None) -> float | None:
-    return round(float(value), 8) if value is not None and math.isfinite(value) else None
+    return (
+        round(float(value), 8) if value is not None and math.isfinite(value) else None
+    )
 
 
 def _label(value: str) -> str:

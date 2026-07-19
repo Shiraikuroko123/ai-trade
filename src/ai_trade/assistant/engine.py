@@ -9,8 +9,10 @@ from uuid import uuid4
 
 from .features import (
     ALLOWED_CONCLUSIONS,
+    PERSPECTIVE_AUDIT_METHOD,
     RESEARCH_PERSPECTIVE_KEYS,
     build_local_analysis,
+    build_perspective_conflict_audit,
     build_research_perspectives,
 )
 from .provider import (
@@ -45,7 +47,9 @@ class AssistantEngine:
         self.config = config
         self._settings, self._configuration_error = ProviderSettings.from_environment()
         self._provider = (
-            OpenAICompatibleProvider(self._settings) if self._settings is not None else None
+            OpenAICompatibleProvider(self._settings)
+            if self._settings is not None
+            else None
         )
         self._store = AssistantRecordStore(config.project_root)
 
@@ -62,6 +66,12 @@ class AssistantEngine:
             "configuration_error": self._configuration_error,
             "authority": "research_only",
             "research_views": list(RESEARCH_PERSPECTIVE_KEYS),
+            "conflict_audit": {
+                "available": True,
+                "method": PERSPECTIVE_AUDIT_METHOD,
+                "multi_model_voting": False,
+                "execution_authorized": False,
+            },
         }
 
     def analyze(
@@ -86,12 +96,27 @@ class AssistantEngine:
             )
         instrument = market.instrument(selected_symbol)
         local = build_local_analysis(bars)
+        deterministic_conclusion = str(local["assessment"]["conclusion"])
+        model_review: dict[str, Any] = {
+            "mode": selected_mode,
+            "attempted": selected_mode == "model",
+            "applied": False,
+            "deterministic_conclusion": deterministic_conclusion,
+            "proposed_conclusion": None,
+            "effective_conclusion": deterministic_conclusion,
+            "relaxation_blocked": False,
+            "tightened": False,
+        }
         snapshot = _snapshot(self.config, market, selected_symbol, bars)
         previous = _previous_for_symbol(
             self._store.history(user_id, limit=20), selected_symbol
         )
         created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        model = self._settings.model if selected_mode == "model" and self._settings else LOCAL_MODEL
+        model = (
+            self._settings.model
+            if selected_mode == "model" and self._settings
+            else LOCAL_MODEL
+        )
         warnings: list[str] = []
         model_enhanced = False
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -104,13 +129,19 @@ class AssistantEngine:
                     diagnosis=local["diagnosis"],
                     assessment=local["assessment"],
                 )
-                _apply_enhancement(local, enhancement)
+                model_review.update(_apply_enhancement(local, enhancement))
                 model_enhanced = True
             except AssistantProviderError as exc:
                 warnings.append(
                     "Model enhancement was unavailable; deterministic local analysis was used "
                     f"({exc.code})."
                 )
+
+        local["conflict_audit"] = build_perspective_conflict_audit(
+            local["perspectives"],
+            local["assessment"],
+            model_review=model_review,
+        )
 
         result: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
@@ -129,6 +160,7 @@ class AssistantEngine:
             "diagnosis": local["diagnosis"],
             "assessment": local["assessment"],
             "perspectives": local["perspectives"],
+            "conflict_audit": local["conflict_audit"],
             "decision_path": local["decision_path"],
             "chart": local["chart"],
             "comparison": _comparison(previous, local, bars[-1].date.isoformat()),
@@ -154,8 +186,14 @@ def _validate_symbol(market: Any, symbol: str) -> str:
     if not isinstance(symbol, str):
         raise TypeError("symbol must be a string")
     selected = symbol.strip()
-    if not selected or len(selected) > 64 or any(ord(character) < 32 for character in selected):
-        raise ValueError("symbol must be a non-empty identifier of at most 64 characters")
+    if (
+        not selected
+        or len(selected) > 64
+        or any(ord(character) < 32 for character in selected)
+    ):
+        raise ValueError(
+            "symbol must be a non-empty identifier of at most 64 characters"
+        )
     symbols = getattr(market, "symbols", {})
     if selected not in symbols:
         raise ValueError(f"Unknown market symbol: {selected}")
@@ -193,14 +231,12 @@ def _snapshot(config: Any, market: Any, symbol: str, bars: list[Any]) -> dict[st
         "provider": raw_data.get("provider"),
         "adjustment": raw_data.get("adjustment", "none"),
         "bars": canonical_bars,
-        "source_sha256": _safe_sha256(
-            getattr(market, "file_hashes", {}).get(symbol)
-        ),
+        "source_sha256": _safe_sha256(getattr(market, "file_hashes", {}).get(symbol)),
     }
     digest = hashlib.sha256(
-        json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
-            "ascii"
-        )
+        json.dumps(
+            payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
     ).hexdigest()
     return {
         "snapshot_id": digest[:24],
@@ -220,7 +256,9 @@ def _snapshot(config: Any, market: Any, symbol: str, bars: list[Any]) -> dict[st
     }
 
 
-def _apply_enhancement(local: dict[str, Any], enhancement: dict[str, Any]) -> None:
+def _apply_enhancement(
+    local: dict[str, Any], enhancement: dict[str, Any]
+) -> dict[str, Any]:
     model_diagnosis = enhancement["diagnosis"]
     model_assessment = enhancement["assessment"]
     local_assessment = local["assessment"]
@@ -274,6 +312,15 @@ def _apply_enhancement(local: dict[str, Any], enhancement: dict[str, Any]) -> No
     local["perspectives"] = build_research_perspectives(
         local["features"], local["diagnosis"], local["assessment"]
     )
+    return {
+        "applied": True,
+        "proposed_conclusion": str(model_assessment["conclusion"]),
+        "effective_conclusion": proposed,
+        "relaxation_blocked": model_was_relaxed,
+        "tightened": (
+            _CONCLUSION_AUTHORITY[proposed] < _CONCLUSION_AUTHORITY[local_conclusion]
+        ),
+    }
 
 
 def _stricter_risk(local: str, model: str) -> str:
@@ -301,7 +348,9 @@ def _comparison(
             "conclusion_changed": False,
             "feature_changes": {},
         }
-    old_features = previous.get("features") if isinstance(previous.get("features"), dict) else {}
+    old_features = (
+        previous.get("features") if isinstance(previous.get("features"), dict) else {}
+    )
     new_features = local["features"]
     changes = {}
     for name in ("close", "return_20d", "annualized_volatility_20d", "rsi14"):
@@ -313,7 +362,9 @@ def _comparison(
             "change": _difference(after, before),
         }
     old_assessment = (
-        previous.get("assessment") if isinstance(previous.get("assessment"), dict) else {}
+        previous.get("assessment")
+        if isinstance(previous.get("assessment"), dict)
+        else {}
     )
     current_conclusion = local["assessment"]["conclusion"]
     previous_conclusion = old_assessment.get("conclusion")
@@ -333,11 +384,15 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
     errors = []
     if result.get("schema_version") != SCHEMA_VERSION:
         errors.append("schema_version is invalid")
-    if result.get("authority") != "research_only" or result.get("order_intent") is not None:
+    if (
+        result.get("authority") != "research_only"
+        or result.get("order_intent") is not None
+    ):
         errors.append("assistant authority boundary is invalid")
     diagnosis = result.get("diagnosis")
     assessment = result.get("assessment")
     perspectives = result.get("perspectives")
+    conflict_audit = result.get("conflict_audit")
     path = result.get("decision_path")
     if not isinstance(diagnosis, dict) or diagnosis.get("stage") != "market_diagnosis":
         errors.append("diagnosis stage is invalid")
@@ -346,7 +401,9 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
     if not isinstance(evidence, list) or not evidence:
         errors.append("diagnosis evidence is missing")
         return errors
-    evidence_ids = [item.get("evidence_id") for item in evidence if isinstance(item, dict)]
+    evidence_ids = [
+        item.get("evidence_id") for item in evidence if isinstance(item, dict)
+    ]
     allowed = set(evidence_ids)
     if len(allowed) != len(evidence_ids) or None in allowed:
         errors.append("evidence identifiers are missing or duplicated")
@@ -358,7 +415,11 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
     if assessment.get("risk_level") not in {"LOW", "MEDIUM", "HIGH"}:
         errors.append("assessment risk level is invalid")
     risk_budget = assessment.get("risk_budget_pct")
-    if isinstance(risk_budget, bool) or not isinstance(risk_budget, int) or not 0 <= risk_budget <= 100:
+    if (
+        isinstance(risk_budget, bool)
+        or not isinstance(risk_budget, int)
+        or not 0 <= risk_budget <= 100
+    ):
         errors.append("assessment risk budget is invalid")
     _check_references(assessment.get("evidence_ids"), allowed, "assessment", errors)
     if not isinstance(perspectives, list):
@@ -386,7 +447,10 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
                 errors.append(f"research perspective {index} has an invalid stance")
             if not isinstance(item.get("summary"), str) or not item["summary"].strip():
                 errors.append(f"research perspective {index} summary is missing")
-            if not isinstance(item.get("limitation"), str) or not item["limitation"].strip():
+            if (
+                not isinstance(item.get("limitation"), str)
+                or not item["limitation"].strip()
+            ):
                 errors.append(f"research perspective {index} limitation is missing")
             _check_references(
                 item.get("evidence_ids"),
@@ -398,6 +462,13 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
             errors.append("research perspective keys are duplicated")
         if set(perspective_keys) != set(RESEARCH_PERSPECTIVE_KEYS):
             errors.append("research perspective coverage is incomplete")
+    _validate_conflict_audit(
+        conflict_audit,
+        perspectives,
+        assessment,
+        result.get("mode"),
+        errors,
+    )
     if not isinstance(path, list) or not path:
         errors.append("decision path is missing")
     else:
@@ -405,11 +476,98 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
             if not isinstance(step, dict):
                 errors.append(f"decision path step {index} is invalid")
                 continue
-            _check_references(step.get("evidence_ids"), allowed, f"decision path {index}", errors)
+            _check_references(
+                step.get("evidence_ids"), allowed, f"decision path {index}", errors
+            )
     chart = result.get("chart")
     if not isinstance(chart, dict) or not isinstance(chart.get("points"), list):
         errors.append("chart points are invalid")
     return errors
+
+
+def _validate_conflict_audit(
+    audit: Any,
+    perspectives: Any,
+    assessment: Any,
+    mode: Any,
+    errors: list[str],
+) -> None:
+    if not isinstance(audit, dict):
+        errors.append("perspective conflict audit is missing")
+        return
+    review = audit.get("model_review")
+    if not isinstance(review, dict):
+        errors.append("perspective conflict model review is missing")
+        return
+    if review.get("mode") != mode or review.get("attempted") is not (mode == "model"):
+        errors.append("perspective conflict model mode is invalid")
+    if not isinstance(assessment, dict) or (
+        review.get("effective_conclusion") != assessment.get("conclusion")
+    ):
+        errors.append("perspective conflict effective conclusion is invalid")
+    for field in ("deterministic_conclusion", "effective_conclusion"):
+        if review.get(field) not in ALLOWED_CONCLUSIONS:
+            errors.append(f"perspective conflict {field} is invalid")
+    proposed = review.get("proposed_conclusion")
+    if proposed is not None and proposed not in ALLOWED_CONCLUSIONS:
+        errors.append("perspective conflict proposed conclusion is invalid")
+    for field in ("attempted", "applied", "relaxation_blocked", "tightened"):
+        if not isinstance(review.get(field), bool):
+            errors.append(f"perspective conflict {field} is invalid")
+    review_flags_valid = all(
+        isinstance(review.get(field), bool)
+        for field in ("attempted", "applied", "relaxation_blocked", "tightened")
+    )
+    conclusions_valid = (
+        review.get("deterministic_conclusion") in ALLOWED_CONCLUSIONS
+        and review.get("effective_conclusion") in ALLOWED_CONCLUSIONS
+        and (proposed is None or proposed in ALLOWED_CONCLUSIONS)
+    )
+    if review_flags_valid and conclusions_valid:
+        attempted = review["attempted"]
+        applied = review["applied"]
+        deterministic = review["deterministic_conclusion"]
+        effective = review["effective_conclusion"]
+        if not attempted:
+            if applied or proposed is not None or effective != deterministic:
+                errors.append("perspective conflict local model review is invalid")
+            if review["relaxation_blocked"] or review["tightened"]:
+                errors.append("perspective conflict local flags are invalid")
+        elif not applied:
+            if proposed is not None or effective != deterministic:
+                errors.append("perspective conflict unapplied model review is invalid")
+            if review["relaxation_blocked"] or review["tightened"]:
+                errors.append("perspective conflict unapplied flags are invalid")
+        else:
+            if proposed is None:
+                errors.append("perspective conflict applied model review is invalid")
+            else:
+                deterministic_rank = _CONCLUSION_AUTHORITY[deterministic]
+                proposed_rank = _CONCLUSION_AUTHORITY[proposed]
+                expected_relaxation = proposed_rank > deterministic_rank
+                expected_tightening = proposed_rank < deterministic_rank
+                expected_effective = deterministic if expected_relaxation else proposed
+                if review["relaxation_blocked"] != expected_relaxation:
+                    errors.append("perspective conflict relaxation flag is invalid")
+                if review["tightened"] != expected_tightening:
+                    errors.append("perspective conflict tightened flag is invalid")
+                if effective != expected_effective:
+                    errors.append(
+                        "perspective conflict effective model result is invalid"
+                    )
+    if not isinstance(perspectives, list) or not isinstance(assessment, dict):
+        return
+    try:
+        expected = build_perspective_conflict_audit(
+            perspectives,
+            assessment,
+            model_review=review,
+        )
+    except (TypeError, ValueError):
+        errors.append("perspective conflict audit could not be reconstructed")
+        return
+    if audit != expected:
+        errors.append("perspective conflict audit does not match its evidence")
 
 
 def _check_references(
@@ -444,6 +602,8 @@ def _iso_value(value: Any) -> str | None:
 
 def _safe_sha256(value: Any) -> str:
     candidate = str(value or "").lower()
-    if len(candidate) == 64 and all(character in "0123456789abcdef" for character in candidate):
+    if len(candidate) == 64 and all(
+        character in "0123456789abcdef" for character in candidate
+    ):
         return candidate
     return ""
