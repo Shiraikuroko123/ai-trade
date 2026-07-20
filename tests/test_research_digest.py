@@ -91,6 +91,10 @@ class ResearchDigestStoreTests(unittest.TestCase):
             self.assertEqual(result["writes"][0]["digest"]["kind"], "weekly")
             self.assertEqual(result["status"], "provisional")
             self.assertEqual(result["writes"][0]["digest"]["status"], "provisional")
+            self.assertIn(
+                "calendar is unavailable",
+                result["writes"][0]["digest"]["payload"]["status_detail"],
+            )
 
     def test_batch_preflight_rejects_invalid_week_before_writing_valid_day(self):
         with tempfile.TemporaryDirectory() as temporary:

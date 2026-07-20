@@ -2,7 +2,7 @@
 
 ## Release Baseline
 
-`v0.12.1` is the current public release. It provides completed-session market review, research and strategy validation, paper accounting, optional private R2 backup, broker-readiness controls, and an auditable multi-instrument screen with source and data-quality disclosure. It does not provide intraday market data, a working live-broker adapter, or automatic real-money execution.
+`v0.13.0` is the current public release. It provides completed-session market review, research and strategy validation, paper accounting, optional private R2 backup, broker-readiness controls, an auditable multi-instrument screen with source and data-quality disclosure, and a bounded Yahoo OHLCV reference audit. It does not provide intraday market data, a working live-broker adapter, or automatic real-money execution.
 
 ## Register
 

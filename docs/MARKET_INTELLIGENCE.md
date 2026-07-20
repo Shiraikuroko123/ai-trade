@@ -1,7 +1,7 @@
 # Market Intelligence Evidence
 
-The market-intelligence layer on `main` is an **Unreleased**, read-only research
-surface. It currently contains three independent Eastmoney evidence datasets:
+The market-intelligence layer in `v0.13.0` is a read-only research surface. It
+currently contains three independent Eastmoney evidence datasets:
 the daily Dragon-Tiger List, closing market breadth with provider-defined board
 rankings, and provider-reported board capital flow. It does not provide intraday
 quotes, exchange-certified records, news sentiment, a strategy signal, or any

@@ -1,6 +1,6 @@
 # AI K-line Assistant
 
-AI Trade `v0.12.1` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
+AI Trade `v0.13.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
 
 ## Contract
 
@@ -31,7 +31,7 @@ Every new analysis also returns five deterministic, evidence-bound views under
 | `sentiment_coverage` | `UNAVAILABLE` until traceable news, flow, or sentiment data is configured | Explicit coverage evidence; model prose cannot fill the gap |
 | `strategy_gate` | Available | Deterministic conclusion, research gate, and assessment evidence |
 
-The Unreleased Dragon-Tiger List market-intelligence dataset is a single-source
+The current-release Dragon-Tiger List market-intelligence dataset is a single-source
 closing event ledger. It is not a validated sentiment methodology and therefore
 does not change `sentiment_coverage` from `UNAVAILABLE`.
 

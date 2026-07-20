@@ -33,6 +33,16 @@ class ProviderDescriptor:
     intraday_bars: bool = False
     quotes: bool = False
     status: str = "implemented"
+    snapshot_eligible: bool = True
+    cross_check_fields: tuple[str, ...] = (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+    )
+    supported_adjustments: tuple[str, ...] = ("none", "forward", "backward")
 
 
 class MarketDataProvider(Protocol):
@@ -153,9 +163,61 @@ class _TencentProvider:
         return False
 
 
+class _YahooProvider:
+    descriptor = ProviderDescriptor(
+        key="yahoo",
+        display_name="Yahoo Finance",
+        implementation="yahoo.chart.daily_reference",
+        daily_bars=True,
+        intraday_bars=False,
+        quotes=False,
+        status="implemented_reference_only",
+        snapshot_eligible=False,
+        cross_check_fields=("open", "high", "low", "close", "volume"),
+        supported_adjustments=("none", "forward"),
+    )
+    # These labels satisfy the common protocol, but configuration validation
+    # prevents a reference-only provider from entering the snapshot chain.
+    primary_source_label = "network"
+    fallback_source_label = "yahoo_network_fallback"
+
+    def download(
+        self,
+        config: AppConfig,
+        instrument: Instrument,
+        output_path: Path,
+        *,
+        cache_path: Path | None,
+        cutoff: date,
+        proxy_mode: str,
+        network_errors: list[str],
+        provider_metadata: dict[str, object],
+    ) -> Path:
+        from .yahoo import download_instrument
+
+        try:
+            return download_instrument(
+                config,
+                instrument,
+                output_path,
+                cutoff=cutoff,
+                proxy_mode=proxy_mode,
+                provider_metadata=provider_metadata,
+            )
+        except Exception as exc:
+            network_errors.append(f"{type(exc).__name__}: {exc}")
+            raise
+
+    def is_transport_failure(self, error: Exception) -> bool:
+        from .yahoo import is_transport_failure
+
+        return is_transport_failure(error)
+
+
 _PROVIDERS: dict[str, MarketDataProvider] = {
     "eastmoney": _EastmoneyProvider(),
     "tencent": _TencentProvider(),
+    "yahoo": _YahooProvider(),
 }
 
 
@@ -180,6 +242,14 @@ def registered_provider_names() -> tuple[str, ...]:
     return tuple(sorted(_PROVIDERS))
 
 
+def snapshot_provider_names() -> tuple[str, ...]:
+    """Return providers allowed to supply strategy-visible snapshot files."""
+
+    return tuple(
+        key for key in sorted(_PROVIDERS) if _PROVIDERS[key].descriptor.snapshot_eligible
+    )
+
+
 def provider_catalog() -> list[dict[str, Any]]:
     """Return non-secret capability metadata suitable for a status response."""
 
@@ -192,6 +262,9 @@ def provider_catalog() -> list[dict[str, Any]]:
             "intraday_bars": descriptor.intraday_bars,
             "quotes": descriptor.quotes,
             "status": descriptor.status,
+            "snapshot_eligible": descriptor.snapshot_eligible,
+            "cross_check_fields": list(descriptor.cross_check_fields),
+            "supported_adjustments": list(descriptor.supported_adjustments),
         }
         for descriptor in (
             _PROVIDERS[key].descriptor for key in sorted(_PROVIDERS)
@@ -206,4 +279,5 @@ __all__ = [
     "provider_catalog",
     "provider_for",
     "registered_provider_names",
+    "snapshot_provider_names",
 ]

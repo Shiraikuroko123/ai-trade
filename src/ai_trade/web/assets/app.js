@@ -1519,6 +1519,8 @@ async function generateResearchDigests(button) {
 
 function marketProviderLabel(value) {
   return {
+    yahoo: "Yahoo Finance",
+    yahoo_chart: "Yahoo Finance Chart",
     eastmoney: "东方财富",
     tencent: "腾讯行情",
     tencent_network_fallback: "腾讯网络回退",
@@ -5539,6 +5541,7 @@ function crossSourceStatusKind(value) {
 
 function crossSourceReason(value) {
   return {
+    reference_provider_has_no_comparable_fields: "参考源没有可比较字段",
     cross_check_disabled: "配置已关闭独立核对",
     cross_check_not_run: "当前快照尚无独立核对记录",
     manifest_unavailable: "行情清单不可用",
@@ -5566,6 +5569,14 @@ function crossSourceAuditMarkup(check, compact = false) {
   const symbols = Array.isArray(value.symbols) ? value.symbols : [];
   const rows = symbols.map((item) => {
     const deviations = item.max_deviation || {};
+    const comparisonFields = new Set(
+      Array.isArray(item.comparison_fields)
+        ? item.comparison_fields.map((field) => String(field))
+        : ["open", "high", "low", "close", "volume", "amount"],
+    );
+    const amountDeviation = comparisonFields.has("amount")
+      ? formatPercent(deviations.amount)
+      : "未核对";
     const priceDeviation = Math.max(
       ...["open", "high", "low", "close"].map((field) => finite(deviations[field]) || 0),
     );
@@ -5575,7 +5586,7 @@ function crossSourceAuditMarkup(check, compact = false) {
       <td class="numeric">${formatInteger(item.overlap_sessions)} / ${formatInteger(item.requested_sessions)}</td>
       <td class="numeric">${formatPercent(priceDeviation)}</td>
       <td class="numeric">${formatPercent(deviations.volume)}</td>
-      <td class="numeric">${formatPercent(deviations.amount)}</td>
+      <td class="numeric">${amountDeviation}</td>
       <td><span class="mono">${escapeHtml(item.reference_latest || "—")}</span><span class="table-subtext">${escapeHtml(`${marketProviderLabel(item.actual_provider || "未知")} → ${marketProviderLabel(item.reference_provider || "未知")}`)}</span></td>
     </tr>`;
   }).join("");
@@ -5598,6 +5609,8 @@ function crossSourceAuditMarkup(check, compact = false) {
 
 function screenSourceLabel(value) {
   return {
+    yahoo: "Yahoo Finance",
+    yahoo_chart: "Yahoo Finance Chart",
     eastmoney: "东方财富",
     eastmoney_network: "东方财富网络",
     tencent: "腾讯行情",

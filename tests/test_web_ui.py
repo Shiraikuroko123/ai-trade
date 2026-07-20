@@ -44,6 +44,16 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn('aria-describedby="${escapeHtml(id)}-summary"', self.javascript)
         self.assertIn('class="chart-caption"', self.javascript)
 
+    def test_cross_source_provider_fields_are_disclosed(self):
+        self.assertIn('yahoo_chart: "Yahoo Finance Chart"', self.javascript)
+        self.assertIn("comparisonFields = new Set", self.javascript)
+        self.assertIn('amountDeviation = comparisonFields.has("amount")', self.javascript)
+        self.assertIn("未核对", self.javascript)
+        self.assertIn(
+            'reference_provider_has_no_comparable_fields: "参考源没有可比较字段"',
+            self.javascript,
+        )
+
     def test_tabs_expose_relationships_and_roving_focus(self):
         for control_id in (
             "strategy-manual-form",
@@ -63,8 +73,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.12.1-ui28-cross-source-audit", self.html)
-        self.assertIn("app.js?v=0.12.1-ui28-cross-source-audit", self.html)
+        self.assertIn("app.css?v=0.13.0-yahoo-reference-audit", self.html)
+        self.assertIn("app.js?v=0.13.0-yahoo-reference-audit", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)

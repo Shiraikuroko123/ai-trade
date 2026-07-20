@@ -12,7 +12,7 @@ Run the current eligibility audit with:
 
 `config/security_master.json` stores instrument identity, listing and delisting dates, asset class, risk group, lot and tick size, base price limit, dated universe memberships, and optional dated trading-status periods. `selection_method` and `provenance` are exposed in diagnostics so a curated list cannot silently present itself as unbiased index history.
 
-The `v0.12.1` market workstation builds its security selector from this configured master and the requested point-in-time eligibility state. It does not contain an eight-symbol frontend list. Adding a valid instrument to the master and universe can make it selectable after the corresponding cache is published, but that mechanical availability does not satisfy the professional-data gates below.
+The `v0.13.0` market workstation builds its security selector from this configured master and the requested point-in-time eligibility state. It does not contain an eight-symbol frontend list. Adding a valid instrument to the master and universe can make it selectable after the corresponding cache is published, but that mechanical availability does not satisfy the professional-data gates below.
 
 ## Rules Implemented
 

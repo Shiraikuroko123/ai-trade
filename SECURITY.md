@@ -2,7 +2,7 @@
 
 ## Supported Version
 
-Only `v0.12.1`, the latest release on `main`, is supported. Earlier prerelease tags and GitHub Release objects are not supported distribution channels.
+Only `v0.13.0`, the latest release on `main`, is supported. Earlier prerelease tags and GitHub Release objects are not supported distribution channels.
 
 ## Reporting a Vulnerability
 
@@ -16,7 +16,7 @@ The source Docker deployment has one narrow exception for container networking. 
 
 The separately installed `adapters/qmt` package is an optional read-only observation plugin, not a live-broker adapter. It rejects live construction, order submission, and cancellation. Because xtquant does not provide a reliable paper/live discriminator, its account/position comparison is always diagnostic and cannot write qualifying sandbox reconciliation evidence. Use only the xtquant package supplied by the selected broker, keep account identifiers in the Git-ignored `local/` directory, and never expose a QMT bridge outside the local machine.
 
-Neither a successful Eastmoney/Tencent refresh nor a cloud backup is a live-trading authorization or a warranty of data fitness. Public provider responses can be unavailable, revised, rounded, or inconsistent with exchange-grade feeds. The manifest records provider routing and declared precision so operators can audit a snapshot, but that evidence does not replace independent data validation. The project provides no investment advice, performance guarantee, or bundled route capable of placing a real order.
+Neither a successful Eastmoney/Tencent refresh, Yahoo reference check, nor a cloud backup is a live-trading authorization or a warranty of data fitness. Public provider responses can be unavailable, revised, rounded, or inconsistent with exchange-grade feeds. The manifest records provider routing and declared precision so operators can audit a snapshot, but that evidence does not replace independent data validation. The project provides no investment advice, performance guarantee, or bundled route capable of placing a real order.
 
 The market-chart API is authenticated and read-only. It accepts only configured instruments, bounded bar counts, and daily/weekly/monthly periods; it reads verified completed-session files without downloading data, creating transaction locks, recovering interrupted writes, changing strategies, or mutating account state. A pending or changing snapshot fails closed into an unavailable response. Chart indicators are derived display values, not order instructions.
 

@@ -14,21 +14,72 @@ from ai_trade.data.providers import (
     provider_catalog,
     provider_for,
     registered_provider_names,
+    snapshot_provider_names,
 )
 
 
 class DataProviderRegistryTests(unittest.TestCase):
     def test_registry_exposes_only_implemented_providers(self):
-        self.assertEqual(registered_provider_names(), ("eastmoney", "tencent"))
+        self.assertEqual(
+            registered_provider_names(), ("eastmoney", "tencent", "yahoo")
+        )
+        self.assertEqual(snapshot_provider_names(), ("eastmoney", "tencent"))
         catalog = provider_catalog()
-        self.assertEqual([item["key"] for item in catalog], ["eastmoney", "tencent"])
+        self.assertEqual(
+            [item["key"] for item in catalog], ["eastmoney", "tencent", "yahoo"]
+        )
         self.assertTrue(all(item["daily_bars"] for item in catalog))
         self.assertTrue(all(not item["intraday_bars"] for item in catalog))
+        yahoo = next(item for item in catalog if item["key"] == "yahoo")
+        self.assertFalse(yahoo["snapshot_eligible"])
+        self.assertEqual(
+            yahoo["cross_check_fields"],
+            ["open", "high", "low", "close", "volume"],
+        )
 
     def test_provider_lookup_is_normalized_and_rejects_unknown_sources(self):
         self.assertEqual(provider_for(" EASTMONEY ").descriptor.key, "eastmoney")
+        self.assertEqual(provider_for(" Yahoo ").descriptor.key, "yahoo")
         with self.assertRaisesRegex(ProviderConfigurationError, "registered providers"):
             provider_for("akshare")
+
+    def test_reference_only_provider_cannot_supply_primary_or_fallback_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = _write_config(root)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["data"]["provider"] = "yahoo"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "data.provider"):
+                load_config(path)
+
+            raw["data"]["provider"] = "eastmoney"
+            raw["data"]["fallback_provider"] = "yahoo"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "data.fallback_provider"):
+                load_config(path)
+
+    def test_yahoo_is_allowed_as_forward_adjusted_cross_check_reference(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = _write_config(root)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["data"]["cross_check"] = {
+                "enabled": True,
+                "reference_provider": " Yahoo ",
+                "lookback_sessions": 5,
+                "minimum_overlap_sessions": 3,
+            }
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            config = load_config(path)
+            self.assertEqual(
+                config.raw["data"]["cross_check"]["reference_provider"], "yahoo"
+            )
+
+            raw["data"]["adjustment"] = "backward"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "supports adjustment modes"):
+                load_config(path)
 
     def test_config_can_select_tencent_with_eastmoney_fallback(self):
         with tempfile.TemporaryDirectory() as temporary:

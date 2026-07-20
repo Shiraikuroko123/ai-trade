@@ -7,19 +7,30 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from ai_trade.config import load_config
 from ai_trade.data.cache_snapshot import install_snapshot
 from ai_trade.data.cross_check import (
+    _actual_provider,
     cross_check_market_snapshot,
     cross_source_projection,
 )
 
 
 class _FakeProvider:
-    def __init__(self, *, mismatch: bool = False):
+    def __init__(
+        self,
+        *,
+        mismatch: bool = False,
+        amount_mismatch: bool = False,
+        comparison_fields: tuple[str, ...] | None = None,
+    ):
         self.mismatch = mismatch
+        self.amount_mismatch = amount_mismatch
+        if comparison_fields is not None:
+            self.descriptor = SimpleNamespace(cross_check_fields=comparison_fields)
 
     def download(
         self,
@@ -47,13 +58,29 @@ class _FakeProvider:
                         11.0 + index,
                         8.0 + index,
                         100.0 + index,
-                        1000.0 + index,
+                        (5000.0 + index if self.amount_mismatch else 1000.0 + index),
                     ]
                 )
         return output_path
 
 
 class CrossCheckTests(unittest.TestCase):
+    def test_actual_provider_recognizes_yahoo_route_labels(self):
+        self.assertEqual(
+            _actual_provider(
+                {"source_provider": "yahoo_chart"},
+                "eastmoney",
+            ),
+            "yahoo",
+        )
+        self.assertEqual(
+            _actual_provider(
+                {"source": "yahoo_network_fallback"},
+                "eastmoney",
+            ),
+            "yahoo",
+        )
+
     def test_matching_reference_is_bound_to_manifest_and_verifies(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -153,6 +180,36 @@ class CrossCheckTests(unittest.TestCase):
             self.assertEqual(result["symbols"][0]["actual_provider"], "tencent")
             self.assertEqual(result["symbols"][0]["reference_provider"], "eastmoney")
             self.assertEqual(requested, ["tencent", "eastmoney"])
+
+    def test_provider_declared_field_subset_does_not_compare_estimated_amount(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(_config(root))
+            staged = config.cache_dir / ".test-staged" / "510300.csv"
+            _write_primary(staged)
+            install_snapshot(config.cache_dir, {"510300.csv": staged}, _manifest(staged))
+            provider = _FakeProvider(
+                amount_mismatch=True,
+                comparison_fields=("open", "high", "low", "close", "volume"),
+            )
+
+            with patch(
+                "ai_trade.data.cross_check.provider_for",
+                return_value=provider,
+            ), patch(
+                "ai_trade.data.cross_check.completed_session_cutoff",
+                return_value=date(2024, 1, 8),
+            ):
+                result = cross_check_market_snapshot(config, force=True)
+
+            self.assertEqual(result["status"], "passed")
+            item = result["symbols"][0]
+            self.assertEqual(
+                item["comparison_fields"],
+                ["open", "high", "low", "close", "volume"],
+            )
+            self.assertEqual(item["unavailable_fields"], ["amount"])
+            self.assertNotIn("amount", item["max_deviation"])
 
 
 def _config(root: Path) -> Path:

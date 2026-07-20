@@ -434,6 +434,7 @@ class DashboardService:
                 item_kind,
                 period_start=period,
                 generated_on=generated_on,
+                calendar_verified=calendar is not None,
             )
             source_fingerprint, evidence = _digest_source_fingerprints(
                 item, item_kind
@@ -2659,16 +2660,23 @@ def _research_digest_payload(
     *,
     period_start: date,
     generated_on: date,
+    calendar_verified: bool,
 ) -> dict[str, Any]:
     payload = dict(item)
     if (
         kind == "weekly"
         and payload.get("status") == "current"
-        and period_start + timedelta(days=6) >= generated_on
+        and (
+            not calendar_verified
+            or period_start + timedelta(days=6) >= generated_on
+        )
     ):
         payload["status"] = "provisional"
         payload["status_detail"] = (
-            "The ISO week is still open; a later generation will append the "
+            "The market calendar is unavailable; weekly finalization cannot be "
+            "verified."
+            if not calendar_verified
+            else "The ISO week is still open; a later generation will append the "
             "finalized revision."
         )
     return payload

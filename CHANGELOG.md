@@ -1,31 +1,8 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.12.1` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.13.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
 
-## 0.12.1 - 2026-07-18
-
-- Promoted the universe screen contract to schema version 2 with explicit metric
-  definitions, completed-session cutoff, source-provider distributions, fallback
-  disclosure, coverage summaries, and lag summaries.
-- Published the screen read timestamp after all derived metrics finish, keeping
-  page-read time distinct from the market data date.
-- Added source-provider, coverage-percent, and cutoff columns to the Data view,
-  plus quality summaries and an expandable formula/measurement section.
-- Added bounded result-count control, actionable unavailable/empty states, and
-  live warning announcements for stale, missing, insufficient, or fallback data.
-- Routed K-line and market-direction colors through the shared CSS semantic token
-  bridge so chart, table, and status colors remain auditable and theme-consistent.
-- Rechecked the dense table, mobile reflow, keyboard scrolling, and chart text
-  summaries without changing trading, backtest, risk, or broker execution logic.
-- Removed the page-level minimum width so the workstation remains readable at
-  200% zoom; wide evidence tables and the market pulse retain their own
-  intentional internal scrolling.
-
-## Unreleased
-
-This section describes the current `main` branch, not the public `v0.12.1`
-wheel. The persistent research-digest commands, HTTP routes, and Windows task
-scripts below will remain source-only until a later release is explicitly cut.
+## 0.13.0 - 2026-07-20
 
 - Added a multi-stage non-root Docker image and Compose deployment with a
   read-only root filesystem, dropped capabilities, health checks, explicit
@@ -37,12 +14,18 @@ scripts below will remain source-only until a later release is explicitly cut.
   UID/GID, optional AI/R2, and non-public-hosting boundaries.
 
 - Added a bounded independent daily-bar reconciliation for the registered
-  Eastmoney/Tencent providers. The audit binds actual per-file source routes,
+  Eastmoney/Tencent providers, then added a validated Yahoo Finance Chart
+  reference adapter. The audit binds actual per-file source routes,
   overlapping completed sessions, explicit OHLCV tolerances, deviations, and
-  an integrity digest to `manifest.json`; a fallback file is never compared
+  an integrity digest to `manifest.json`; provider-declared fields keep Yahoo's
+  estimated turnover out of the comparison. A fallback file is never compared
   with itself, and a reference outage never replaces the primary snapshot.
 - Added `cross-check-data`, the `cross-check-data` workstation job, Data/System
   view status and per-symbol evidence, plus `docs/CROSS_SOURCE_AUDIT.md`.
+
+- Fixed weekly research-digest finalization when the market calendar is
+  unavailable: the result remains explicitly `provisional` instead of being
+  marked complete from the natural calendar alone.
 
 - Added `deterministic-perspective-audit-v1` to every new AI analysis. It
   separates technical/risk/strategy stance conflicts from unavailable
@@ -378,6 +361,25 @@ scripts below will remain source-only until a later release is explicitly cut.
 - Added an independently packaged QMT/xtquant read-only adapter for local account, position, cancelable-order, and same-day fill observation. It rejects live mode, submission, and cancellation, and does not bundle broker binaries or credentials.
 - Added `broker-list`, `broker-probe`, and `broker-compare` CLI diagnostics. Read-only comparisons are masked, non-mutating, and never count toward qualifying sandbox reconciliation evidence.
 - Added fail-closed QMT account binding, quantity/status validation, unknown-order preservation, fee-completeness warnings, focused tests, and local configuration guidance.
+
+## 0.12.1 - 2026-07-18
+
+- Promoted the universe screen contract to schema version 2 with explicit metric
+  definitions, completed-session cutoff, source-provider distributions, fallback
+  disclosure, coverage summaries, and lag summaries.
+- Published the screen read timestamp after all derived metrics finish, keeping
+  page-read time distinct from the market data date.
+- Added source-provider, coverage-percent, and cutoff columns to the Data view,
+  plus quality summaries and an expandable formula/measurement section.
+- Added bounded result-count control, actionable unavailable/empty states, and
+  live warning announcements for stale, missing, insufficient, or fallback data.
+- Routed K-line and market-direction colors through the shared CSS semantic token
+  bridge so chart, table, and status colors remain auditable and theme-consistent.
+- Rechecked the dense table, mobile reflow, keyboard scrolling, and chart text
+  summaries without changing trading, backtest, risk, or broker execution logic.
+- Removed the page-level minimum width so the workstation remains readable at
+  200% zoom; wide evidence tables and the market pulse retain their own
+  intentional internal scrolling.
 
 ## 0.12.0 - 2026-07-14
 

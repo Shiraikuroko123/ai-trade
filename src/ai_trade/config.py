@@ -279,10 +279,10 @@ def _validate(
     # Provider names are resolved through the shared registry.  Keeping this
     # validation at configuration load time prevents a typo from silently
     # falling through to a local cache during a scheduled refresh.
-    from .data.providers import registered_provider_names
+    from .data.providers import snapshot_provider_names
 
     provider = raw["data"].get("provider", "eastmoney")
-    supported_providers = set(registered_provider_names())
+    supported_providers = set(snapshot_provider_names())
     if not isinstance(provider, str) or provider.strip().lower() not in supported_providers:
         supported = ", ".join(sorted(supported_providers))
         raise ValueError(
@@ -409,9 +409,9 @@ def _validate(
 
 def _validate_data_transport(data: dict[str, Any]) -> None:
     fallback_provider = data.get("fallback_provider", "tencent")
-    from .data.providers import registered_provider_names
+    from .data.providers import registered_provider_names, snapshot_provider_names
 
-    supported_providers = set(registered_provider_names())
+    supported_providers = set(snapshot_provider_names())
     if (
         not isinstance(fallback_provider, str)
         or fallback_provider.strip().lower()
@@ -466,7 +466,7 @@ def _validate_data_transport(data: dict[str, Any]) -> None:
             )
     if parsed["retry_max_seconds"] < parsed["retry_base_seconds"]:
         raise ValueError("data.retry_max_seconds must not be below retry_base_seconds")
-    _validate_cross_source_check(data, supported_providers)
+    _validate_cross_source_check(data, set(registered_provider_names()))
 
 
 def _validate_cross_source_check(
@@ -491,6 +491,16 @@ def _validate_cross_source_check(
     if reference == str(data.get("provider", "eastmoney")).strip().lower():
         raise ValueError(
             "data.cross_check.reference_provider must differ from data.provider"
+        )
+    from .data.providers import provider_for
+
+    adjustment = str(data.get("adjustment", "forward"))
+    supported_adjustments = provider_for(reference).descriptor.supported_adjustments
+    if adjustment not in supported_adjustments:
+        supported = ", ".join(supported_adjustments)
+        raise ValueError(
+            "data.cross_check.reference_provider "
+            f"{reference!r} supports adjustment modes {supported}; got {adjustment!r}"
         )
     lookback = raw.get("lookback_sessions", 5)
     if isinstance(lookback, bool) or not isinstance(lookback, int):

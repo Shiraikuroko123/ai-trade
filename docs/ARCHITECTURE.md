@@ -38,10 +38,11 @@ point-in-time universe -> signal factors -> portfolio constraints
 The market refresh route is deterministic and auditable. The configured primary
 and fallback are resolved through the shared provider boundary described in
 `docs/DATA_PROVIDERS.md`. The release registers Eastmoney and Tencent Finance
-for daily bars; a refresh-scoped transport circuit breaker skips repeated
-primary-provider attempts only when that provider classifies the failure as
-provider-wide. Only when all configured network routes fail may the refresh
-reuse a locally validated cache inside the configured freshness window.
+for strategy-visible daily bars, plus a bounded Yahoo Finance reference route.
+A refresh-scoped transport circuit breaker skips repeated primary-provider
+attempts only when that provider classifies the failure as provider-wide. Only
+when all configured network routes fail may the refresh reuse a locally
+validated cache inside the configured freshness window.
 
 Every candidate file is staged and validated before publication. The cache manifest distinguishes the requested completed-session cutoff from the latest trading session shared by the required active instruments, and records each instrument's route, errors, fallback reason, latest session, row count, and SHA-256. Tencent incremental refreshes and local network fallbacks accept a seed only when the active manifest, provider, adjustment, requested history start, latest session, row count, source route, and file hash match; entries record the retained seed source/hash in addition to refresh mode, proxy mode, page and overlap counts, and amount-quality fields.
 
@@ -49,10 +50,11 @@ When enabled, an independent daily-bar audit runs after publication and only
 replaces manifest metadata under the snapshot transaction lock. It compares a
 bounded recent window with a different registered provider, binds the result
 to the installed CSV row counts and hashes, and records overlap, tolerances,
-maximum deviations, and bounded breaches. Provider selection is based on each
-file's actual route: a Tencent fallback file is checked against Eastmoney, not
-against Tencent again. A reference outage, mismatch, or invalid audit lowers
-diagnostic confidence but never mutates CSV data or grants execution authority.
+maximum deviations, provider-declared comparison fields, and bounded breaches.
+Provider selection is based on each file's actual route: a Tencent fallback file
+is checked against the configured independent route, never against Tencent
+again. A reference outage, mismatch, or invalid audit lowers diagnostic
+confidence but never mutates CSV data or grants execution authority.
 
 Publication is a recoverable cross-file transaction. A same-volume transaction directory keeps immutable copies of the previous files and a durable journal, while an atomic root marker mirrors the current phase. All CSV files are replaced before `manifest.json`; after validating the installed files, the journal and marker record an explicit `committed` state with every target hash. `MarketData` holds the transaction lock while loading. Recovery keeps a complete committed snapshot, rolls a mixed install back, reconstructs state from the journal when the root marker is missing, and preserves backups while failing closed if the remaining transaction is ambiguous.
 
@@ -374,8 +376,9 @@ research evidence.
 
 ### Persistent digest ledger
 
-This surface is implemented on `main` under Unreleased. It is not present in
-the public `v0.12.1` wheel.
+This surface is included in the public `v0.13.0` wheel. It remains derivative
+research evidence and does not replace the authoritative paper ledger,
+reports, or journal.
 
 ```text
 validated archive projection

@@ -1,8 +1,9 @@
 # Persistent Research Digests
 
-> **Release status:** this document describes the `main` branch's Unreleased
-> research-digest surface. The public `v0.12.1` wheel does not contain
-> `archive-generate`, these HTTP routes, or the Windows archive-task scripts.
+> **Release status:** the `v0.13.0` wheel contains the research-digest surface,
+> `archive-generate`, these HTTP routes, and the Windows archive-task scripts.
+> Digests remain derivative, owner-scoped research evidence rather than an
+> accounting or execution authority.
 
 Research digests are the durable, owner-scoped close-of-day record for the
 research workflow. They materialize the read-only closing-archive projection

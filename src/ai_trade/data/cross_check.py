@@ -48,6 +48,7 @@ VOLUME_RELATIVE_TOLERANCE = 0.10
 AMOUNT_RELATIVE_TOLERANCE = 0.15
 MAX_BREACHES_PER_SYMBOL = 12
 MAX_ERROR_LENGTH = 320
+COMPARISON_FIELDS = ("open", "high", "low", "close", "volume", "amount")
 
 
 def cross_check_market_snapshot(
@@ -196,7 +197,8 @@ def _run_locked(
             "price_relative_tolerance": PRICE_RELATIVE_TOLERANCE,
             "volume_relative_tolerance": VOLUME_RELATIVE_TOLERANCE,
             "amount_relative_tolerance": AMOUNT_RELATIVE_TOLERANCE,
-            "comparison_fields": ["open", "high", "low", "close", "volume", "amount"],
+            "comparison_fields": list(COMPARISON_FIELDS),
+            "provider_declared_field_subset": True,
         },
     }
     if reference_name in {"", "none"}:
@@ -343,6 +345,18 @@ def _audit_symbols(
                 )
                 results.append(item)
                 continue
+            comparison_fields = _comparison_fields(reference)
+            item["comparison_fields"] = list(comparison_fields)
+            item["unavailable_fields"] = [
+                field for field in COMPARISON_FIELDS if field not in comparison_fields
+            ]
+            if not comparison_fields:
+                item.update(
+                    status="reference_unavailable",
+                    reason="reference_provider_has_no_comparable_fields",
+                )
+                results.append(item)
+                continue
             if audit_reference_name in provider_failures:
                 item.update(
                     status="reference_unavailable",
@@ -400,7 +414,7 @@ def _audit_symbols(
             for on_date in overlap:
                 primary = selected_by_date[on_date]
                 secondary = reference_by_date[on_date]
-                for field in ("open", "high", "low", "close", "volume", "amount"):
+                for field in comparison_fields:
                     left = float(getattr(primary, field))
                     right = float(getattr(secondary, field))
                     absolute = abs(left - right)
@@ -430,6 +444,15 @@ def _audit_symbols(
     return results
 
 
+def _comparison_fields(provider: object) -> tuple[str, ...]:
+    descriptor = getattr(provider, "descriptor", None)
+    declared = getattr(descriptor, "cross_check_fields", COMPARISON_FIELDS)
+    if not isinstance(declared, (tuple, list)):
+        return COMPARISON_FIELDS
+    selected = set(declared)
+    return tuple(field for field in COMPARISON_FIELDS if field in selected)
+
+
 def _within_tolerance(field: str, left: float, right: float) -> bool:
     if not (math.isfinite(left) and math.isfinite(right)):
         return False
@@ -454,6 +477,8 @@ def _actual_provider(entry: object, configured_primary: str) -> str | None:
     ]
     for candidate in candidates:
         value = str(candidate or "").strip().lower()
+        if "yahoo" in value:
+            return "yahoo"
         if "tencent" in value:
             return "tencent"
         if "eastmoney" in value:

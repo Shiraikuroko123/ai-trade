@@ -7,8 +7,9 @@ broker authority.
 
 ## Configuration
 
-The bundled configuration enables a five-session check against Tencent when
-Eastmoney is configured as the primary source:
+The bundled configuration enables a five-session check against Yahoo Finance
+when Eastmoney is configured as the primary source. Tencent remains the
+network fallback:
 
 ```json
 {
@@ -17,7 +18,7 @@ Eastmoney is configured as the primary source:
     "fallback_provider": "tencent",
     "cross_check": {
       "enabled": true,
-      "reference_provider": "tencent",
+      "reference_provider": "yahoo",
       "lookback_sessions": 5,
       "minimum_overlap_sessions": 3
     }
@@ -27,7 +28,8 @@ Eastmoney is configured as the primary source:
 
 Custom configurations without `data.cross_check` keep the previous offline
 behavior. The reference provider must be registered and different from the
-configured primary provider.
+configured primary provider. `yahoo` is reference-only and can be selected
+there, but cannot supply the primary or fallback snapshot.
 
 ## Running It
 
@@ -47,8 +49,10 @@ button starts the background job and reloads the current view when it finishes.
 
 The result is stored under `cross_source_check` in
 `data/cache/manifest.json`. Each symbol records its actual file provider,
-reference provider, requested/overlapping sessions, maximum relative deviation,
-and bounded breach details.
+reference provider, requested/overlapping sessions, the provider-declared
+comparison fields, maximum relative deviation, and bounded breach details.
+Yahoo records `amount` in `unavailable_fields`; its locally estimated amount is
+never compared or used as liquidity evidence.
 
 | Status | Meaning | Operating response |
 | --- | --- | --- |
@@ -66,10 +70,19 @@ This distinction is important for the common Eastmoney-blocked/Tencent-fallback
 case.
 
 Price tolerance is `max(CNY 0.02, 0.5%)`; volume tolerance is 10% and amount
-tolerance is 15%. These bounds account for public-provider rounding and do not
-claim an exchange or licensed-feed guarantee. A pass is therefore evidence of
-recent consistency, not proof that every historical revision or corporate
-action is identical.
+tolerance is 15% when both providers declare an amount field. These bounds
+account for public-provider rounding and do not claim an exchange or
+licensed-feed guarantee. A pass is therefore evidence of recent consistency,
+not proof that every historical revision or corporate action is identical.
+
+Yahoo maps Shanghai symbols to `.SS` and Shenzhen symbols to `.SZ`, converts
+share volume to 100-share lots, and uses the response's adjusted close to
+scale OHLC for forward adjustment. Yahoo cash-dividend adjustment is a
+multiplicative total-return convention; it can differ from the domestic
+provider's additive forward-adjustment convention on older sessions. Such a
+difference remains a visible audit mismatch rather than being silently
+reconciled. The adapter is limited to 63 calendar days per request and only
+completed rows are accepted.
 
 The audit digest is bound to the manifest's CSV row counts and SHA-256 values.
 Changing a CSV or editing the audit summary makes the projection `invalid` on

@@ -19,7 +19,7 @@
     "adjustment": "forward",
     "cross_check": {
       "enabled": true,
-      "reference_provider": "tencent",
+      "reference_provider": "yahoo",
       "lookback_sessions": 5,
       "minimum_overlap_sessions": 3
     }

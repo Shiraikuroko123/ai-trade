@@ -20,7 +20,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 class DistributionVerificationTests(unittest.TestCase):
     def test_market_refresh_modules_are_required_in_both_artifacts(self):
-        for module in ("cache_snapshot.py", "cross_check.py", "tencent.py"):
+        for module in ("cache_snapshot.py", "cross_check.py", "tencent.py", "yahoo.py"):
             with self.subTest(module=module):
                 self.assertIn(f"ai_trade/data/{module}", WHEEL_REQUIRED)
                 self.assertIn(f"src/ai_trade/data/{module}", SDIST_REQUIRED)

@@ -10,7 +10,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [VeighNa](https://github.com/vnpy/vnpy) | China broker gateways and live operations | Gateway contract reference plus an independent QMT read-only probe; no live gateway is enabled |
 | [RQAlpha](https://github.com/ricequant/rqalpha) | China-market simulation rules | Dated stock fees, lot size, suspension and price-limit rules |
 | [vectorbt](https://github.com/polakowo/vectorbt) | Fast parameter and signal research | Useful future research backend, not the accounting authority |
-| [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Shared daily-provider boundary and recent-session Eastmoney/Tencent reconciliation are implemented; additional licensed adapters remain planned |
+| [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Shared daily-provider boundary, Eastmoney/Tencent snapshot routes, and a bounded Yahoo OHLCV reference reconciliation are implemented; additional licensed adapters remain planned |
 | [kimi-stock-agent](https://github.com/dbbbbm/kimi-stock-agent) | Daily research cadence, historical review, and human operation notes | Immutable per-user research notes, persistent daily/weekly digest revisions, idempotent generation, and Windows scheduled archive runs are implemented; source accounting remains authoritative |
 | [PyPortfolioOpt](https://github.com/PyPortfolio/PyPortfolioOpt) | Efficient frontier, Black-Litterman and HRP | Research candidates after simple risk budgets pass forward tests |
 | [cvxportfolio](https://github.com/cvxgrp/cvxportfolio) | Multi-period optimization with costs and constraints | Reference for future institutional portfolio construction |
@@ -99,7 +99,7 @@ operator thought at that time, not a signal, order, or promotion fact.
 5. Execution applies date-effective fees and market rules, records rejections, and sells before buying.
 6. Accounting and audit remain independent from strategy ranking.
 7. Historical validation can promote a model only to future paper testing, never directly to live trading.
-8. Eastmoney is a bounded primary data route and Tencent Finance is an auditable network fallback; neither public endpoint is treated as exchange-certified or guaranteed.
+8. Eastmoney is a bounded primary data route, Tencent Finance is an auditable network fallback, and Yahoo Finance is a short-window OHLCV reference only; no public endpoint is treated as exchange-certified or guaranteed.
 9. The market workstation renders only local validated completed snapshots. Indicator and chart controls are observations, not strategy mutations or order signals.
 10. Research notes are append-only, owner-scoped evidence. They can explain a decision, but cannot mutate strategy, accounting, broker permissions, or live authority.
 11. Closing archives have two layers: `/api/research/archive` is a read-time evidence projection, while `ResearchDigestStore` persists a derivative, append-only daily/weekly revision chain. The paper equity ledger and daily reports remain accounting authority; digest rows cannot promote a strategy or authorize an order.

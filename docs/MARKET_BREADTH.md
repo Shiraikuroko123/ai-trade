@@ -1,7 +1,7 @@
 # Market Breadth and Board Rankings
 
-This document describes the **Unreleased** `sector_breadth` evidence dataset on
-`main`. It is a closing research view, not a real-time quote service, industry
+This document describes the `v0.13.0` `sector_breadth` evidence dataset. It is a
+closing research view, not a real-time quote service, industry
 classification license, sentiment score, strategy signal, or order source.
 
 ## Source Scope

@@ -1,6 +1,6 @@
 # Paper Trading Operations
 
-This document starts from the public `v0.12.1` paper-account baseline. Paper execution remains isolated from the read-only market chart, AI assistant, strategy-lab candidate editing, cloud backup, and the unavailable live-broker route. The persistent research-digest command and task sections describe `main` / Unreleased; the public `v0.12.1` wheel does not contain them.
+This document starts from the public `v0.13.0` paper-account baseline. Paper execution remains isolated from the read-only market chart, AI assistant, strategy-lab candidate editing, cloud backup, and the unavailable live-broker route. The persistent research-digest command and task sections are included in the `v0.13.0` wheel and remain derivative, research-only evidence.
 
 ## Daily Flow
 
