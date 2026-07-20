@@ -10,7 +10,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [VeighNa](https://github.com/vnpy/vnpy) | China broker gateways and live operations | Gateway contract reference plus an independent QMT read-only probe; no live gateway is enabled |
 | [RQAlpha](https://github.com/ricequant/rqalpha) | China-market simulation rules | Dated stock fees, lot size, suspension and price-limit rules |
 | [vectorbt](https://github.com/polakowo/vectorbt) | Fast parameter and signal research | Useful future research backend, not the accounting authority |
-| [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Shared daily-provider boundary, Eastmoney/Tencent snapshot routes, and a bounded Yahoo OHLCV reference reconciliation are implemented; additional licensed adapters remain planned |
+| [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Shared daily-provider boundary, Eastmoney/Tencent snapshot routes, bounded Yahoo OHLCV reconciliation, and separate Eastmoney minute/valuation/news evidence stores are implemented; additional licensed adapters remain planned |
 | [kimi-stock-agent](https://github.com/dbbbbm/kimi-stock-agent) | Daily research cadence, historical review, and human operation notes | Immutable per-user research notes, persistent daily/weekly digest revisions, idempotent generation, and Windows scheduled archive runs are implemented; source accounting remains authoritative |
 | [PyPortfolioOpt](https://github.com/PyPortfolio/PyPortfolioOpt) | Efficient frontier, Black-Litterman and HRP | Research candidates after simple risk budgets pass forward tests |
 | [cvxportfolio](https://github.com/cvxgrp/cvxportfolio) | Multi-period optimization with costs and constraints | Reference for future institutional portfolio construction |
@@ -51,10 +51,10 @@ authoritative paper and broker ledgers.
 | Partial and failed retry | Complete | Only a fully successful owner/configuration/snapshot scan is reusable. Partial and failed attempts remain evidence and are reevaluated under a new attempt ID; staged alert/scan publication has owner-local marker recovery. |
 | Historical rule/evidence binding | Complete within the local trust boundary | Historical configuration revisions and persisted snapshot evidence rederive alert rule metadata and evidence fingerprints. The hashes remain unkeyed local values. |
 | Alert review lifecycle | Complete within the local trust boundary | Open, acknowledge, snooze, dismiss, reopen, and automatic scan-time unsnooze actions are append-only and state-fingerprint protected. Snooze remains scan-driven rather than a background timer. |
-| Owner-scoped local notification inbox | Complete within the local trust boundary | Alert and failed-scan sources are materialized idempotently with source/evidence fingerprints; unread/read/archive actions are append-only and state-fingerprint protected. The inbox is local-only and cannot authorize execution. |
+| Owner-scoped local notification inbox and webhook | Partial, external delivery implemented | Local inbox remains authoritative; optional HTTPS HMAC webhook delivery uses idempotency keys, bounded retries, DNS/public-address checks, and immutable outbox/attempt evidence. Remote failure never changes a scan or alert and no execution authority is granted. |
 | Capacity and retention | Bounded | Each owner has hard immutable-file caps and no archive/compaction service; reaching a cap stops new writes until a future verified checkpoint format exists. |
 | Host-independent tamper evidence | Not implemented | Local SHA-256 and cross-record validation are not signatures or WORM storage. A local administrator can recalculate records or delete a newest chain tail; monitoring state is not included in the R2 market-cache backup. |
-| Minute/Tick/Level-2 monitoring and live execution | Not implemented | The current monitor uses completed daily data and remains `research_only`; it cannot change strategy, accounting, broker permissions, or orders. |
+| Minute/Tick/Level-2 monitoring and live execution | Partial | Historical minute evidence is now available as a separate research dataset. Tick, order book, Level-2, and live execution remain unavailable; monitoring rules still use completed daily data only. |
 
 ## Assistant Research Synthesis Status
 
@@ -73,10 +73,10 @@ authoritative paper and broker ledgers.
 | Dragon-Tiger List | Complete within one public-source trust boundary | The full Eastmoney daily report is page/count/date/schema validated and stored as immutable local revisions. It is not exchange-certified and remains `research_only`. |
 | Sector rankings and breadth | Complete within one public-source trust boundary | All Eastmoney `m:90+t:2` board pages and SH/SZ/BJ benchmark breadth responses are count/date/schema/identity validated and stored as immutable local revisions. The provider-defined board universe is not presented as a licensed pure-industry taxonomy, has no independent cross-source check, and remains `research_only`. |
 | Board capital flow | Complete within one public-source trust boundary | Every Eastmoney `m:90+t:2` page is count/date/schema/identity validated and stored as immutable local revisions with CNY-yuan units and explicit missing-value coverage. The board scope can overlap, order-size buckets remain provider methodology, and there is no exchange certification or independent cross-source check. |
-| Announcements, news, and hot lists | Not implemented | No traceable publication-time and correction-aware source is configured. |
-| Valuation temperature | Not implemented | Price history is not a substitute for PE/PB/cash-flow valuation evidence. |
+| Announcements, news, and hot lists | Partial | Eastmoney快讯 and individual announcements now retain publication time, original URL, response fingerprints, immutable revisions, and explicit source failures. There is no multi-source correction model or complete hot-list/sentiment engine. |
+| Valuation temperature | Partial | Current PE/PB, price and market-cap fields are stored with scaling provenance. Historical PE/PB/cash-flow percentiles remain unavailable and are never inferred from price history. |
 | Market sentiment | Not implemented | Dragon-Tiger List records remain event evidence and do not make assistant `sentiment_coverage` available. |
-| External push notification delivery | Not implemented | Email, webhook, Windows Toast, and mobile delivery adapters still require separate credentials, retry policy, and authenticated outbox delivery; the current inbox makes no such claim. |
+| External push notification delivery | Partial | Webhook is available behind `AI_TRADE_WEBHOOK_*` environment variables with HTTPS/loopback restrictions, HMAC signatures, idempotency, retries, and immutable delivery evidence. Email, Toast, mobile push, and multi-tenant routing remain out of scope. |
 
 ## Deployment Status
 

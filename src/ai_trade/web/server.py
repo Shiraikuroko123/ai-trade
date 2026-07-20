@@ -24,6 +24,9 @@ from ..config import AppConfig
 from ..data.capital_flow import CapitalFlowQuery
 from ..data.market_breadth import MarketBreadthQuery
 from ..data.market_intelligence import DragonTigerQuery
+from ..data.intraday import IntradayQuery
+from ..data.valuation import ValuationQuery
+from ..data.news import NewsQuery
 from ..json_utils import loads_unique_json
 from ..monitoring import (
     ALERT_ACTIONS,
@@ -131,6 +134,16 @@ CAPITAL_FLOW_SORTS = frozenset(
         "name",
     }
 )
+INTRADAY_INTERVALS = frozenset({1, 5, 15, 30, 60})
+INTRADAY_DEFAULT_LIMIT = 480
+INTRADAY_MAX_LIMIT = 1_500
+INTRADAY_MAX_QUERY_LENGTH = 1024
+VALUATION_DEFAULT_LIMIT = 200
+VALUATION_MAX_LIMIT = 500
+VALUATION_MAX_QUERY_LENGTH = 1024
+NEWS_DEFAULT_LIMIT = 200
+NEWS_MAX_LIMIT = 2_000
+NEWS_MAX_QUERY_LENGTH = 1024
 SCREEN_GROUP_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 STRATEGY_LAB_CANDIDATE_PATH = re.compile(
     r"/api/strategy-lab/candidates/(cand_[0-9a-f]{32})(?:/(validate|approve|export|activate))?\Z"
@@ -413,6 +426,15 @@ def _handler_factory(
                 elif parsed.path == "/api/capital-flow":
                     query = _parse_capital_flow_query(parsed.query)
                     self._json(service.capital_flow(query))
+                elif parsed.path == "/api/intraday":
+                    query = _parse_intraday_query(parsed.query)
+                    self._json(service.intraday(query))
+                elif parsed.path == "/api/valuation":
+                    query = _parse_valuation_query(parsed.query)
+                    self._json(service.valuation(query))
+                elif parsed.path == "/api/news":
+                    query = _parse_news_query(parsed.query)
+                    self._json(service.news(query))
                 elif parsed.path == "/api/monitoring":
                     if parsed.query:
                         raise ValueError(
@@ -1266,11 +1288,15 @@ def _parse_market_intelligence_query(query: str) -> DragonTigerQuery:
     if not query:
         return DragonTigerQuery()
     try:
-        values = parse_qs(
-            query,
-            keep_blank_values=True,
-            strict_parsing=True,
-            max_num_fields=5,
+        values = (
+            {}
+            if not query
+            else parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=5,
+            )
         )
     except ValueError as exc:
         raise ValueError("Market intelligence query is invalid") from exc
@@ -1423,6 +1449,143 @@ def _parse_capital_flow_query(query: str) -> CapitalFlowQuery:
         sort=sort,
         direction=direction,
         limit=limit,
+    )
+
+
+def _parse_intraday_query(query: str) -> IntradayQuery:
+    if len(query) > INTRADAY_MAX_QUERY_LENGTH:
+        raise ValueError("Intraday query is too long")
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=5,
+        )
+    except ValueError as exc:
+        raise ValueError("Intraday query is invalid") from exc
+    unsupported = sorted(set(values) - {"symbol", "date", "interval", "limit", "revisions"})
+    if unsupported:
+        raise ValueError("Unsupported intraday query parameters: " + ", ".join(unsupported))
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is None or len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit():
+        raise ValueError("symbol must be a six-digit security code")
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    raw_interval = values.get("interval", ["1"])[0]
+    if not raw_interval.isascii() or not raw_interval.isdigit() or int(raw_interval) not in INTRADAY_INTERVALS:
+        raise ValueError("interval must be one of 1, 5, 15, 30, or 60")
+    raw_limit = values.get("limit", [str(INTRADAY_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= INTRADAY_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {INTRADAY_MAX_LIMIT}")
+    revisions = values.get("revisions", ["0"])[0]
+    if revisions not in {"0", "1"}:
+        raise ValueError("revisions must be 0 or 1")
+    return IntradayQuery(
+        symbol=symbol,
+        trade_date=on_date,
+        interval=int(raw_interval),
+        limit=limit,
+        include_revisions=revisions == "1",
+    )
+
+
+def _parse_valuation_query(query: str) -> ValuationQuery:
+    if len(query) > VALUATION_MAX_QUERY_LENGTH:
+        raise ValueError("Valuation query is too long")
+    try:
+        values = (
+            {}
+            if not query
+            else parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=4,
+            )
+        )
+    except ValueError as exc:
+        raise ValueError("Valuation query is invalid") from exc
+    unsupported = sorted(set(values) - {"date", "symbol", "limit", "revisions"})
+    if unsupported:
+        raise ValueError("Unsupported valuation query parameters: " + ", ".join(unsupported))
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is not None and (len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()):
+        raise ValueError("symbol must be a six-digit security code")
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    raw_limit = values.get("limit", [str(VALUATION_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= VALUATION_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {VALUATION_MAX_LIMIT}")
+    revisions = values.get("revisions", ["0"])[0]
+    if revisions not in {"0", "1"}:
+        raise ValueError("revisions must be 0 or 1")
+    return ValuationQuery(
+        trade_date=on_date,
+        symbol=symbol,
+        limit=limit,
+        include_revisions=revisions == "1",
+    )
+
+
+def _parse_news_query(query: str) -> NewsQuery:
+    if len(query) > NEWS_MAX_QUERY_LENGTH:
+        raise ValueError("News query is too long")
+    try:
+        values = (
+            {}
+            if not query
+            else parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=6,
+            )
+        )
+    except ValueError as exc:
+        raise ValueError("News query is invalid") from exc
+    unsupported = sorted(set(values) - {"date", "symbol", "kind", "q", "limit", "revisions"})
+    if unsupported:
+        raise ValueError("Unsupported news query parameters: " + ", ".join(unsupported))
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is not None and (len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()):
+        raise ValueError("symbol must be a six-digit security code")
+    kind = values.get("kind", ["all"])[0]
+    if kind not in {"all", "news", "announcement"}:
+        raise ValueError("kind must be all, news, or announcement")
+    text_query = values.get("q", [None])[0]
+    if text_query is not None:
+        text_query = _bounded_text(text_query, "q", 100)
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    raw_limit = values.get("limit", [str(NEWS_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= NEWS_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {NEWS_MAX_LIMIT}")
+    revisions = values.get("revisions", ["0"])[0]
+    if revisions not in {"0", "1"}:
+        raise ValueError("revisions must be 0 or 1")
+    return NewsQuery(
+        trade_date=on_date,
+        symbol=symbol,
+        kind=kind,
+        q=text_query,
+        limit=limit,
+        include_revisions=revisions == "1",
     )
 
 

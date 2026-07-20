@@ -133,20 +133,45 @@ source fingerprint, optional snapshot-evidence fingerprint, severity, message,
 symbol, and data date. A changed or missing source binding fails closed.
 
 `GET /api/monitoring` returns `notifications`, `notification_summary`, and
-`notification_delivery`. The delivery mode is currently `local_inbox`; the
-response deliberately reports that no external delivery channel is configured.
+`notification_delivery`. With no environment variables the delivery mode is
+`local_inbox`. An optional HTTPS webhook can be enabled with
+`AI_TRADE_WEBHOOK_URL` and `AI_TRADE_WEBHOOK_SECRET`; HTTP is accepted only for
+an explicit loopback endpoint. The secret is read from the process environment
+and never written to state, logs, outbox records, or release artifacts.
 The workstation supports
 `POST /api/monitoring/notifications/<notification-id>/actions` with
 `mark_read`, `mark_unread`, or `dismiss`. Every transition is a new immutable
 action and requires the current notification state fingerprint. Dismissing a
 notification only archives the inbox entry; it does not acknowledge, close, or
-reopen the underlying monitoring alert.
+reopen the underlying monitoring alert. A scan attempts delivery for the
+notifications that are unread at scan time; the local inbox remains the
+authoritative record and read/dismiss actions never rewrite delivery evidence.
 
 The page defaults to unread notifications and can filter by reading state,
 severity, and source. The table retains the source ID, data date, generation
 time, and evidence fingerprint, and remains a keyboard-focusable horizontally
 scrollable region on narrow screens. Loading the inbox never refreshes market
 data, changes a strategy, edits an accounting ledger, or calls a broker.
+
+### Webhook delivery
+
+The scheduled scan and the authenticated monitoring scan call the optional
+webhook after local alert/notification publication. Each notification-target
+pair receives a deterministic idempotency key. The request body is signed as
+`HMAC-SHA256(secret, unix_timestamp + "." + body)` and sent with
+`X-AI-Trade-Signature`, `X-AI-Trade-Timestamp`, and
+`X-AI-Trade-Delivery-Id` headers. Redirects are rejected, external hosts must
+use HTTPS and resolve only to public addresses, response bodies are capped at
+64 KiB, and retries are bounded by `AI_TRADE_WEBHOOK_MAX_ATTEMPTS` with
+exponential backoff.
+
+Owner-local `webhook_outbox/` and `webhook_attempts/` files retain the payload
+fingerprint, target fingerprint, status, HTTP code, response fingerprint,
+retry sequence, and error text. They are immutable and validated alongside the
+monitoring records. A failed remote request leaves the local inbox and scan
+successful; delivery status is exposed for review and can be retried on a
+later scan until the configured attempt cap is reached. Webhook evidence is
+not included in R2 market-cache backups.
 
 ## Storage and Trust Boundary
 

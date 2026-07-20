@@ -2294,6 +2294,61 @@ progress {
   width: 100%;
 }
 
+.intraday-filter-form,
+.valuation-filter-form,
+.news-filter-form {
+  align-items: end;
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(3, minmax(130px, 0.8fr)) auto;
+  width: 100%;
+}
+
+.news-filter-form {
+  grid-template-columns: repeat(3, minmax(130px, 0.8fr)) minmax(220px, 1.5fr) minmax(110px, 0.55fr) auto;
+}
+
+.intraday-filter-form .filter-actions,
+.valuation-filter-form .filter-actions,
+.news-filter-form .filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.intraday-table {
+  min-width: 980px;
+  width: max(100%, 1080px);
+}
+
+.valuation-table {
+  min-width: 1280px;
+  width: max(100%, 1380px);
+}
+
+.news-table {
+  min-width: 1180px;
+  width: max(100%, 1280px);
+}
+
+.news-table td:nth-child(2) {
+  max-width: 440px;
+  min-width: 280px;
+  white-space: normal;
+}
+
+.evidence-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--honey);
+  text-underline-offset: 0.18em;
+}
+
+.evidence-link:hover,
+.evidence-link:focus-visible {
+  color: var(--honey-hover);
+}
+
 .capital-flow-filter-form .filter-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4438,7 +4493,10 @@ progress {
   .universe-filter-form,
   .intelligence-filter-form,
   .breadth-filter-form,
-  .capital-flow-filter-form {
+  .capital-flow-filter-form,
+  .intraday-filter-form,
+  .valuation-filter-form,
+  .news-filter-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
@@ -4463,6 +4521,13 @@ progress {
 
   .capital-flow-filter-form .capital-flow-query,
   .capital-flow-filter-form .filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .news-filter-form .news-query,
+  .news-filter-form .filter-actions,
+  .intraday-filter-form .filter-actions,
+  .valuation-filter-form .filter-actions {
     grid-column: 1 / -1;
   }
 
@@ -4832,7 +4897,10 @@ progress {
   .universe-filter-form,
   .intelligence-filter-form,
   .breadth-filter-form,
-  .capital-flow-filter-form {
+  .capital-flow-filter-form,
+  .intraday-filter-form,
+  .valuation-filter-form,
+  .news-filter-form {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -4844,20 +4912,30 @@ progress {
   .breadth-filter-form .breadth-query,
   .breadth-filter-form .filter-actions,
   .capital-flow-filter-form .capital-flow-query,
-  .capital-flow-filter-form .filter-actions {
+  .capital-flow-filter-form .filter-actions,
+  .news-filter-form .news-query,
+  .news-filter-form .filter-actions,
+  .intraday-filter-form .filter-actions,
+  .valuation-filter-form .filter-actions {
     grid-column: auto;
   }
 
   .intelligence-filter-form .filter-actions,
   .breadth-filter-form .filter-actions,
-  .capital-flow-filter-form .filter-actions {
+  .capital-flow-filter-form .filter-actions,
+  .intraday-filter-form .filter-actions,
+  .valuation-filter-form .filter-actions,
+  .news-filter-form .filter-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .intelligence-filter-form .button,
   .breadth-filter-form .button,
-  .capital-flow-filter-form .button {
+  .capital-flow-filter-form .button,
+  .intraday-filter-form .button,
+  .valuation-filter-form .button,
+  .news-filter-form .button {
     width: 100%;
   }
 

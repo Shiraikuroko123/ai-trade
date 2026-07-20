@@ -139,6 +139,15 @@
   "market_intelligence": {
     "state_dir": "state/market_intelligence"
   },
+  "intraday": {
+    "root_dir": "state/intraday"
+  },
+  "valuation": {
+    "root_dir": "state/valuation"
+  },
+  "news": {
+    "root_dir": "state/news"
+  },
   "reports_dir": "reports",
   "logs_dir": "logs"
 }

@@ -47,6 +47,11 @@ include src/ai_trade/data/market_intelligence.py
 include src/ai_trade/data/market_breadth.py
 include src/ai_trade/data/capital_flow.py
 include src/ai_trade/data/cross_check.py
+include src/ai_trade/data/evidence_io.py
+include src/ai_trade/data/intraday.py
+include src/ai_trade/data/news.py
+include src/ai_trade/data/valuation.py
+include src/ai_trade/notification_delivery.py
 include src/ai_trade/research_archive.py
 include src/ai_trade/research_digest.py
 include src/ai_trade/web/assets/app.css

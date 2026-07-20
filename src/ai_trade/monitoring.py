@@ -60,6 +60,8 @@ STAGING_TEMP_NAME = re.compile(
     r"action_[0-9a-f]{32}\.json|scan_[0-9a-f]{32}\.json|"
     r"notification_[0-9a-f]{32}\.json|"
     r"notification_action_[0-9a-f]{32}\.json|"
+    r"webhook_[0-9a-f]{32}\.json|"
+    r"webhook_attempt_[0-9a-f]{32}_[0-9]{3}\.json|"
     r"\.scan-transaction\.json)\.[A-Za-z0-9_-]+\.tmp\Z"
 )
 
@@ -765,6 +767,15 @@ class MonitoringProfile:
             "authority": dict(_AUTHORITY),
         }
 
+    def delivery_notifications(self, *, materialize: bool = True) -> list[dict[str, Any]]:
+        """Return all bounded notification projections for external delivery."""
+
+        with self.store._owner_lock(self.profile_id):
+            self._verify_integrity_unlocked()
+            if materialize:
+                self._materialize_notifications_unlocked()
+            return self._project_notifications_unlocked()
+
     def notification_action(
         self,
         notification_id: str,
@@ -1061,6 +1072,13 @@ class MonitoringProfile:
                 notification,
                 notification_actions_by_id.get(notification["notification_id"], []),
             )
+        from .notification_delivery import verify_webhook_records
+
+        verify_webhook_records(
+            self.directory,
+            self.profile_id,
+            {item["notification_id"]: item for item in notifications},
+        )
 
     def _project_alerts_unlocked(self) -> list[dict[str, Any]]:
         records = self._list_records_unlocked("alerts", _ALERT_FIELDS, MAX_ALERTS)
@@ -1724,6 +1742,14 @@ class MonitoringEngine:
         notifications = profile.notification_status(
             limit=MAX_PUBLIC_NOTIFICATIONS
         )
+        from .notification_delivery import webhook_delivery_status
+
+        delivery_notifications = profile.delivery_notifications()
+        notifications["delivery"] = webhook_delivery_status(
+            profile.directory,
+            profile.profile_id,
+            delivery_notifications,
+        )
         snapshot = self.snapshot(market)
         return {
             "schema_version": SCHEMA_VERSION,
@@ -1755,7 +1781,9 @@ class MonitoringEngine:
 
     def scan(self, owner: str, *, actor: str = "scheduler", market: Any | None = None) -> dict[str, Any]:
         profile = self.store.profile(owner)
-        return self.scan_profile(profile, actor=actor, market=market)
+        result = self.scan_profile(profile, actor=actor, market=market)
+        result["notification_delivery"] = self._deliver_notifications(profile)
+        return result
 
     def scan_all_profiles(
         self,
@@ -1788,6 +1816,9 @@ class MonitoringEngine:
                 continue
             try:
                 result = self.scan_profile(profile, actor=actor, market=market)
+                result["notification_delivery"] = self._deliver_notifications(
+                    profile
+                )
                 values.append({"profile_id": profile_id, **result})
             except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
                 values.append(
@@ -1802,6 +1833,51 @@ class MonitoringEngine:
                     }
                 )
         return values
+
+    def _deliver_notifications(
+        self, profile: MonitoringProfile
+    ) -> dict[str, Any]:
+        """Attempt configured delivery without changing the scan outcome."""
+
+        from .notification_delivery import (
+            deliver_webhook_notifications,
+            load_webhook_settings,
+            webhook_delivery_status,
+        )
+
+        try:
+            settings = load_webhook_settings()
+            if not settings.enabled:
+                notifications = profile.delivery_notifications(materialize=False)
+                return webhook_delivery_status(
+                    profile.directory,
+                    profile.profile_id,
+                    notifications,
+                    settings=settings,
+                )
+            notifications = profile.delivery_notifications()
+            return deliver_webhook_notifications(
+                profile.directory,
+                profile.profile_id,
+                notifications,
+                settings=settings,
+            )
+        except Exception as exc:
+            return {
+                "mode": "local_inbox+webhook",
+                "external_delivery_configured": True,
+                "configuration_status": "configured",
+                "endpoint_origin": None,
+                "endpoint_fingerprint": None,
+                "status": "failed",
+                "pending_count": 0,
+                "succeeded_count": 0,
+                "failed_count": 0,
+                "attempt_count": 0,
+                "last_delivery_at": None,
+                "last_error": str(exc)[:500],
+                "authority": dict(_AUTHORITY),
+            }
 
     def scan_profile(self, profile: MonitoringProfile, *, actor: str, market: Any | None = None) -> dict[str, Any]:
         started_at = _now()

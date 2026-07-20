@@ -13,7 +13,7 @@ bounded independent reference route only.
 
 | Key | Role | Intraday | Comparable fields | Status |
 | --- | --- | --- | --- | --- |
-| `eastmoney` | primary or fallback | No | OHLCV + amount | Implemented |
+| `eastmoney` | primary or fallback | Yes (separate research feed) | OHLCV + amount | Implemented |
 | `tencent` | primary or fallback | No | OHLCV + amount | Implemented |
 | `yahoo` | independent cross-check only | No | OHLCV (amount unavailable) | Implemented, reference-only |
 
@@ -108,3 +108,10 @@ stage validated bars and metadata for the snapshot transaction.
 Daily public endpoints do not provide real-time or exchange-certified data.
 Adding a provider to this registry does not authorize live trading or remove
 the requirement for a licensed intraday/quote feed.
+
+The Eastmoney `trends2` minute endpoint is intentionally a separate
+`intraday` evidence store rather than a strategy snapshot provider. It records
+the response fingerprint, requested interval, completed-session cutoff and the
+`f52-f55` OHLC mapping. Wider intervals are deterministic local aggregations
+of a validated one-minute revision; the endpoint remains a third-party feed
+and cannot replace a licensed tick, order-book, or Level-2 feed.

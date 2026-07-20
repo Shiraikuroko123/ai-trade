@@ -376,7 +376,7 @@ research evidence.
 
 ### Persistent digest ledger
 
-This surface is included in the public `v0.13.0` wheel. It remains derivative
+This surface is included in the public `v0.14.0` wheel. It remains derivative
 research evidence and does not replace the authoritative paper ledger,
 reports, or journal.
 

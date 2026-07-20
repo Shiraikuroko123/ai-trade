@@ -1,6 +1,46 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.13.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.14.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+
+## 0.14.0 - 2026-07-20
+
+- Added a bounded Eastmoney historical minute-evidence feed with validated
+  `f52`-`f55` OHLC, volume and amount fields, 1/5/15/30/60-minute local
+  aggregation, completed-session/date checks, response fingerprints, and an
+  immutable `state/intraday` revision chain. Wider intervals can be derived
+  deterministically from a validated one-minute revision when a separately
+  published interval is not present. The feed is research-only and is not a
+  tick, Level-2, order-book, or real-time service.
+- Added current Eastmoney valuation evidence for price, PE/PB, change, and
+  market-cap fields. Requests retain raw provider scaling provenance and
+  missing values remain `null`; historical PE/PB/cash-flow percentiles remain
+  explicitly unavailable. Fixed the request contract so raw fields are not
+  double-scaled by the formatted quote option.
+- Added Eastmoney快讯 and per-security announcement evidence with publication
+  timestamps, titles, summaries, security binding, allowlisted source URLs,
+  per-response SHA-256 fingerprints, immutable revisions, and bounded source
+  failure reporting. `lexicon-v1` labels are low-confidence research
+  annotations only and do not make sentiment coverage available.
+- Added optional owner-scoped HTTPS Webhook delivery for unread monitoring
+  notifications. HMAC-SHA256 signatures, deterministic idempotency keys,
+  redirect rejection, DNS/public-address checks, bounded retries, response
+  caps, and immutable outbox/attempt evidence are enforced. Secrets never
+  enter local state, logs, or release artifacts; remote failure cannot change
+  alerts, scans, accounting, strategies, or execution permissions.
+- Added `intraday-refresh`, `valuation-refresh`, `news-refresh`, their fixed
+  background jobs, bounded read-only APIs, and responsive Market Intelligence
+  sections with source, cutoff, status, and authority disclosures. Monitoring
+  now reports external-delivery status, counts, attempts, and the last error
+  without hiding the authoritative local inbox.
+- Added cross-process locking and no-replace atomic publication for the new
+  evidence stores, plus distribution checks and package-manifest entries for
+  every new module. Expanded unit, API, UI, webhook, compilation, and release
+  surface coverage.
+- Retained the following deliberate gaps: AKShare/TDX/Tushare/WenCai provider
+  registrations, tick/Level-2/order-book data, historical valuation
+  percentiles, a complete multi-source sentiment or hot-list model, parallel
+  multi-model MoA voting/judging, email/Toast/mobile push, R2 digest sync,
+  WORM/signature archival, and live broker execution.
 
 ## 0.13.0 - 2026-07-20
 

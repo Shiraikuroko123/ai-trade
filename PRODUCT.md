@@ -2,7 +2,7 @@
 
 ## Release Baseline
 
-`v0.13.0` is the current public release. It provides completed-session market review, research and strategy validation, paper accounting, optional private R2 backup, broker-readiness controls, an auditable multi-instrument screen with source and data-quality disclosure, and a bounded Yahoo OHLCV reference audit. It does not provide intraday market data, a working live-broker adapter, or automatic real-money execution.
+`v0.14.0` is the current public release. It provides completed-session market review, research and strategy validation, paper accounting, optional private R2 backup, broker-readiness controls, an auditable multi-instrument screen with source and data-quality disclosure, bounded Yahoo OHLCV reference reconciliation, historical minute evidence, current valuation fields, traceable news/announcement evidence, and optional HMAC webhook delivery. It does not provide tick/Level-2 data, historical valuation percentiles, a complete sentiment model, a working live-broker adapter, or automatic real-money execution.
 
 ## Register
 

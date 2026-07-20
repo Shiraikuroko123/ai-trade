@@ -29,7 +29,10 @@ class DataProviderRegistryTests(unittest.TestCase):
             [item["key"] for item in catalog], ["eastmoney", "tencent", "yahoo"]
         )
         self.assertTrue(all(item["daily_bars"] for item in catalog))
-        self.assertTrue(all(not item["intraday_bars"] for item in catalog))
+        intraday = {item["key"]: item["intraday_bars"] for item in catalog}
+        self.assertTrue(intraday["eastmoney"])
+        self.assertFalse(intraday["tencent"])
+        self.assertFalse(intraday["yahoo"])
         yahoo = next(item for item in catalog if item["key"] == "yahoo")
         self.assertFalse(yahoo["snapshot_eligible"])
         self.assertEqual(

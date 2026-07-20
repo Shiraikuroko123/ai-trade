@@ -91,6 +91,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="YYYY-MM-DD; defaults to the latest verified local market date",
     )
 
+    intraday = subparsers.add_parser(
+        "intraday-refresh",
+        help="Refresh bounded historical minute evidence for configured symbols",
+    )
+    intraday.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Configured six-digit symbol; repeat to refresh a subset",
+    )
+    intraday.add_argument("--date", help="YYYY-MM-DD; defaults to latest completed session")
+    intraday.add_argument(
+        "--interval",
+        type=int,
+        choices=(1, 5, 15, 30, 60),
+        default=1,
+        help="Aggregation interval in minutes",
+    )
+    intraday.add_argument("--limit", type=int, default=480)
+
+    valuation = subparsers.add_parser(
+        "valuation-refresh",
+        help="Refresh current PE/PB and market-cap quote evidence",
+    )
+    valuation.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Configured six-digit symbol; repeat to refresh a subset",
+    )
+
+    news = subparsers.add_parser(
+        "news-refresh",
+        help="Refresh bounded news and announcement evidence",
+    )
+    news.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Configured symbol for announcement evidence; repeat to limit scope",
+    )
+    news.add_argument("--date", help="YYYY-MM-DD; defaults to latest completed session")
+    news.add_argument("--limit", type=int, default=50, dest="limit_per_source")
+
     cloud_status = subparsers.add_parser(
         "cloud-status", help="Inspect this user's optional Cloudflare R2 backup"
     )
@@ -517,6 +561,44 @@ def main(argv: list[str] | None = None) -> int:
                 and not result.get("errors")
                 else 1
             )
+        if args.command == "intraday-refresh":
+            from .data.intraday import refresh_intraday
+
+            on_date = _parse_cli_iso_date(args.date, "date")
+            selected = args.symbols or [item.symbol for item in config.instruments]
+            results = []
+            for symbol in selected:
+                results.append(
+                    refresh_intraday(
+                        config,
+                        symbol,
+                        trade_date=on_date,
+                        interval=args.interval,
+                        limit=args.limit,
+                    )
+                )
+            print(json.dumps({"snapshots": results}, ensure_ascii=False, indent=2, default=str))
+            return 0 if all(item.get("available") is True for item in results) else 1
+        if args.command == "valuation-refresh":
+            from .data.valuation import refresh_valuation
+
+            result = refresh_valuation(config, symbols=args.symbols)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result.get("available") is True and not (
+                result.get("errors") and not result.get("records")
+            ) else 1
+        if args.command == "news-refresh":
+            from .data.news import refresh_news
+
+            on_date = _parse_cli_iso_date(args.date, "date")
+            result = refresh_news(
+                config,
+                trade_date=on_date,
+                symbols=args.symbols,
+                limit_per_source=args.limit_per_source,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result.get("available") is True else 1
         if args.command == "backtest":
             _ensure_cache(config)
             market = MarketData(config)

@@ -1,11 +1,12 @@
 # Market Intelligence Evidence
 
-The market-intelligence layer in `v0.13.0` is a read-only research surface. It
-currently contains three independent Eastmoney evidence datasets:
-the daily Dragon-Tiger List, closing market breadth with provider-defined board
-rankings, and provider-reported board capital flow. It does not provide intraday
-quotes, exchange-certified records, news sentiment, a strategy signal, or any
-order authority.
+The market-intelligence layer in `v0.14.0` is a read-only research surface. It
+contains six separately stored Eastmoney evidence datasets: current minute
+bars, current valuation quote fields, news/announcements, the daily
+Dragon-Tiger List, closing market breadth with provider-defined board rankings,
+and provider-reported board capital flow. Each dataset has its own source,
+cutoff, response fingerprint and immutable revision chain. None provides
+exchange certification, a strategy signal, or order authority.
 
 ## Current Dataset
 
@@ -14,9 +15,11 @@ order authority.
 | `dragon_tiger_daily` | Eastmoney `RPT_DAILYBILLBOARD_DETAILSNEW` | One completed trading date | Implemented as a local immutable revision chain |
 | `sector_breadth` | Eastmoney `m:90+t:2` board pages plus SH/SZ/BJ benchmark quote responses | One completed trading date | Implemented as a separate local immutable revision chain; see `MARKET_BREADTH.md` |
 | `capital_flow` | Eastmoney `m:90+t:2` board pages with provider-reported order-size buckets | One completed quote date | Implemented as a separate local immutable revision chain; see `CAPITAL_FLOW.md` |
-| Announcements and news | None | - | Not implemented |
-| Valuation percentiles | None | - | Not implemented |
-| Sentiment | None | - | Not implemented; Dragon-Tiger List evidence does not make `sentiment_coverage` available |
+| `intraday` | Eastmoney `trends2` | One completed date and selected interval | Implemented as `state/intraday`; f52-f55 OHLC is retained and wider intervals can be locally derived from validated 1-minute evidence |
+| `valuation` | Eastmoney quote fields | Current quote snapshot | Implemented as `state/valuation`; PE/PB/cash-flow historical percentiles remain null |
+| `news` | Eastmoney快讯 + 个股公告 | One completed cutoff | Implemented as `state/news`; publication time, URL, source and revision are retained |
+| Valuation temperature | None | - | Not implemented; current quote fields are not historical percentile evidence |
+| Sentiment model / hot list | None | - | Not implemented; `lexicon-v1` is a low-confidence research annotation only |
 
 The system identifies the default refresh date from the latest locally
 validated market snapshot. It does not guess a trading day from the wall clock
@@ -67,6 +70,20 @@ the requested date before publication. Provider scope, bucket methodology,
 filters, storage, and non-aggregation rules are documented in [Board
 Capital-Flow Evidence](CAPITAL_FLOW.md).
 
+The bounded minute, valuation, and news feeds use independent commands and
+background jobs:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli intraday-refresh --symbol 510300 --interval 5
+.\.venv\Scripts\python.exe -m ai_trade.cli valuation-refresh --symbol 510300
+.\.venv\Scripts\python.exe -m ai_trade.cli news-refresh --symbol 510300
+```
+
+The minute endpoint is historical research evidence, not a real-time quote or
+Level-2 stream. The valuation endpoint records current PE/PB and market-cap
+fields only. News annotations use a transparent fixed lexicon and do not
+change the assistant's unavailable sentiment role.
+
 ## Validation Contract
 
 The provider accepts only the documented daily report envelope and a bounded
@@ -94,6 +111,9 @@ Validated records are normalized, deterministically ordered, and stored below:
 state/market_intelligence/dragon_tiger/YYYY-MM-DD/
 state/market_intelligence/sector_breadth/YYYY-MM-DD/
 state/market_intelligence/capital_flow/YYYY-MM-DD/
+state/intraday/<symbol>/YYYY-MM-DD/<interval>/
+state/valuation/YYYY-MM-DD/
+state/news/YYYY-MM-DD/
 ```
 
 Each revision carries the source report, retrieval time, response and evidence
@@ -118,10 +138,15 @@ GET /api/market-breadth
 GET /api/market-breadth?date=2026-07-17&q=银行&sort=advance_share&direction=desc&limit=100
 GET /api/capital-flow
 GET /api/capital-flow?date=2026-07-17&q=银行&sort=main_net_inflow&direction=desc&limit=100
+GET /api/intraday?symbol=510300&date=2026-07-17&interval=5&limit=120
+GET /api/valuation?date=2026-07-17&symbol=510300&limit=100
+GET /api/news?date=2026-07-17&symbol=510300&kind=announcement&limit=100
 ```
 
-Supported filters are `date`, `market`, `symbol`, `q`, and `limit`. Parameters
-are unique and bounded; unknown or repeated parameters fail with HTTP 400.
+Supported filters are `date`, `market`, `symbol`, `q`, `limit`, `interval`, and
+`kind` according to the dataset. The minute endpoint requires a six-digit
+`symbol`; parameters are unique and bounded, and unknown or repeated
+parameters fail with HTTP 400.
 Filtering changes only the returned view, not the immutable source snapshot.
 The response keeps source, coverage, fingerprints, revision history, status,
 warnings, and fixed authority alongside the filtered rows.
@@ -137,11 +162,13 @@ Every snapshot and response fixes:
 }
 ```
 
-Dragon-Tiger List, breadth, and capital-flow rows may support a human research
-review. They cannot modify
+Minute, valuation, news, Dragon-Tiger, breadth, and capital-flow rows may support
+a human research review. They cannot modify
 a strategy candidate, mark fundamental or sentiment coverage as available,
 write a paper or broker ledger, create an order, satisfy a promotion gate, or
 unlock live trading. Board flow remains a single-source provider-methodology
-view, not a whole-market total. Later news, valuation, sentiment, or licensed
-flow adapters require their own provider, date, methodology, licensing,
-completeness, staleness, and cross-source contracts before entering this layer.
+view, not a whole-market total. Current valuation fields are not historical
+temperature, and the news lexicon is not a market-sentiment model. Licensed
+tick, order-book, multi-source news, historical valuation, and sentiment
+adapters still require their own date, methodology, licensing, completeness,
+staleness, and cross-source contracts.

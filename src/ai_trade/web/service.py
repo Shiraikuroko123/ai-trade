@@ -31,6 +31,9 @@ from ..data.eastmoney import completed_session_cutoff
 from ..data.market import MarketData
 from ..data.market_breadth import MarketBreadthQuery, MarketBreadthStore
 from ..data.market_intelligence import DragonTigerQuery, DragonTigerStore
+from ..data.intraday import IntradayQuery, IntradayStore
+from ..data.valuation import ValuationQuery, ValuationStore
+from ..data.news import NewsQuery, NewsStore
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
 from ..monitoring import MonitoringEngine
@@ -1285,6 +1288,27 @@ class DashboardService:
             store_query,
             completed_session_cutoff=cutoff,
         )
+        result["generated_at"] = _now()
+        return result
+
+    def intraday(self, query: IntradayQuery) -> dict[str, Any]:
+        """Read validated local minute evidence without refreshing a provider."""
+
+        result = IntradayStore(self.config).list(query)
+        result["generated_at"] = _now()
+        return result
+
+    def valuation(self, query: ValuationQuery | None = None) -> dict[str, Any]:
+        """Read current valuation evidence without contacting a provider."""
+
+        result = ValuationStore(self.config).list(query)
+        result["generated_at"] = _now()
+        return result
+
+    def news(self, query: NewsQuery | None = None) -> dict[str, Any]:
+        """Read validated local news/announcement evidence without network I/O."""
+
+        result = NewsStore(self.config).list(query)
         result["generated_at"] = _now()
         return result
 

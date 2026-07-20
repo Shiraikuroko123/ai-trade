@@ -1,6 +1,6 @@
 # Docker 部署
 
-Docker 方案用于从源码启动 `v0.13.0` 工作台。它不改变策略、回测、风控、
+Docker 方案用于从源码启动 `v0.14.0` 工作台。它不改变策略、回测、风控、
 模拟账本或券商权限，也不会把源码部署能力伪装成发行 wheel 中不存在的远程托管服务。
 
 ## 安全边界
@@ -77,11 +77,12 @@ Linux 用户应在 `.env.docker` 中把 `AI_TRADE_DOCKER_UID` 和
 可写。这两个值主要影响绑定挂载模式；默认命名卷使用镜像内的非 root 身份。
 Docker Desktop for Windows 通常可直接使用默认值。
 
-## 可选 AI 与 R2
+## 可选 AI、Webhook 与 R2
 
-只有容器显式收到的环境变量才可见。需要模型增强或 R2 时，在本地
-`.env.docker` 填写对应变量再重建容器；本地规则无需 AI Key，纯本地存储无需
-R2 凭据。
+只有容器显式收到的环境变量才可见。需要模型增强、监控 Webhook 或 R2 时，
+在本地 `.env.docker` 填写对应变量再重建容器；本地规则无需 AI Key，本机通知
+收件箱无需 Webhook，纯本地存储无需 R2 凭据。外部 Webhook 必须使用 HTTPS，
+密钥至少 16 个 UTF-8 字节；HTTP 只允许容器可达的回环测试端点。
 
 ```powershell
 docker compose --env-file .\.env.docker up -d --force-recreate

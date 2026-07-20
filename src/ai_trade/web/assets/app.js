@@ -60,6 +60,9 @@ const JOB_LABELS = {
   "refresh-market-intelligence": "刷新龙虎榜",
   "refresh-market-breadth": "刷新市场宽度",
   "refresh-capital-flow": "刷新资金流",
+  "refresh-intraday": "刷新分钟行情",
+  "refresh-valuation": "刷新当前估值",
+  "refresh-news": "刷新新闻公告",
   "monitoring-scan": "运行收盘监控",
 };
 
@@ -257,6 +260,24 @@ const state = {
     sort: "main_net_inflow",
     direction: "desc",
     limit: "200",
+  },
+  intradayFilters: {
+    date: "",
+    symbol: "510300",
+    interval: "5",
+    limit: "120",
+  },
+  valuationFilters: {
+    date: "",
+    symbol: "",
+    limit: "200",
+  },
+  newsFilters: {
+    date: "",
+    symbol: "",
+    kind: "all",
+    query: "",
+    limit: "100",
   },
   marketSymbol: "510300",
   marketPeriod: "day",
@@ -932,6 +953,38 @@ function capitalFlowPath() {
   return `/api/capital-flow${query ? `?${query}` : ""}`;
 }
 
+function intradayPath() {
+  const params = new URLSearchParams();
+  const filters = state.intradayFilters || {};
+  params.set("symbol", filters.symbol || state.marketSymbol || "510300");
+  if (filters.date) params.set("date", filters.date);
+  if (filters.interval && filters.interval !== "1") params.set("interval", filters.interval);
+  if (filters.limit && filters.limit !== "480") params.set("limit", filters.limit);
+  return `/api/intraday?${params.toString()}`;
+}
+
+function valuationPath() {
+  const params = new URLSearchParams();
+  const filters = state.valuationFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.limit && filters.limit !== "200") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/valuation${query ? `?${query}` : ""}`;
+}
+
+function newsPath() {
+  const params = new URLSearchParams();
+  const filters = state.newsFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.kind && filters.kind !== "all") params.set("kind", filters.kind);
+  if (filters.query) params.set("q", filters.query);
+  if (filters.limit && filters.limit !== "200") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/news${query ? `?${query}` : ""}`;
+}
+
 async function loadRoute() {
   state.controller?.abort();
   destroyMarketChart();
@@ -966,15 +1019,21 @@ async function loadRoute() {
         universe_error: universeResult.status === "rejected" ? friendlyError(universeResult.reason?.message) : "",
       };
     } else if (requestedRoute === "intelligence") {
-      const [dragonTigerResult, breadthResult, capitalFlowResult] = await Promise.allSettled([
+      const [dragonTigerResult, breadthResult, capitalFlowResult, intradayResult, valuationResult, newsResult] = await Promise.allSettled([
         api(marketIntelligencePath(), { signal }),
         api(marketBreadthPath(), { signal }),
         api(capitalFlowPath(), { signal }),
+        api(intradayPath(), { signal }),
+        api(valuationPath(), { signal }),
+        api(newsPath(), { signal }),
       ]);
       if (
         dragonTigerResult.status === "rejected"
         && breadthResult.status === "rejected"
         && capitalFlowResult.status === "rejected"
+        && intradayResult.status === "rejected"
+        && valuationResult.status === "rejected"
+        && newsResult.status === "rejected"
       ) {
         throw dragonTigerResult.reason;
       }
@@ -985,6 +1044,12 @@ async function loadRoute() {
         breadth_error: breadthResult.status === "rejected" ? friendlyError(breadthResult.reason?.message) : "",
         capital_flow: capitalFlowResult.status === "fulfilled" ? capitalFlowResult.value : null,
         capital_flow_error: capitalFlowResult.status === "rejected" ? friendlyError(capitalFlowResult.reason?.message) : "",
+        intraday: intradayResult.status === "fulfilled" ? intradayResult.value : null,
+        intraday_error: intradayResult.status === "rejected" ? friendlyError(intradayResult.reason?.message) : "",
+        valuation: valuationResult.status === "fulfilled" ? valuationResult.value : null,
+        valuation_error: valuationResult.status === "rejected" ? friendlyError(valuationResult.reason?.message) : "",
+        news: newsResult.status === "fulfilled" ? newsResult.value : null,
+        news_error: newsResult.status === "rejected" ? friendlyError(newsResult.reason?.message) : "",
         generated_at: breadthResult.status === "fulfilled"
           ? breadthResult.value?.generated_at
           : capitalFlowResult.status === "fulfilled"
@@ -1085,7 +1150,7 @@ function updateRouteDate(payload) {
     value = payload.chart?.data_date;
     label = "K 线截止";
   } else if (state.route === "intelligence") {
-    value = payload.breadth?.trade_date || payload.capital_flow?.trade_date || payload.dragon_tiger?.trade_date;
+    value = payload.news?.trade_date || payload.valuation?.trade_date || payload.intraday?.trade_date || payload.breadth?.trade_date || payload.capital_flow?.trade_date || payload.dragon_tiger?.trade_date;
     label = "情报日期";
   } else if (state.route === "monitoring") {
     value = payload.scan?.data_date || payload.snapshot?.data_date;
@@ -1297,6 +1362,74 @@ async function clearCapitalFlowFilters() {
   };
   await loadRoute();
   restoreFocusAfterRender("[data-capital-flow-filter-clear]", "intelligence");
+}
+
+async function applyIntradayFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.intradayFilters = {
+    date: String(values.get("date") || ""),
+    symbol: String(values.get("symbol") || "").trim(),
+    interval: String(values.get("interval") || "1"),
+    limit: String(values.get("limit") || "120"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#intraday-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearIntradayFilters() {
+  state.intradayFilters = {
+    date: "",
+    symbol: state.marketSymbol || "510300",
+    interval: "5",
+    limit: "120",
+  };
+  await loadRoute();
+  restoreFocusAfterRender("[data-intraday-filter-clear]", "intelligence");
+}
+
+async function applyValuationFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.valuationFilters = {
+    date: String(values.get("date") || ""),
+    symbol: String(values.get("symbol") || "").trim(),
+    limit: String(values.get("limit") || "200"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#valuation-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearValuationFilters() {
+  state.valuationFilters = { date: "", symbol: "", limit: "200" };
+  await loadRoute();
+  restoreFocusAfterRender("[data-valuation-filter-clear]", "intelligence");
+}
+
+async function applyNewsFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.newsFilters = {
+    date: String(values.get("date") || ""),
+    symbol: String(values.get("symbol") || "").trim(),
+    kind: String(values.get("kind") || "all"),
+    query: String(values.get("q") || "").trim(),
+    limit: String(values.get("limit") || "100"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#news-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearNewsFilters() {
+  state.newsFilters = {
+    date: "",
+    symbol: "",
+    kind: "all",
+    query: "",
+    limit: "100",
+  };
+  await loadRoute();
+  restoreFocusAfterRender("[data-news-filter-clear]", "intelligence");
 }
 
 function syncJournalDecisionControl() {
@@ -5195,13 +5328,151 @@ function renderCapitalFlow(data, requestError = "") {
   </section>`;
 }
 
+function researchEvidenceStatusLabel(value) {
+  return {
+    current: "当前快照",
+    partial: "部分来源可用",
+    provisional: "盘中待复核",
+    stale: "快照滞后",
+    unavailable: "尚无可用快照",
+  }[String(value || "").toLowerCase()] || "状态待确认";
+}
+
+function researchEvidenceStatusKind(value) {
+  const status = String(value || "").toLowerCase();
+  if (status === "current") return "success";
+  if (["partial", "provisional", "stale"].includes(status)) return "warning";
+  if (status === "unavailable") return "danger";
+  return "neutral";
+}
+
+function researchEvidenceCallouts(data, requestError, action, noun) {
+  const snapshot = data || {};
+  const running = state.jobs.some((job) => job.action === action && ["queued", "running"].includes(job.status));
+  const latestJob = state.jobs.find((job) => job.action === action);
+  const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+  const errors = Array.isArray(snapshot.errors) ? snapshot.errors : [];
+  const primary = running
+    ? `<aside class="callout warning" role="status"><strong>${escapeHtml(noun)}正在刷新</strong><p>新修订完成校验并原子发布前，页面继续显示上一份完整证据。</p></aside>`
+    : latestJob?.status === "failed"
+      ? `<aside class="callout danger" role="alert"><strong>最近一次${escapeHtml(noun)}刷新失败</strong><p>已有修订没有被覆盖；请到<a href="#system">系统任务</a>查看失败证据后重试。</p></aside>`
+      : requestError
+        ? `<aside class="callout danger" role="alert"><strong>${escapeHtml(noun)}接口读取失败</strong><p>${escapeHtml(requestError)}</p></aside>`
+        : snapshot.available !== true
+          ? `<aside class="callout warning" role="status"><strong>尚未固化${escapeHtml(noun)}</strong><p>${escapeHtml(errors[0]?.message || `请先运行“${noun}”刷新任务；页面不会填充示例数据。`)}</p></aside>`
+          : errors.length
+            ? `<aside class="callout warning" role="status"><strong>${escapeHtml(noun)}仅部分可用</strong><ul>${errors.map((item) => `<li>${escapeHtml(item.message || item.code || item)}</li>`).join("")}</ul></aside>`
+            : "";
+  const boundary = warnings.length
+    ? `<aside class="callout warning" role="status"><strong>证据边界</strong><ul>${warnings.map((item) => `<li>${escapeHtml(item.message || item.code || item)}</li>`).join("")}</ul></aside>`
+    : "";
+  return `${primary}${boundary}`;
+}
+
+function renderIntradayEvidence(data, requestError = "") {
+  const snapshot = data || {};
+  const filters = snapshot.filters || state.intradayFilters || {};
+  const bars = Array.isArray(snapshot.bars) ? snapshot.bars : [];
+  const summary = snapshot.summary || {};
+  const source = snapshot.source || {};
+  const revisions = Array.isArray(snapshot.revisions) ? snapshot.revisions : [];
+  const status = String(snapshot.status || "unavailable").toLowerCase();
+  const statusKind = researchEvidenceStatusKind(status);
+  const form = `<form class="filter-form intraday-filter-form" id="intraday-filter-form" aria-describedby="intraday-filter-help">
+    <div class="field"><label for="intraday-date">交易日期</label><input id="intraday-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div>
+    <div class="field"><label for="intraday-symbol">证券代码</label><input id="intraday-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required value="${escapeHtml(filters.symbol || state.marketSymbol || "510300")}"></div>
+    <div class="field"><label for="intraday-interval">聚合周期</label><select id="intraday-interval" name="interval">${[["1", "1 分钟"], ["5", "5 分钟"], ["15", "15 分钟"], ["30", "30 分钟"], ["60", "60 分钟"]].map(([value, label]) => `<option value="${value}"${String(filters.interval || snapshot.interval_minutes || "5") === value ? " selected" : ""}>${label}</option>`).join("")}</select></div>
+    <div class="field"><label for="intraday-limit">最多返回</label><input id="intraday-limit" name="limit" type="number" min="1" max="1500" step="1" value="${escapeHtml(filters.limit || "120")}"></div>
+    <div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-intraday-filter-clear>重置</button></div>
+  </form><p id="intraday-filter-help" class="section-note">查询只读取本机不可变修订；刷新任务会为配置中的证券抓取有界历史分时数据。</p>`;
+  const rows = bars.length
+    ? bars.map((item) => `<tr><td class="mono">${escapeHtml(item.time || item.timestamp || "—")}</td><td class="numeric">${formatNumber(item.open, 3)}${item.open_derived ? '<span class="table-subtext">历史派生</span>' : '<span class="table-subtext">提供方</span>'}</td><td class="numeric">${formatNumber(item.high, 3)}</td><td class="numeric">${formatNumber(item.low, 3)}</td><td class="numeric ${tone((finite(item.close) || 0) - (finite(item.open) || 0))}">${formatNumber(item.close, 3)}</td><td class="numeric">${formatNumber(item.volume, 0)}</td><td class="numeric">${formatCompactMoney(item.amount)}</td><td class="numeric">${formatNumber(item.average, 3)}</td></tr>`).join("")
+    : emptyRow(8, snapshot.available === true ? "当前筛选没有分钟记录" : "尚无已发布的分钟行情证据");
+  const revisionRows = revisions.length
+    ? [...revisions].reverse().map((item) => `<tr><td>${item.revision_id === snapshot.revision_id ? statusChip("当前", "info") : statusChip("历史", "neutral")}</td><td class="mono">${escapeHtml(item.revision_id || "—")}</td><td>${escapeHtml(item.trade_date || "—")}</td><td>${formatDate(item.retrieved_at, true)}</td><td class="mono">${escapeHtml(shortFingerprint(item.evidence_fingerprint))}</td></tr>`).join("")
+    : emptyRow(5, "尚无修订历史");
+  return `<section id="intraday-evidence" class="intelligence-dataset intraday-dataset" tabindex="-1">
+    ${pageIntro("历史分钟行情", "按证券、交易日和分钟周期读取已校验分时修订；当前数据只用于研究复核。", actionButton("refresh-intraday", "primary"))}
+    <section class="intelligence-filter-band" aria-label="分钟行情筛选">${form}</section>
+    <section class="metric-strip" aria-label="分钟行情摘要">
+      ${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · ${snapshot.interval_minutes || filters.interval || "—"} 分钟`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}
+      ${metric("证券", snapshot.symbol || filters.symbol || "—", snapshot.name || "名称待确认")}
+      ${metric("显示 / 来源记录", `${formatInteger(summary.returned_count ?? bars.length)} / ${formatInteger(summary.bar_count)}`, `${escapeHtml(summary.start || "—")} 至 ${escapeHtml(summary.end || "—")}`)}
+      ${metric("成交量 / 成交额", snapshot.available === true ? `${formatNumber(summary.total_volume, 0)} / ${formatCompactMoney(summary.total_amount)}` : "不可用", "保留提供方单位，不进入策略")}
+    </section>
+    ${researchEvidenceCallouts(snapshot, requestError, "refresh-intraday", "分钟行情")}
+    <section class="panel"><div class="panel-heading"><div><h2>分钟明细</h2><p>${escapeHtml(snapshot.symbol || filters.symbol || "—")} · ${escapeHtml(snapshot.trade_date || "日期不可用")}</p></div></div><div class="table-wrap" aria-label="分钟行情宽表"><table class="data-table intraday-table"><thead><tr><th>时间</th><th class="numeric">开盘</th><th class="numeric">最高</th><th class="numeric">最低</th><th class="numeric">收盘</th><th class="numeric">成交量</th><th class="numeric">成交额</th><th class="numeric">均价</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="equal-layout"><article class="panel">${panelHeader("来源与口径", "第三方分时接口及响应指纹")}<div class="path-list"><div class="path-row"><span>来源</span><code>${escapeHtml(source.provider || "—")} · ${escapeHtml(source.secid || "—")}</code></div><div class="path-row"><span>原始 / 聚合记录</span><code>${formatInteger(source.raw_bar_count)} / ${formatInteger(summary.bar_count)}</code></div><div class="path-row"><span>开盘价方法</span><code>${escapeHtml(source.open_method || "provider_reported_f52")}</code></div><div class="path-row"><span>均价方法</span><code>${escapeHtml(source.average_method || "provider_cumulative_f58")}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article><article class="panel">${panelHeader("不可变修订", "相同证据幂等复用，变化时追加")}<div class="table-wrap"><table class="data-table compact"><thead><tr><th>状态</th><th>修订 ID</th><th>交易日</th><th>抓取时间</th><th>证据指纹</th></tr></thead><tbody>${revisionRows}</tbody></table></div></article></section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>分钟明细使用东方财富 f52-f55 字段；没有单独发布的宽周期修订时，页面会标明本地确定性聚合。分钟数据不进入策略、模拟盘、订单、风控门禁或真实交易授权。</p></aside>
+  </section>`;
+}
+
+function renderValuationEvidence(data, requestError = "") {
+  const snapshot = data || {};
+  const filters = snapshot.filters || state.valuationFilters || {};
+  const records = Array.isArray(snapshot.records) ? snapshot.records : [];
+  const summary = snapshot.summary || {};
+  const source = snapshot.source || {};
+  const status = String(snapshot.status || "unavailable").toLowerCase();
+  const statusKind = researchEvidenceStatusKind(status);
+  const form = `<form class="filter-form valuation-filter-form" id="valuation-filter-form" aria-describedby="valuation-filter-help"><div class="field"><label for="valuation-date">快照日期</label><input id="valuation-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div><div class="field"><label for="valuation-symbol">证券代码</label><input id="valuation-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="留空查看全部"></div><div class="field"><label for="valuation-limit">最多返回</label><input id="valuation-limit" name="limit" type="number" min="1" max="500" value="${escapeHtml(filters.limit || "200")}"></div><div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-valuation-filter-clear>重置</button></div></form><p id="valuation-filter-help" class="section-note">当前字段按来源缩放规则固化；留空证券代码时读取本地快照中的全部标的。</p>`;
+  const rows = records.length
+    ? records.map((item) => `<tr><td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || "名称未提供")}</span></td><td class="numeric">${formatNumber(item.price, 3)}</td><td class="numeric ${tone(item.change_pct)}">${formatPercentPoints(item.change_pct, true)}</td><td class="numeric">${formatNumber(item.pe_ttm, 2)}</td><td class="numeric">${formatNumber(item.pe_static, 2)}</td><td class="numeric">${formatNumber(item.pe_dynamic, 2)}</td><td class="numeric">${formatNumber(item.pb, 2)}</td><td class="numeric">${formatCompactMoney(item.market_cap)}</td><td class="numeric">${formatCompactMoney(item.float_market_cap)}</td><td>${statusChip("未接入", "warning")}</td></tr>`).join("")
+    : emptyRow(10, snapshot.available === true ? "当前筛选没有估值记录" : "尚无已发布的当前估值证据");
+  const coverage = summary.valuation_metric_coverage || {};
+  return `<section id="valuation-evidence" class="intelligence-dataset valuation-dataset" tabindex="-1">
+    ${pageIntro("当前估值字段", "记录当前 PE、PB 与市值字段及原始映射；不把价格历史伪装成估值水温。", actionButton("refresh-valuation", "primary"))}
+    <section class="intelligence-filter-band" aria-label="当前估值筛选">${form}</section>
+    <section class="metric-strip" aria-label="当前估值摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · 显示 ${formatInteger(summary.returned_count ?? records.length)} 条`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("PE TTM / PB 覆盖", `${formatInteger(coverage.pe_ttm)} / ${formatInteger(coverage.pb)}`, `请求 ${formatInteger(summary.requested_count)} 个标的`)}${metric("来源错误", formatInteger(summary.error_count), snapshot.errors?.length ? "部分标的未发布新值" : "未记录来源错误", summary.error_count ? "tone-warning" : "tone-positive")}${metric("历史估值分位", "不可用", "PE / PB / 现金流分位均未接入", "tone-warning")}</section>
+    ${researchEvidenceCallouts(snapshot, requestError, "refresh-valuation", "当前估值")}
+    <section class="panel">${panelHeader("估值明细", `${snapshot.trade_date || "日期不可用"} · 当前字段，不是历史分位`)}<div class="table-wrap" aria-label="当前估值宽表"><table class="data-table valuation-table"><thead><tr><th>证券</th><th class="numeric">价格</th><th class="numeric">涨跌幅</th><th class="numeric">PE TTM</th><th class="numeric">静态 PE</th><th class="numeric">动态 PE</th><th class="numeric">PB</th><th class="numeric">总市值</th><th class="numeric">流通市值</th><th>历史分位</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="equal-layout"><article class="panel">${panelHeader("字段映射", "来源字段、缩放规则和响应指纹")}<div class="path-list"><div class="path-row"><span>价格 / 涨跌</span><code>${escapeHtml(source.scaling?.price || "—")} · ${escapeHtml(source.scaling?.change_pct || "—")}</code></div><div class="path-row"><span>PE / PB</span><code>${escapeHtml(source.scaling?.pe_ttm || "—")} · ${escapeHtml(source.scaling?.pb || "—")}</code></div><div class="path-row"><span>市值单位</span><code>${escapeHtml(source.scaling?.market_cap || "—")}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article><article class="panel">${panelHeader("缺失能力", "历史序列接入前保持空值")}<div class="check-list">${detailRow("历史 PE 分位", "UNAVAILABLE", "warning")}${detailRow("历史 PB 分位", "UNAVAILABLE", "warning")}${detailRow("现金流估值分位", "UNAVAILABLE", "warning")}${detailRow("交易授权", "禁止", "danger")}</div></article></section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>这些是东方财富当前报价字段，不是经过跨期校验的估值水温。缺失分位保持空值；当前估值不会修改策略、持仓、订单或交易权限。</p></aside>
+  </section>`;
+}
+
+function newsSentimentLabel(annotation) {
+  if (!annotation || annotation.confidence === "none") return "无词典命中";
+  return { positive: "正向词较多", negative: "负向词较多", neutral: "词典中性" }[annotation.label] || "标注不可用";
+}
+
+function renderNewsEvidence(data, requestError = "") {
+  const snapshot = data || {};
+  const filters = snapshot.filters || state.newsFilters || {};
+  const records = Array.isArray(snapshot.records) ? snapshot.records : [];
+  const summary = snapshot.summary || {};
+  const source = snapshot.source || {};
+  const status = String(snapshot.status || "unavailable").toLowerCase();
+  const statusKind = researchEvidenceStatusKind(status);
+  const annotationCounts = summary.sentiment_annotation || {};
+  const form = `<form class="filter-form news-filter-form" id="news-filter-form" aria-describedby="news-filter-help"><div class="field"><label for="news-date">快照日期</label><input id="news-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div><div class="field"><label for="news-symbol">证券代码</label><input id="news-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="留空含全市场快讯"></div><div class="field"><label for="news-kind">内容类型</label><select id="news-kind" name="kind"><option value="all"${String(filters.kind || "all") === "all" ? " selected" : ""}>全部</option><option value="news"${filters.kind === "news" ? " selected" : ""}>快讯</option><option value="announcement"${filters.kind === "announcement" ? " selected" : ""}>公告</option></select></div><div class="field news-query"><label for="news-query">标题或摘要</label><input id="news-query" name="q" type="search" maxlength="100" value="${escapeHtml(filters.q ?? filters.query ?? "")}" placeholder="输入关键词"></div><div class="field"><label for="news-limit">最多返回</label><input id="news-limit" name="limit" type="number" min="1" max="2000" value="${escapeHtml(filters.limit || "100")}"></div><div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-news-filter-clear>重置</button></div></form><p id="news-filter-help" class="section-note">筛选只读取已固化快照；发布时间、原文地址、来源响应指纹与修订链都保留在本机。</p>`;
+  const rows = records.length
+    ? records.map((item) => { const annotation = item.sentiment_annotation || {}; return `<tr><td>${item.kind === "announcement" ? statusChip("公告", "info") : statusChip("快讯", "neutral")}</td><td><a class="evidence-link" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(item.title || "标题不可用")}</strong></a><span class="table-subtext">${escapeHtml(item.summary || "摘要不可用")}</span></td><td class="mono">${escapeHtml(item.symbol || "全市场")}</td><td>${formatDate(item.published_at, true)}</td><td>${escapeHtml(item.source || "—")}</td><td><strong>${escapeHtml(newsSentimentLabel(annotation))}</strong><span class="table-subtext">lexicon-v1 · ${formatNumber(annotation.score, 2)} · ${escapeHtml(annotation.confidence || "none")}</span></td></tr>`; }).join("")
+    : emptyRow(6, snapshot.available === true ? "当前筛选没有匹配内容" : "尚无已发布的新闻或公告证据");
+  return `<section id="news-evidence" class="intelligence-dataset news-dataset" tabindex="-1">
+    ${pageIntro("新闻与公告证据", "保留发布时间、原文链接、来源指纹和不可变修订；低置信度词典标注单独披露。", actionButton("refresh-news", "primary"))}
+    <section class="intelligence-filter-band" aria-label="新闻公告筛选">${form}</section>
+    <section class="metric-strip" aria-label="新闻公告摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · 显示 ${formatInteger(summary.returned_count ?? records.length)} 条`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("快讯 / 公告", `${formatInteger(summary.news_count)} / ${formatInteger(summary.announcement_count)}`, `匹配证券 ${formatInteger(summary.symbol_count)} 个`)}${metric("词典正向 / 负向", `${formatInteger(annotationCounts.positive)} / ${formatInteger(annotationCounts.negative)}`, `中性 ${formatInteger(annotationCounts.neutral)} · 低置信度注释`)}${metric("来源响应", formatInteger(source.response_count), `${source.provider || "未提供"} · 非交易所认证`)}</section>
+    ${researchEvidenceCallouts(snapshot, requestError, "refresh-news", "新闻公告")}
+    <section class="panel">${panelHeader("新闻与公告", `${snapshot.trade_date || "日期不可用"} · 按发布时间倒序`)}<div class="table-wrap" aria-label="新闻公告宽表"><table class="data-table news-table"><thead><tr><th>类型</th><th>标题与摘要</th><th>证券</th><th>发布时间</th><th>来源</th><th>透明词典标注</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="equal-layout"><article class="panel">${panelHeader("来源与指纹", "快讯与个股公告独立请求")}<div class="path-list"><div class="path-row"><span>快讯接口</span><code>${escapeHtml(source.news_endpoint || "—")}</code></div><div class="path-row"><span>公告接口</span><code>${escapeHtml(source.announcement_endpoint || "—")}</code></div><div class="path-row"><span>响应数量</span><code>${formatInteger(source.response_count)}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article><article class="panel">${panelHeader("标注边界", "透明计数，不是情绪模型")}<p class="section-note">lexicon-v1 仅统计固定正负词命中并给出低置信度标签；它没有市场基准、训练样本、讽刺识别或跨源校准，也不会改变 AI 分析中的 sentiment coverage。</p><div class="check-list">${detailRow("基本面角色", "仍未完整接入", "warning")}${detailRow("情绪角色", "仍为 UNAVAILABLE", "warning")}${detailRow("交易授权", "禁止", "danger")}</div></article></section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>快讯和公告来自单一第三方公共来源；词典注释不等于新闻热度、市场情绪或投资建议。任何内容都不能生成订单或放宽策略与风险门禁。</p></aside>
+  </section>`;
+}
+
 function renderMarketIntelligence(payload) {
   const dragonTiger = payload?.dragon_tiger || payload || {};
   const breadth = payload?.breadth || {};
   const capitalFlow = payload?.capital_flow || {};
+  const intraday = payload?.intraday || {};
+  const valuation = payload?.valuation || {};
+  const news = payload?.news || {};
   return `<div class="page-stack intelligence-page">
-    ${pageIntro("收盘市场情报", "先看市场宽度，再比较板块资金流，最后复核龙虎榜事件；三个数据集分别披露日期、来源和完整性。")}
-    <nav class="intelligence-jump-nav" aria-label="市场情报数据集"><a href="#intelligence" data-intelligence-jump="market-breadth-evidence">市场宽度与板块排名</a><a href="#intelligence" data-intelligence-jump="capital-flow-evidence">板块资金流</a><a href="#intelligence" data-intelligence-jump="dragon-tiger-evidence">龙虎榜收盘证据</a></nav>
+    ${pageIntro("市场研究证据", "先看新闻与当前估值，再复核分钟行情、市场宽度、资金流和龙虎榜；每个数据集独立披露来源与缺失能力。")}
+    <nav class="intelligence-jump-nav" aria-label="市场情报数据集"><a href="#intelligence" data-intelligence-jump="news-evidence">新闻与公告</a><a href="#intelligence" data-intelligence-jump="valuation-evidence">当前估值</a><a href="#intelligence" data-intelligence-jump="intraday-evidence">分钟行情</a><a href="#intelligence" data-intelligence-jump="market-breadth-evidence">市场宽度</a><a href="#intelligence" data-intelligence-jump="capital-flow-evidence">板块资金流</a><a href="#intelligence" data-intelligence-jump="dragon-tiger-evidence">龙虎榜</a></nav>
+    ${renderNewsEvidence(news, payload?.news_error || "")}
+    ${renderValuationEvidence(valuation, payload?.valuation_error || "")}
+    ${renderIntradayEvidence(intraday, payload?.intraday_error || "")}
     ${renderMarketBreadth(breadth, payload?.breadth_error || "")}
     ${renderCapitalFlow(capitalFlow, payload?.capital_flow_error || "")}
     ${renderDragonTigerIntelligence(dragonTiger, payload?.dragon_tiger_error || "")}
@@ -5693,6 +5964,30 @@ function monitoringStatusKind(value) {
   }[String(value || "").toLowerCase()] || "neutral";
 }
 
+function monitoringDeliveryStatusLabel(value) {
+  return {
+    disabled: "仅本机",
+    idle: "已配置，待投递",
+    succeeded: "投递成功",
+    partial: "部分成功",
+    failed: "投递失败",
+    configuration_error: "配置错误",
+    invalid_evidence: "证据异常",
+  }[String(value || "").toLowerCase()] || "状态待确认";
+}
+
+function monitoringDeliveryStatusKind(value) {
+  return {
+    disabled: "neutral",
+    idle: "info",
+    succeeded: "success",
+    partial: "warning",
+    failed: "danger",
+    configuration_error: "danger",
+    invalid_evidence: "danger",
+  }[String(value || "").toLowerCase()] || "neutral";
+}
+
 function monitoringRuleMetadata(data) {
   return Object.fromEntries((Array.isArray(data?.rule_types) ? data.rule_types : []).map((item) => [item.rule_type, item]));
 }
@@ -5937,6 +6232,11 @@ function renderMonitoring(data) {
   const snapshotDate = snapshot.data_date || scan.data_date || "不可用";
   const scanLabel = monitoringStatusLabel(scanStatus);
   const scanKind = monitoringStatusKind(scanStatus);
+  const deliveryStatus = String(notificationDelivery.status || "disabled").toLowerCase();
+  const deliveryCounts = `成功 ${formatInteger(notificationDelivery.succeeded_count)} · 失败 ${formatInteger(notificationDelivery.failed_count)} · 待投递 ${formatInteger(notificationDelivery.pending_count)}`;
+  const deliveryNote = notificationDelivery.last_error
+    ? String(notificationDelivery.last_error)
+    : `${deliveryCounts} · 尝试 ${formatInteger(notificationDelivery.attempt_count)}`;
   const authority = data?.authority || {};
   const actions = `<div class="action-row"><button class="button primary" type="button" data-monitoring-scan${state.monitoringBusy ? ' disabled aria-busy="true"' : state.monitoringRefreshBusy ? " disabled" : ""}>${state.monitoringBusy ? "扫描中" : "运行收盘监控"}</button><button class="button secondary" type="button" data-monitoring-refresh${state.monitoringRefreshBusy ? ' disabled aria-busy="true"' : state.monitoringBusy ? " disabled" : ""}>${state.monitoringRefreshBusy ? "刷新中" : "刷新监控"}</button></div>`;
   const watchlistOptions = [`<option value="">全部列表</option>`, ...watchlists.map((item) => `<option value="${escapeHtml(item.watchlist_id)}"${state.monitoringFilters.watchlist_id === item.watchlist_id ? " selected" : ""}>${escapeHtml(item.name)}</option>`)].join("");
@@ -6024,6 +6324,7 @@ function renderMonitoring(data) {
       { label: "监控列表", value: `${formatInteger(summary.watchlist_count || 0)} 个`, status: `${formatInteger(summary.symbol_count || 0)} 支证券`, kind: summary.watchlist_count ? "info" : "neutral", note: `${formatInteger(summary.enabled_rule_count || 0)} / ${formatInteger(summary.rule_count || 0)} 条规则启用` },
       { label: "最近扫描", value: scanLabel, status: scan.data_date || scan.status === "succeeded" ? "有记录" : "无记录", kind: scanKind, note: scan.finished_at ? `完成于 ${formatDate(scan.finished_at, true)}` : "尚未生成扫描记录" },
       { label: "待处理告警", value: `${formatInteger(unresolved)} 条`, status: critical ? `${formatInteger(critical)} 条严重` : unresolved ? "需要复核" : "当前为空", kind: critical ? "danger" : unresolved ? "warning" : "success", note: `未读通知 ${formatInteger(unreadNotifications)} 条 · 滞后告警 ${formatInteger(summary.stale_count || 0)} 条` },
+      { label: "外部投递", value: monitoringDeliveryStatusLabel(deliveryStatus), status: notificationDelivery.external_delivery_configured ? "Webhook" : "未启用", kind: monitoringDeliveryStatusKind(deliveryStatus), note: deliveryNote },
       { label: "权限边界", value: authority.research_only === false ? "状态待确认" : "仅研究", status: authority.execution_authorized ? "需复核" : "不会下单", kind: authority.execution_authorized ? "warning" : "info", note: "不会修改策略、账本或券商权限" },
     ], "监控日期、范围与权限")}
     <section class="metric-strip monitoring-metric-strip" aria-label="监控摘要">
@@ -6841,7 +7142,7 @@ async function startJob(action) {
     mergeJob(job);
     notify(`${JOB_LABELS[action] || action}已进入任务队列`);
     updateJobsUi();
-    if (["refresh-market-intelligence", "refresh-market-breadth", "refresh-capital-flow"].includes(action) && state.route === "intelligence") {
+    if (["refresh-market-intelligence", "refresh-market-breadth", "refresh-capital-flow", "refresh-intraday", "refresh-valuation", "refresh-news"].includes(action) && state.route === "intelligence") {
       await loadRoute();
       restoreFocusAfterRender(`[data-job-action="${action}"]`, "intelligence");
     }
@@ -6918,7 +7219,7 @@ async function pollJobs() {
         ) {
           storageRefreshMode = "local";
         }
-        if (["refresh-market-intelligence", "refresh-market-breadth", "refresh-capital-flow"].includes(job.action)) {
+        if (["refresh-market-intelligence", "refresh-market-breadth", "refresh-capital-flow", "refresh-intraday", "refresh-valuation", "refresh-news"].includes(job.action)) {
           intelligenceRefreshCompleted = job.action;
         }
         if (["refresh-data", "cross-check-data"].includes(job.action)) {
@@ -6999,6 +7300,9 @@ function notify(message, error = false) {
 
 function jumpToIntelligenceDataset(link) {
   const allowed = new Set([
+    "news-evidence",
+    "valuation-evidence",
+    "intraday-evidence",
     "market-breadth-evidence",
     "capital-flow-evidence",
     "dragon-tiger-evidence",
@@ -7049,6 +7353,21 @@ document.addEventListener("click", (event) => {
   const capitalFlowFilterClear = event.target.closest("[data-capital-flow-filter-clear]");
   if (capitalFlowFilterClear) {
     clearCapitalFlowFilters();
+    return;
+  }
+  const intradayFilterClear = event.target.closest("[data-intraday-filter-clear]");
+  if (intradayFilterClear) {
+    clearIntradayFilters();
+    return;
+  }
+  const valuationFilterClear = event.target.closest("[data-valuation-filter-clear]");
+  if (valuationFilterClear) {
+    clearValuationFilters();
+    return;
+  }
+  const newsFilterClear = event.target.closest("[data-news-filter-clear]");
+  if (newsFilterClear) {
+    clearNewsFilters();
     return;
   }
   const breadthFilterClear = event.target.closest("[data-market-breadth-filter-clear]");
@@ -7426,6 +7745,15 @@ document.addEventListener("submit", (event) => {
   } else if (event.target.id === "market-intelligence-filter-form") {
     event.preventDefault();
     if (event.target.reportValidity()) applyIntelligenceFilterForm(event.target);
+  } else if (event.target.id === "intraday-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyIntradayFilterForm(event.target);
+  } else if (event.target.id === "valuation-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyValuationFilterForm(event.target);
+  } else if (event.target.id === "news-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyNewsFilterForm(event.target);
   } else if (event.target.id === "market-controls-form") {
     event.preventDefault();
     const values = new FormData(event.target);

@@ -76,7 +76,7 @@ class _EastmoneyProvider:
         display_name="Eastmoney",
         implementation="eastmoney.daily_kline",
         daily_bars=True,
-        intraday_bars=False,
+        intraday_bars=True,
         quotes=True,
     )
     primary_source_label = "network"

@@ -7,9 +7,9 @@
 
 [架构](docs/ARCHITECTURE.md) · [Docker 部署](docs/DOCKER_DEPLOYMENT.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-`v0.13.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+`v0.14.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页现在还提供有界历史分钟行情、当前 PE/PB/市值字段、带发布时间和原文指纹的新闻/公告，以及可选的 HMAC Webhook 外部通知；这些新增证据仍固定为 `research_only`。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
-本 README 描述 `v0.13.0` 公开发行版及其安全边界。研究监控、持久化日报/周报、龙虎榜、市场宽度与板块排名、板块资金流、`archive-generate`、Yahoo 独立核对及相关后台任务均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
+本 README 描述 `v0.14.0` 公开发行版及其安全边界。研究监控、持久化日报/周报、龙虎榜、市场宽度与板块排名、板块资金流、历史分钟行情、当前估值、新闻/公告、可选 Webhook、`archive-generate`、Yahoo 独立核对及相关后台任务均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
 
 系统已经贯通以下流程：
 
@@ -41,13 +41,13 @@
 
 ## 快速开始
 
-推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.13.0) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
+推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.14.0) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
 
 ```powershell
-New-Item -ItemType Directory -Force .\AI-Trade-v0.13.0 | Out-Null
-Set-Location .\AI-Trade-v0.13.0
+New-Item -ItemType Directory -Force .\AI-Trade-v0.14.0 | Out-Null
+Set-Location .\AI-Trade-v0.14.0
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.13.0/ai_trade-0.13.0-py3-none-any.whl"
+.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.14.0/ai_trade-0.14.0-py3-none-any.whl"
 .\.venv\Scripts\ai-trade.exe init --directory .\workspace
 Set-Location .\workspace
 ..\.venv\Scripts\ai-trade.exe download --force
@@ -231,11 +231,11 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 左侧 **行情** 视图使用随 wheel 本地分发的 KLineChart 10.0.0，不访问 CDN。后端只接受配置证券、`day/week/month` 周期和有界根数；周/月 OHLCV 由已验证日线按自然周期确定性聚合，日期使用该周期最后一个实际交易日，不补造交易会话。页面同时显示配置数据源、实际回退来源、复权口径、已完成交易日、manifest 与行情文件指纹。缓存缺失或陈旧时会明确显示恢复状态，不会在 GET 请求中下载或改写数据。
 
-图表操作只改变当前浏览器视图。指标切换、缩放、十字线和模拟成交标记不会修改策略候选、活动模拟配置、持仓账本、云端快照或券商权限。分钟线、分时、盘口和实时推送尚未接入；项目不会用日线伪造这些数据。
+图表操作只改变当前浏览器视图。指标切换、缩放、十字线和模拟成交标记不会修改策略候选、活动模拟配置、持仓账本、云端快照或券商权限。市场情报页可读取独立固化的历史分钟证据，但它不是 Tick、五档盘口、Level-2 或实时行情，也不会进入策略和交易授权。
 
 ## 收盘市场情报
 
-`v0.13.0` 新增左侧 **市场情报** 视图。龙虎榜数据集抓取指定交易日的全部分页，校验交易日、唯一键、字段、有限数值、金额关系、分页数和总记录数后，才在 `state/market_intelligence/` 追加一份不可覆盖的本地 revision。市场宽度数据集联合校验东方财富 `m:90+t:2` 板块集合的全部分页，以及上证、深证、北证三条基准响应中的上涨、下跌和平盘家数；板块资金流数据集单独校验同一板块集合的完整分页、主力及分桶资金流字段和报价日期。三个数据集相互独立；相同规范化证据会幂等复用，同日证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
+`v0.14.0` 的左侧 **市场情报** 视图包含六个独立证据集：历史分钟行情、当前估值字段、新闻/公告、龙虎榜、市场宽度与板块排名、板块资金流。每次刷新都校验日期或截止时间、字段、有限数值、来源响应指纹和规范化证据指纹，再在各自的 `state/` 子目录追加不可覆盖的本地 revision。相同规范化证据会幂等复用，证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。分钟行情保留东方财富 `f52-f55` OHLC 映射，并披露更宽周期的本地确定性聚合；估值页只显示当前 PE/PB/市值，历史估值分位保持不可用；新闻页保留发布时间、原文 URL、来源响应指纹与低置信度 `lexicon-v1` 注释，但不把它冒充成完整市场情绪模型。
 
 龙虎榜支持按交易日、市场、六位证券代码和上榜原因筛选；板块排名支持按交易日、名称/代码、涨跌幅、上涨占比、换手率、量比、市值或成分数量排序；资金流支持按交易日、名称/代码、涨跌幅、主力或各订单规模分桶净额/占比排序。GET 请求都只读本地证据且不会触网。页面会区分尚未抓取、合法空筛选、快照滞后、运行中和刷新失败，并披露来源口径、完整性、响应与证据指纹。东方财富是单一公开来源而不是交易所认证数据；`m:90+t:2` 是提供方定义的、可能重叠的板块集合，不等同经许可的纯行业分类；资金流金额沿用提供方订单规模方法且不应求和解释为全市场流入，宽度计数也不等同市场情绪，因此 AI 的 `sentiment_coverage` 仍保持 `UNAVAILABLE`。总览见 [市场情报证据](docs/MARKET_INTELLIGENCE.md)，板块数据口径、命令和接口见 [市场宽度与板块排名](docs/MARKET_BREADTH.md) 与 [板块资金流证据](docs/CAPITAL_FLOW.md)。
 
@@ -244,6 +244,9 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 ```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli market-breadth-refresh
 .\.venv\Scripts\python.exe -m ai_trade.cli capital-flow-refresh
+.\.venv\Scripts\python.exe -m ai_trade.cli intraday-refresh --symbol 510300 --interval 5
+.\.venv\Scripts\python.exe -m ai_trade.cli valuation-refresh --symbol 510300
+.\.venv\Scripts\python.exe -m ai_trade.cli news-refresh --symbol 510300
 ```
 
 ## 证券池批量筛选
@@ -254,7 +257,7 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 完成上面的启动步骤后，打开命令打印的回环地址，在左侧导航选择 **AI 分析**。默认本地模式不需要 API Key；选择标的和 **回看交易日** 后即可对已完成 K 线做研究复核。助理结论只有 `NO_ACTION`、`WATCH`、`REVIEW_CANDIDATE` 和 `REDUCE_RISK`：它们都不是买卖指令，其中 `REDUCE_RISK` 也只表示需要人工检查风险，不表示自动卖出或调整仓位。
 
-`v0.13.0` 会为每份新分析生成确定性的 **视角冲突审计**。页面把技术面、风险面与策略门禁之间的实质分歧，和基本面/情绪数据尚未接入造成的覆盖缺口分别列出，并显示本地确定性结论、模型建议、最终研究结论和权限守卫结果。模型试图放宽本地结论时会被阻断并留下文字记录；这不是多模型并行或投票，也不会生成订单、改变持仓或取得交易权限。旧分析没有该结构时会明确要求重新运行，不会伪造历史审计。
+`v0.14.0` 会为每份新分析生成确定性的 **视角冲突审计**。页面把技术面、风险面与策略门禁之间的实质分歧，和基本面/情绪数据尚未接入造成的覆盖缺口分别列出，并显示本地确定性结论、模型建议、最终研究结论和权限守卫结果。模型试图放宽本地结论时会被阻断并留下文字记录；这不是多模型并行或投票，也不会生成订单、改变持仓或取得交易权限。旧分析没有该结构时会明确要求重新运行，不会伪造历史审计。
 
 需要使用自己的 OpenAI 兼容模型端点时，在 PowerShell 运行：
 
@@ -276,7 +279,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
 
 ## 研究日志与日报/周报归档
 
-本节的持久化日报/周报、生成接口和计划任务已包含在 `v0.13.0` wheel 中。
+本节的持久化日报/周报、生成接口和计划任务已包含在 `v0.14.0` wheel 中。
 
 **研究** 页面中的“研究日志”用于记录人工观察、研究理由和复盘结论。每条记录按用户隔离，带有研究日期、记录类型、可选证券、标题、笔记、观点和确信度；服务器会自动绑定登录用户和记录人，并在写入时保存可重算的内容指纹、行情快照日期/指纹以及当前策略候选状态。行情或策略证据暂不可用时会显式记录 `available=false`，不会用空值冒充已验证证据。
 
@@ -491,7 +494,7 @@ Get-ScheduledTask -TaskName 'AI-Trade Research Monitor Daily'
 Get-ScheduledTaskInfo -TaskName 'AI-Trade Research Monitor Daily'
 ```
 
-监控任务调用一次性 `monitor-scan --all-profiles`，不会启动常驻服务或修改策略、模拟账本和券商权限。打开监控页后，本地收件箱会把新告警和失败扫描按来源 ID 幂等登记；它没有邮件、Webhook、Windows Toast 或移动端外部投递。日志位于 `logs/scheduled_monitor.log`，超过 5 MiB 自动轮换并保留最近 5 份。完整命令、失败语义、通知状态和卸载方法见 [监控与告警运维](docs/MONITORING.md)。
+监控任务调用一次性 `monitor-scan --all-profiles`，不会启动常驻服务或修改策略、模拟账本和券商权限。打开监控页后，本地收件箱会把新告警和失败扫描按来源 ID 幂等登记；设置 `AI_TRADE_WEBHOOK_URL` 与 `AI_TRADE_WEBHOOK_SECRET` 后，还可通过 HTTPS HMAC Webhook 投递未读通知，投递失败不会改变本地扫描结果。日志位于 `logs/scheduled_monitor.log`，超过 5 MiB 自动轮换并保留最近 5 份。完整命令、失败语义、通知状态和卸载方法见 [监控与告警运维](docs/MONITORING.md)。
 
 安装每日 18:30 的全用户日报/周报归档任务：
 

@@ -28,6 +28,9 @@ DEFAULT_RESEARCH_JOURNAL_DIR = "state/research_journal"
 DEFAULT_RESEARCH_DIGEST_DIR = "state/research_digests"
 DEFAULT_MONITORING_DIR = "state/monitoring"
 DEFAULT_MARKET_INTELLIGENCE_DIR = "state/market_intelligence"
+DEFAULT_INTRADAY_DIR = "state/intraday"
+DEFAULT_VALUATION_DIR = "state/valuation"
+DEFAULT_NEWS_DIR = "state/news"
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,39 @@ class AppConfig:
         return _market_intelligence_path(
             self.raw.get("market_intelligence", {}),
             project_root=self.project_root,
+        )
+
+    @property
+    def intraday_dir(self) -> Path:
+        """Return the local root for immutable intraday research evidence."""
+
+        return _state_child_path(
+            self.raw.get("intraday", {}),
+            project_root=self.project_root,
+            section="intraday",
+            default=DEFAULT_INTRADAY_DIR,
+        )
+
+    @property
+    def valuation_dir(self) -> Path:
+        """Return the local root for immutable valuation quote evidence."""
+
+        return _state_child_path(
+            self.raw.get("valuation", {}),
+            project_root=self.project_root,
+            section="valuation",
+            default=DEFAULT_VALUATION_DIR,
+        )
+
+    @property
+    def news_dir(self) -> Path:
+        """Return the local root for immutable news and announcement evidence."""
+
+        return _state_child_path(
+            self.raw.get("news", {}),
+            project_root=self.project_root,
+            section="news",
+            default=DEFAULT_NEWS_DIR,
         )
 
     @property
@@ -404,6 +440,24 @@ def _validate(
     )
     _market_intelligence_path(
         raw.get("market_intelligence", {}), project_root=project_root
+    )
+    _state_child_path(
+        raw.get("intraday", {}),
+        project_root=project_root,
+        section="intraday",
+        default=DEFAULT_INTRADAY_DIR,
+    )
+    _state_child_path(
+        raw.get("valuation", {}),
+        project_root=project_root,
+        section="valuation",
+        default=DEFAULT_VALUATION_DIR,
+    )
+    _state_child_path(
+        raw.get("news", {}),
+        project_root=project_root,
+        section="news",
+        default=DEFAULT_NEWS_DIR,
     )
 
 
