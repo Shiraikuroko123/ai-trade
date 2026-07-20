@@ -76,9 +76,10 @@ class EvidenceV015ConfigTests(unittest.TestCase):
             shutil.copytree(repository / "config", root / "config")
             path = root / "config" / "default.json"
             config = load_config(path)
-            self.assertEqual(config.fundamentals_dir, root / "state" / "fundamentals")
-            self.assertEqual(config.disclosures_dir, root / "state" / "disclosures")
-            self.assertEqual(config.order_book_dir, root / "state" / "order_book")
+            state_root = root.resolve() / "state"
+            self.assertEqual(config.fundamentals_dir, state_root / "fundamentals")
+            self.assertEqual(config.disclosures_dir, state_root / "disclosures")
+            self.assertEqual(config.order_book_dir, state_root / "order_book")
 
             baseline = json.loads(path.read_text(encoding="utf-8"))
             for section in ("fundamentals", "disclosures", "order_book"):
