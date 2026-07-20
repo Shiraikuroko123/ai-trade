@@ -148,6 +148,15 @@
   "news": {
     "root_dir": "state/news"
   },
+  "fundamentals": {
+    "root_dir": "state/fundamentals"
+  },
+  "disclosures": {
+    "root_dir": "state/disclosures"
+  },
+  "order_book": {
+    "root_dir": "state/order_book"
+  },
   "reports_dir": "reports",
   "logs_dir": "logs"
 }

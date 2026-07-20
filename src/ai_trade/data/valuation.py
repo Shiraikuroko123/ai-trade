@@ -1,12 +1,4 @@
-"""Auditable current valuation quote evidence.
-
-Eastmoney's quote endpoint exposes provider-scaled PE/PB and market-cap fields
-for the latest quote.  This module records the raw field mapping and scaling,
-keeps missing values as ``None``, and deliberately leaves historical valuation
-percentiles unavailable until a point-in-time financial series is validated.
-The dataset is read-only research evidence and has no strategy or execution
-authority.
-"""
+"""Auditable current quotes and stock-only historical valuation percentiles."""
 
 from __future__ import annotations
 
@@ -33,10 +25,17 @@ from .evidence_io import atomic_create_json, evidence_store_lock
 SCHEMA_VERSION = 1
 DATASET = "valuation"
 ENDPOINT = "https://push2.eastmoney.com/api/qt/stock/get"
+HISTORY_ENDPOINT = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+HISTORY_REPORT_NAME = "RPT_VALUEANALYSIS_DET"
 EASTMONEY_UT = "fa5fd1943c7b386f172d6893dbfba10b"
 CHINA_TIMEZONE = timezone(timedelta(hours=8))
 MAX_RESPONSE_BYTES = 256 * 1024
+MAX_HISTORY_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_SYMBOLS = 500
+HISTORY_PAGE_SIZE = 500
+MAX_HISTORY_PAGES = 5
+MAX_HISTORY_POINTS = HISTORY_PAGE_SIZE * MAX_HISTORY_PAGES
+MIN_PERCENTILE_OBSERVATIONS = 120
 MAX_REVISIONS_PER_DATE = 100
 MAX_PERIODS = 5_000
 MAX_REVISION_BYTES = 16 * 1024 * 1024
@@ -61,6 +60,24 @@ _FIELDS = (
     "f170",
     "f124",
 )
+_HISTORY_FIELDS = (
+    "SECURITY_CODE",
+    "SECURITY_NAME_ABBR",
+    "TRADE_DATE",
+    "CLOSE_PRICE",
+    "PE_TTM",
+    "PE_LAR",
+    "PB_MRQ",
+    "PCF_OCF_TTM",
+    "PS_TTM",
+)
+_HISTORY_METRICS = {
+    "pe_ttm": "PE_TTM",
+    "pe_static": "PE_LAR",
+    "pb": "PB_MRQ",
+    "cash_flow": "PCF_OCF_TTM",
+    "ps_ttm": "PS_TTM",
+}
 
 
 @dataclass(frozen=True)
@@ -106,13 +123,45 @@ def refresh_valuation(
     records: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     response_hashes: list[str] = []
+    history_responses: list[dict[str, Any]] = []
     for instrument in selected_instruments:
         try:
             payload, digest, response_bytes = _download(config, instrument)
-            records.append(_parse_quote(payload, instrument))
+            record = _parse_quote(payload, instrument)
             response_hashes.append(digest)
-            records[-1]["response_sha256"] = digest
-            records[-1]["response_bytes"] = response_bytes
+            record["response_sha256"] = digest
+            record["response_bytes"] = response_bytes
+            if instrument.instrument_type.strip().upper() == "STOCK":
+                try:
+                    rows, responses, total_count = _download_history(
+                        config, instrument
+                    )
+                    history = _parse_history(
+                        rows,
+                        instrument,
+                        cutoff=cutoff,
+                        provider_total_count=total_count,
+                    )
+                    record["valuation_percentiles"] = history.pop("percentiles")
+                    record["valuation_history"] = history
+                    history_responses.extend(responses)
+                except (ValuationProviderError, OSError, ValueError) as exc:
+                    record["valuation_history"] = _unavailable_history(
+                        "history_provider_error", str(exc)[:300]
+                    )
+                    errors.append(
+                        {
+                            "symbol": instrument.symbol,
+                            "code": "valuation_history_provider_error",
+                            "message": str(exc)[:300],
+                        }
+                    )
+            else:
+                record["valuation_history"] = _unavailable_history(
+                    "instrument_type_not_supported",
+                    "Historical valuation percentiles apply only to STOCK instruments.",
+                )
+            records.append(record)
         except (ValuationProviderError, OSError, ValueError) as exc:
             errors.append(
                 {
@@ -138,6 +187,11 @@ def refresh_valuation(
             "endpoint": ENDPOINT,
             "fields": list(_FIELDS),
             "response_sha256": _fingerprint(sorted(response_hashes)),
+            "history_endpoint": HISTORY_ENDPOINT,
+            "history_report_name": HISTORY_REPORT_NAME,
+            "history_fields": list(_HISTORY_FIELDS),
+            "history_response_sha256": _fingerprint(history_responses),
+            "history_response_count": len(history_responses),
             "certification": "not_exchange_certified",
             "scaling": {
                 "price": "f43 / 100",
@@ -149,6 +203,10 @@ def refresh_valuation(
                 "float_market_cap": "f117 yuan",
                 "change_pct": "f170 / 100",
             },
+            "percentile_method": (
+                "empirical CDF over positive finite completed-session observations; "
+                "rank = count(value <= current) / count(values)"
+            ),
         },
         "records": records,
         "summary": {
@@ -159,6 +217,20 @@ def refresh_valuation(
                 name: sum(1 for item in records if item.get(name) is not None)
                 for name in ("pe_ttm", "pe_static", "pe_dynamic", "pb")
             },
+            "historical_percentile_supported_count": sum(
+                item.get("valuation_history", {}).get("status")
+                not in {"instrument_type_not_supported", "unavailable"}
+                for item in records
+            ),
+            "historical_percentile_available_count": sum(
+                bool(item.get("valuation_history", {}).get("available"))
+                for item in records
+            ),
+            "historical_percentile_unsupported_count": sum(
+                item.get("valuation_history", {}).get("status")
+                == "instrument_type_not_supported"
+                for item in records
+            ),
         },
         "authority": dict(_AUTHORITY),
         "errors": errors,
@@ -168,8 +240,8 @@ def refresh_valuation(
                 "message": "Eastmoney quote fields are third-party research evidence, not exchange-certified data.",
             },
             {
-                "code": "valuation_percentiles_unavailable",
-                "message": "Historical PE/PB/cash-flow valuation percentiles are unavailable; current quote fields are not a percentile series.",
+                "code": "stock_only_history",
+                "message": "Historical PE/PB/cash-flow valuation percentiles are calculated only for STOCK instruments with sufficient positive observations.",
             },
         ],
     }
@@ -385,6 +457,114 @@ def _download(config: AppConfig, instrument: Instrument) -> tuple[dict[str, Any]
     raise ValuationProviderError(f"valuation download failed: {' | '.join(errors)}")
 
 
+def _download_history(
+    config: AppConfig, instrument: Instrument
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    rows: list[dict[str, Any]] = []
+    responses: list[dict[str, Any]] = []
+    total_count: int | None = None
+    for page in range(1, MAX_HISTORY_PAGES + 1):
+        params = {
+            "sortColumns": "TRADE_DATE",
+            "sortTypes": "-1",
+            "pageSize": str(HISTORY_PAGE_SIZE),
+            "pageNumber": str(page),
+            "reportName": HISTORY_REPORT_NAME,
+            "columns": "ALL",
+            "filter": f'(SECURITY_CODE="{instrument.symbol}")',
+        }
+        request = urllib.request.Request(
+            f"{HISTORY_ENDPOINT}?{urllib.parse.urlencode(params)}",
+            headers=REQUEST_HEADERS,
+            method="GET",
+        )
+        payload, digest, response_bytes = _request_history_page(config, request)
+        if payload.get("success") is not True or payload.get("code") != 0:
+            raise ValuationProviderError(
+                "valuation history provider rejected the request"
+            )
+        result = payload.get("result")
+        if result is None and page == 1:
+            raise ValuationProviderError("valuation history is unavailable")
+        if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+            raise ValuationProviderError("valuation history result is invalid")
+        raw_count = result.get("count", len(result["data"]))
+        if isinstance(raw_count, bool) or not isinstance(raw_count, int) or raw_count < 0:
+            raise ValuationProviderError("valuation history count is invalid")
+        if total_count is None:
+            total_count = raw_count
+        elif raw_count != total_count:
+            raise ValuationProviderError(
+                "valuation history total changed between pages"
+            )
+        page_rows = result["data"]
+        if len(page_rows) > HISTORY_PAGE_SIZE:
+            raise ValuationProviderError("valuation history page exceeds its limit")
+        if any(not isinstance(item, dict) for item in page_rows):
+            raise ValuationProviderError("valuation history row is invalid")
+        if total_count < len(rows) + len(page_rows):
+            raise ValuationProviderError(
+                "valuation history total is smaller than returned rows"
+            )
+        rows.extend(page_rows)
+        responses.append(
+            {
+                "symbol": instrument.symbol,
+                "page": page,
+                "response_sha256": digest,
+                "response_bytes": response_bytes,
+            }
+        )
+        expected_rows = min(total_count, MAX_HISTORY_POINTS)
+        if not page_rows and len(rows) < expected_rows:
+            raise ValuationProviderError(
+                "valuation history ended before the declared total"
+            )
+        if (
+            page_rows
+            and len(page_rows) < HISTORY_PAGE_SIZE
+            and len(rows) < expected_rows
+        ):
+            raise ValuationProviderError(
+                "valuation history page is incomplete before the declared total"
+            )
+        if not page_rows or len(rows) >= expected_rows:
+            break
+    if total_count is None or len(rows) < min(total_count, MAX_HISTORY_POINTS):
+        raise ValuationProviderError("valuation history response is incomplete")
+    return rows[:MAX_HISTORY_POINTS], responses, total_count
+
+
+def _request_history_page(
+    config: AppConfig, request: urllib.request.Request
+) -> tuple[dict[str, Any], str, int]:
+    data_config = config.raw.get("data", {})
+    timeout = int(data_config.get("timeout_seconds", 20))
+    attempts = min(3, max(1, int(data_config.get("max_attempts", 3))))
+    errors: list[str] = []
+    for attempt in range(attempts):
+        try:
+            with _open_request(request, timeout, _proxy_mode(config)) as response:
+                raw = response.read(MAX_HISTORY_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_HISTORY_RESPONSE_BYTES:
+                raise ValuationProviderError(
+                    "valuation history response is too large"
+                )
+            value = loads_unique_json(raw.decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValuationProviderError(
+                    "valuation history response is not an object"
+                )
+            return value, sha256(raw).hexdigest(), len(raw)
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+            if attempt + 1 < attempts:
+                time_module.sleep(min(2.0, 0.25 * (2**attempt)))
+    raise ValuationProviderError(
+        "valuation history download failed: " + " | ".join(errors)
+    )
+
+
 def _parse_quote(payload: Mapping[str, Any], instrument: Instrument) -> dict[str, Any]:
     if payload.get("rc") not in (None, 0):
         raise ValuationProviderError(f"Eastmoney returned rc={payload.get('rc')}")
@@ -414,9 +594,130 @@ def _parse_quote(payload: Mapping[str, Any], instrument: Instrument) -> dict[str
             "pe_dynamic": None,
             "pb": None,
             "cash_flow": None,
+            "ps_ttm": None,
         },
         "provider_fields": {key: data.get(key) for key in _FIELDS},
     }
+
+
+def _parse_history(
+    rows: Sequence[Mapping[str, Any]],
+    instrument: Instrument,
+    *,
+    cutoff: date,
+    provider_total_count: int,
+) -> dict[str, Any]:
+    if not rows:
+        raise ValuationProviderError("valuation history contains no rows")
+    by_date: dict[date, Mapping[str, Any]] = {}
+    for row in rows:
+        if str(row.get("SECURITY_CODE")) != instrument.symbol:
+            raise ValuationProviderError(
+                "valuation history symbol does not match request"
+            )
+        trade_date = _history_date(row.get("TRADE_DATE"))
+        if trade_date > cutoff:
+            continue
+        if trade_date in by_date:
+            raise ValuationProviderError("valuation history dates are duplicated")
+        by_date[trade_date] = row
+    if not by_date:
+        raise ValuationProviderError(
+            "valuation history has no completed-session observations"
+        )
+    ordered = sorted(by_date.items())
+    latest_date, latest = ordered[-1]
+    metric_results: dict[str, dict[str, Any]] = {}
+    percentiles: dict[str, float | None] = {}
+    for metric, source_field in _HISTORY_METRICS.items():
+        current = _positive_history_number(latest.get(source_field))
+        values = [
+            number
+            for _, row in ordered
+            if (number := _positive_history_number(row.get(source_field)))
+            is not None
+        ]
+        unavailable_reason = None
+        percentile = None
+        if current is None:
+            unavailable_reason = "latest_value_not_positive"
+        elif len(values) < MIN_PERCENTILE_OBSERVATIONS:
+            unavailable_reason = "insufficient_positive_observations"
+        else:
+            percentile = round(
+                100.0 * sum(value <= current for value in values) / len(values),
+                2,
+            )
+        metric_results[metric] = {
+            "source_field": source_field,
+            "current": current,
+            "observation_count": len(values),
+            "percentile": percentile,
+            "unavailable_reason": unavailable_reason,
+        }
+        percentiles[metric] = percentile
+    percentiles["pe_dynamic"] = None
+    metric_results["pe_dynamic"] = {
+        "source_field": None,
+        "current": None,
+        "observation_count": 0,
+        "percentile": None,
+        "unavailable_reason": "historical_source_field_unavailable",
+    }
+    available = any(value is not None for value in percentiles.values())
+    return {
+        "available": available,
+        "status": "current" if available else "insufficient_history",
+        "as_of_date": latest_date.isoformat(),
+        "sample_start": ordered[0][0].isoformat(),
+        "sample_end": latest_date.isoformat(),
+        "sample_count": len(ordered),
+        "provider_total_count": provider_total_count,
+        "truncated": provider_total_count > len(rows),
+        "minimum_observations": MIN_PERCENTILE_OBSERVATIONS,
+        "method": "empirical_cdf_positive_observations_lte_current",
+        "metrics": metric_results,
+        "percentiles": percentiles,
+    }
+
+
+def _unavailable_history(code: str, message: str) -> dict[str, Any]:
+    status = (
+        "instrument_type_not_supported"
+        if code == "instrument_type_not_supported"
+        else "unavailable"
+    )
+    return {
+        "available": False,
+        "status": status,
+        "as_of_date": None,
+        "sample_start": None,
+        "sample_end": None,
+        "sample_count": 0,
+        "provider_total_count": 0,
+        "truncated": False,
+        "minimum_observations": MIN_PERCENTILE_OBSERVATIONS,
+        "method": "empirical_cdf_positive_observations_lte_current",
+        "metrics": {},
+        "unavailable_reason": code,
+        "message": message,
+    }
+
+
+def _history_date(value: Any) -> date:
+    if not isinstance(value, str) or len(value) < 10:
+        raise ValuationProviderError("valuation history trade date is invalid")
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError as exc:
+        raise ValuationProviderError(
+            "valuation history trade date is invalid"
+        ) from exc
+
+
+def _positive_history_number(value: Any) -> float | None:
+    result = _optional_number(value)
+    return result if result is not None and result > 0 else None
 
 
 def _validate_draft(value: Mapping[str, Any]) -> None:
@@ -448,6 +749,72 @@ def _validate_draft(value: Mapping[str, Any]) -> None:
                 or not math.isfinite(float(value_item))
             ):
                 raise RuntimeError(f"valuation field {key} is invalid")
+        percentiles = item.get("valuation_percentiles")
+        if not isinstance(percentiles, dict):
+            raise RuntimeError("valuation percentiles are invalid")
+        for metric, percentile in percentiles.items():
+            if metric not in {*_HISTORY_METRICS, "pe_dynamic"}:
+                raise RuntimeError("valuation percentile metric is invalid")
+            if percentile is not None and (
+                isinstance(percentile, bool)
+                or not isinstance(percentile, (int, float))
+                or not math.isfinite(float(percentile))
+                or not 0 <= float(percentile) <= 100
+            ):
+                raise RuntimeError("valuation percentile value is invalid")
+        history = item.get("valuation_history")
+        if history is not None:
+            _validate_history_summary(history)
+
+
+def _validate_history_summary(value: Any) -> None:
+    if not isinstance(value, dict) or not isinstance(value.get("available"), bool):
+        raise RuntimeError("valuation history summary is invalid")
+    if value.get("status") not in {
+        "current",
+        "insufficient_history",
+        "instrument_type_not_supported",
+        "unavailable",
+    }:
+        raise RuntimeError("valuation history status is invalid")
+    for field in (
+        "sample_count",
+        "provider_total_count",
+        "minimum_observations",
+    ):
+        number = value.get(field)
+        if isinstance(number, bool) or not isinstance(number, int) or number < 0:
+            raise RuntimeError(f"valuation history {field} is invalid")
+    if not isinstance(value.get("truncated"), bool):
+        raise RuntimeError("valuation history truncated flag is invalid")
+    for field in ("as_of_date", "sample_start", "sample_end"):
+        raw = value.get(field)
+        if raw is not None:
+            try:
+                date.fromisoformat(str(raw))
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"valuation history {field} is invalid"
+                ) from exc
+    metrics = value.get("metrics")
+    if not isinstance(metrics, dict):
+        raise RuntimeError("valuation history metrics are invalid")
+    for metric, detail in metrics.items():
+        if metric not in {*_HISTORY_METRICS, "pe_dynamic"} or not isinstance(
+            detail, dict
+        ):
+            raise RuntimeError("valuation history metric detail is invalid")
+        count = detail.get("observation_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise RuntimeError("valuation history observation count is invalid")
+        percentile = detail.get("percentile")
+        if percentile is not None and (
+            isinstance(percentile, bool)
+            or not isinstance(percentile, (int, float))
+            or not math.isfinite(float(percentile))
+            or not 0 <= float(percentile) <= 100
+        ):
+            raise RuntimeError("valuation history metric percentile is invalid")
 
 
 def _validate_record(value: Mapping[str, Any], *, expected_date: date, expected_revision: int) -> None:

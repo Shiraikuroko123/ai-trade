@@ -52,6 +52,10 @@ class DistributionVerificationTests(unittest.TestCase):
             "market_intelligence.py",
             "market_breadth.py",
             "capital_flow.py",
+            "disclosures.py",
+            "fundamentals.py",
+            "order_book.py",
+            "tushare.py",
         ):
             with self.subTest(module=module):
                 self.assertIn(f"ai_trade/data/{module}", WHEEL_REQUIRED)
@@ -151,6 +155,7 @@ class DistributionVerificationTests(unittest.TestCase):
             b"endpoint=https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
             b"AI_TRADE_R2_SECRET_ACCESS_KEY=literal-secret-value-1234",
             b"AI_TRADE_AI_API_KEY=literal-ai-provider-key-1234",
+            b"AI_TRADE_TUSHARE_TOKEN=literal-tushare-token-value-1234",
             b"OPENAI_API_KEY=literal-openai-provider-key-1234",
             b"GITHUB_TOKEN=literal-github-token-value-1234",
             b"Authorization: Bearer literal-bearer-token-1234",
@@ -170,6 +175,7 @@ class DistributionVerificationTests(unittest.TestCase):
             b"AI_TRADE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com\n"
             b"AI_TRADE_R2_SECRET_ACCESS_KEY=$secretKey\n"
             b"AI_TRADE_AI_API_KEY=<api-key>\n"
+            b"AI_TRADE_TUSHARE_TOKEN=<tushare-token>\n"
             b"Authorization: Bearer ${ACCESS_TOKEN}\n"
         )
         _verify_text_content("guide.md", content, "sample.zip")
@@ -177,6 +183,7 @@ class DistributionVerificationTests(unittest.TestCase):
     def test_adjacent_empty_credential_assignments_are_allowed(self):
         content = (
             b"AI_TRADE_AI_API_KEY=\n"
+            b"AI_TRADE_TUSHARE_TOKEN=\n"
             b"AI_TRADE_R2_ACCESS_KEY_ID=\n"
             b"AI_TRADE_R2_SECRET_ACCESS_KEY=\n"
             b"OPENAI_API_KEY=\n"

@@ -31,6 +31,9 @@ DEFAULT_MARKET_INTELLIGENCE_DIR = "state/market_intelligence"
 DEFAULT_INTRADAY_DIR = "state/intraday"
 DEFAULT_VALUATION_DIR = "state/valuation"
 DEFAULT_NEWS_DIR = "state/news"
+DEFAULT_FUNDAMENTALS_DIR = "state/fundamentals"
+DEFAULT_DISCLOSURES_DIR = "state/disclosures"
+DEFAULT_ORDER_BOOK_DIR = "state/order_book"
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,39 @@ class AppConfig:
             project_root=self.project_root,
             section="news",
             default=DEFAULT_NEWS_DIR,
+        )
+
+    @property
+    def fundamentals_dir(self) -> Path:
+        """Return the local root for immutable company fundamental evidence."""
+
+        return _state_child_path(
+            self.raw.get("fundamentals", {}),
+            project_root=self.project_root,
+            section="fundamentals",
+            default=DEFAULT_FUNDAMENTALS_DIR,
+        )
+
+    @property
+    def disclosures_dir(self) -> Path:
+        """Return the local root for immutable official disclosure evidence."""
+
+        return _state_child_path(
+            self.raw.get("disclosures", {}),
+            project_root=self.project_root,
+            section="disclosures",
+            default=DEFAULT_DISCLOSURES_DIR,
+        )
+
+    @property
+    def order_book_dir(self) -> Path:
+        """Return the local root for immutable Level-1 order-book evidence."""
+
+        return _state_child_path(
+            self.raw.get("order_book", {}),
+            project_root=self.project_root,
+            section="order_book",
+            default=DEFAULT_ORDER_BOOK_DIR,
         )
 
     @property
@@ -458,6 +494,24 @@ def _validate(
         project_root=project_root,
         section="news",
         default=DEFAULT_NEWS_DIR,
+    )
+    _state_child_path(
+        raw.get("fundamentals", {}),
+        project_root=project_root,
+        section="fundamentals",
+        default=DEFAULT_FUNDAMENTALS_DIR,
+    )
+    _state_child_path(
+        raw.get("disclosures", {}),
+        project_root=project_root,
+        section="disclosures",
+        default=DEFAULT_DISCLOSURES_DIR,
+    )
+    _state_child_path(
+        raw.get("order_book", {}),
+        project_root=project_root,
+        section="order_book",
+        default=DEFAULT_ORDER_BOOK_DIR,
     )
 
 

@@ -43,6 +43,7 @@ services:
       - /tmp:size=128m,mode=1777
     environment:
       TZ: "${TZ:-Asia/Shanghai}"
+      AI_TRADE_TUSHARE_TOKEN: "${AI_TRADE_TUSHARE_TOKEN:-}"
       AI_TRADE_AI_BASE_URL: "${AI_TRADE_AI_BASE_URL:-https://api.openai.com/v1}"
       AI_TRADE_AI_MODEL: "${AI_TRADE_AI_MODEL:-}"
       AI_TRADE_AI_API_KEY: "${AI_TRADE_AI_API_KEY:-}"

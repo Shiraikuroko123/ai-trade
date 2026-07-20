@@ -22,11 +22,14 @@ from .. import __version__
 from ..broker.shadow import ShadowAccountConflictError
 from ..config import AppConfig
 from ..data.capital_flow import CapitalFlowQuery
+from ..data.disclosures import DisclosureQuery
+from ..data.fundamentals import FundamentalQuery
 from ..data.market_breadth import MarketBreadthQuery
 from ..data.market_intelligence import DragonTigerQuery
 from ..data.intraday import IntradayQuery
 from ..data.valuation import ValuationQuery
 from ..data.news import NewsQuery
+from ..data.order_book import OrderBookQuery
 from ..json_utils import loads_unique_json
 from ..monitoring import (
     ALERT_ACTIONS,
@@ -144,6 +147,15 @@ VALUATION_MAX_QUERY_LENGTH = 1024
 NEWS_DEFAULT_LIMIT = 200
 NEWS_MAX_LIMIT = 2_000
 NEWS_MAX_QUERY_LENGTH = 1024
+FUNDAMENTALS_DEFAULT_LIMIT = 100
+FUNDAMENTALS_MAX_LIMIT = 500
+FUNDAMENTALS_MAX_QUERY_LENGTH = 1024
+DISCLOSURES_DEFAULT_LIMIT = 200
+DISCLOSURES_MAX_LIMIT = 500
+DISCLOSURES_MAX_QUERY_LENGTH = 1024
+ORDER_BOOK_DEFAULT_LIMIT = 100
+ORDER_BOOK_MAX_LIMIT = 500
+ORDER_BOOK_MAX_QUERY_LENGTH = 1024
 SCREEN_GROUP_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 STRATEGY_LAB_CANDIDATE_PATH = re.compile(
     r"/api/strategy-lab/candidates/(cand_[0-9a-f]{32})(?:/(validate|approve|export|activate))?\Z"
@@ -432,6 +444,15 @@ def _handler_factory(
                 elif parsed.path == "/api/valuation":
                     query = _parse_valuation_query(parsed.query)
                     self._json(service.valuation(query))
+                elif parsed.path == "/api/fundamentals":
+                    query = _parse_fundamentals_query(parsed.query)
+                    self._json(service.fundamentals(query))
+                elif parsed.path == "/api/disclosures":
+                    query = _parse_disclosures_query(parsed.query)
+                    self._json(service.disclosures(query))
+                elif parsed.path == "/api/order-book":
+                    query = _parse_order_book_query(parsed.query)
+                    self._json(service.order_book(query))
                 elif parsed.path == "/api/news":
                     query = _parse_news_query(parsed.query)
                     self._json(service.news(query))
@@ -1531,6 +1552,159 @@ def _parse_valuation_query(query: str) -> ValuationQuery:
     if revisions not in {"0", "1"}:
         raise ValueError("revisions must be 0 or 1")
     return ValuationQuery(
+        trade_date=on_date,
+        symbol=symbol,
+        limit=limit,
+        include_revisions=revisions == "1",
+    )
+
+
+def _parse_fundamentals_query(query: str) -> FundamentalQuery:
+    if len(query) > FUNDAMENTALS_MAX_QUERY_LENGTH:
+        raise ValueError("Fundamentals query is too long")
+    try:
+        values = (
+            {}
+            if not query
+            else parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=4,
+            )
+        )
+    except ValueError as exc:
+        raise ValueError("Fundamentals query is invalid") from exc
+    unsupported = sorted(set(values) - {"date", "symbol", "limit", "revisions"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported fundamentals query parameters: " + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is not None and (
+        len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()
+    ):
+        raise ValueError("symbol must be a six-digit security code")
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    raw_limit = values.get("limit", [str(FUNDAMENTALS_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= FUNDAMENTALS_MAX_LIMIT:
+        raise ValueError(
+            f"limit must be between 1 and {FUNDAMENTALS_MAX_LIMIT}"
+        )
+    revisions = values.get("revisions", ["0"])[0]
+    if revisions not in {"0", "1"}:
+        raise ValueError("revisions must be 0 or 1")
+    return FundamentalQuery(
+        trade_date=on_date,
+        symbol=symbol,
+        limit=limit,
+        include_revisions=revisions == "1",
+    )
+
+
+def _parse_disclosures_query(query: str) -> DisclosureQuery:
+    if len(query) > DISCLOSURES_MAX_QUERY_LENGTH:
+        raise ValueError("Disclosures query is too long")
+    try:
+        values = (
+            {}
+            if not query
+            else parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=6,
+            )
+        )
+    except ValueError as exc:
+        raise ValueError("Disclosures query is invalid") from exc
+    unsupported = sorted(
+        set(values) - {"date", "symbol", "provider", "q", "limit", "revisions"}
+    )
+    if unsupported:
+        raise ValueError(
+            "Unsupported disclosures query parameters: " + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is not None and (
+        len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()
+    ):
+        raise ValueError("symbol must be a six-digit security code")
+    provider = values.get("provider", ["all"])[0]
+    if provider not in {"all", "sse", "cninfo"}:
+        raise ValueError("provider must be all, sse, or cninfo")
+    text_query = values.get("q", [None])[0]
+    if text_query is not None:
+        text_query = _bounded_text(text_query, "q", 200)
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    raw_limit = values.get("limit", [str(DISCLOSURES_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= DISCLOSURES_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {DISCLOSURES_MAX_LIMIT}")
+    revisions = values.get("revisions", ["0"])[0]
+    if revisions not in {"0", "1"}:
+        raise ValueError("revisions must be 0 or 1")
+    return DisclosureQuery(
+        trade_date=on_date,
+        symbol=symbol,
+        provider=provider,
+        q=text_query,
+        limit=limit,
+        include_revisions=revisions == "1",
+    )
+
+
+def _parse_order_book_query(query: str) -> OrderBookQuery:
+    if len(query) > ORDER_BOOK_MAX_QUERY_LENGTH:
+        raise ValueError("Order-book query is too long")
+    try:
+        values = (
+            {}
+            if not query
+            else parse_qs(
+                query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=4,
+            )
+        )
+    except ValueError as exc:
+        raise ValueError("Order-book query is invalid") from exc
+    unsupported = sorted(set(values) - {"date", "symbol", "limit", "revisions"})
+    if unsupported:
+        raise ValueError(
+            "Unsupported order-book query parameters: " + ", ".join(unsupported)
+        )
+    for field, items in values.items():
+        if len(items) != 1:
+            raise ValueError(f"{field} must be provided at most once")
+    symbol = values.get("symbol", [None])[0]
+    if symbol is not None and (
+        len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()
+    ):
+        raise ValueError("symbol must be a six-digit security code")
+    on_date = _parse_archive_date(values.get("date", [None])[0], "date")
+    raw_limit = values.get("limit", [str(ORDER_BOOK_DEFAULT_LIMIT)])[0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= ORDER_BOOK_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {ORDER_BOOK_MAX_LIMIT}")
+    revisions = values.get("revisions", ["0"])[0]
+    if revisions not in {"0", "1"}:
+        raise ValueError("revisions must be 0 or 1")
+    return OrderBookQuery(
         trade_date=on_date,
         symbol=symbol,
         limit=limit,

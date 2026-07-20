@@ -7,15 +7,16 @@ response validation and provenance rules cannot be mixed accidentally.
 
 ## Supported configuration
 
-The current release registers three daily-bar providers. Eastmoney and Tencent
-are eligible to supply the strategy-visible snapshot; Yahoo Finance is a
-bounded independent reference route only.
+The current release registers four daily-bar providers. Eastmoney and Tencent
+are eligible to supply the strategy-visible snapshot; Yahoo Finance and
+Tushare Pro are bounded independent reference routes only.
 
 | Key | Role | Intraday | Comparable fields | Status |
 | --- | --- | --- | --- | --- |
 | `eastmoney` | primary or fallback | Yes (separate research feed) | OHLCV + amount | Implemented |
 | `tencent` | primary or fallback | No | OHLCV + amount | Implemented |
 | `yahoo` | independent cross-check only | No | OHLCV (amount unavailable) | Implemented, reference-only |
+| `tushare` | independent cross-check only | No | OHLCV + amount | Implemented, reference-only, token required |
 
 Example:
 
@@ -32,11 +33,32 @@ Example:
 }
 ```
 
+To select Tushare instead, keep the token outside configuration and change
+only the reference key:
+
+```powershell
+$env:AI_TRADE_TUSHARE_TOKEN='<tushare-token>'
+```
+
+```json
+{
+  "data": {
+    "provider": "eastmoney",
+    "fallback_provider": "tencent",
+    "cross_check": {
+      "enabled": true,
+      "reference_provider": "tushare"
+    }
+  }
+}
+```
+
 Provider names are normalized to lowercase during configuration loading. The
 primary and fallback cannot be the same provider. `none` disables the network
 fallback and leaves the validated local cache as the final route.
 
-`yahoo` cannot be selected as `provider` or `fallback_provider`. Its public
+`yahoo` and `tushare` cannot be selected as `provider` or
+`fallback_provider`. Yahoo's public
 Chart response has no provider-reported CNY turnover amount and is intentionally
 limited to a short, completed-session reference window. Yahoo share volume is
 normalized to domestic lots (100 shares) and its estimated amount is retained
@@ -44,6 +66,16 @@ only in the temporary comparison CSV; `amount` is excluded from the audit and
 never enters strategy liquidity calculations. Yahoo supports `none` and
 `forward` adjustment for this reference route; `backward` is rejected at
 configuration load time.
+
+Tushare uses the authenticated Pro API for configured `STOCK` and `ETF`
+instruments. `AI_TRADE_TUSHARE_TOKEN` is read at request time, never copied into
+configuration, manifests, logs, evidence metadata, or release artifacts, and
+is also passed explicitly by the optional Compose setup. Tushare requests a
+maximum 62-calendar-day completed-session window, validates a maximum of 64
+rows, normalizes share volume to domestic lots and amount from thousands of
+CNY to CNY, and supports only `none` and `forward` adjustment. A missing token
+or provider error makes the independent audit unavailable; it never replaces
+the primary snapshot or changes strategy output.
 
 ## Independent cross-check
 
@@ -57,13 +89,12 @@ primary instead and records an unavailable/warning result if it cannot be
 reached. See [CROSS_SOURCE_AUDIT.md](CROSS_SOURCE_AUDIT.md) for the status
 semantics and command examples.
 
-AKShare, Tushare, TDX and WenCai are not registered yet. A configuration that
+AKShare, TDX and WenCai are not registered yet. A configuration that
 names one of them fails at startup instead of pretending that the source was
-used. Yahoo is the first reference-only adapter: it has an explicit field
-mapping, adjustment policy, rate limit, bounded response parser, and
-independent deterministic fixtures, but it is not a replacement for an
-exchange-certified or licensed primary feed. The public endpoint has no SLA
-and its terms and regional availability can change.
+used. Both reference-only adapters have explicit field mappings, adjustment
+policies, bounded response parsers, and independent deterministic fixtures,
+but neither replaces an exchange-certified or licensed primary feed. Their
+availability, terms, permissions, and regional access can change.
 
 The Dragon-Tiger List, market-breadth, and board-capital-flow
 adapters documented in `MARKET_INTELLIGENCE.md`, `MARKET_BREADTH.md`, and
@@ -109,9 +140,13 @@ Daily public endpoints do not provide real-time or exchange-certified data.
 Adding a provider to this registry does not authorize live trading or remove
 the requirement for a licensed intraday/quote feed.
 
-The Eastmoney `trends2` minute endpoint is intentionally a separate
-`intraday` evidence store rather than a strategy snapshot provider. It records
+The Eastmoney `trends2` minute endpoint is intentionally kept in a separate
+`intraday` evidence store rather than exposed as a strategy snapshot provider. It records
 the response fingerprint, requested interval, completed-session cutoff and the
 `f52-f55` OHLC mapping. Wider intervals are deterministic local aggregations
-of a validated one-minute revision; the endpoint remains a third-party feed
-and cannot replace a licensed tick, order-book, or Level-2 feed.
+of a validated one-minute revision.
+
+Public five-level depth is stored in its own `order_book` evidence chain with
+lot/share units and observation time.
+These third-party feeds cannot replace licensed Tick, full-depth, Level-2, or
+execution data.

@@ -1,111 +1,101 @@
 # Market Intelligence Evidence
 
-The market-intelligence layer in `v0.14.0` is a read-only research surface. It
-contains six separately stored Eastmoney evidence datasets: current minute
-bars, current valuation quote fields, news/announcements, the daily
-Dragon-Tiger List, closing market breadth with provider-defined board rankings,
-and provider-reported board capital flow. Each dataset has its own source,
-cutoff, response fingerprint and immutable revision chain. None provides
-exchange certification, a strategy signal, or order authority.
+The market-intelligence layer in `v0.15.0` is a read-only research surface.
+It contains nine separately stored evidence datasets. Each dataset has its own
+source, cutoff, response fingerprint, coverage declaration, immutable revision
+chain, and explicit authority boundary. No dataset creates a strategy signal,
+changes accounting, or authorizes an order.
 
-## Current Dataset
+## Current Datasets
 
 | Dataset | Provider | Frequency | Current boundary |
 |---|---|---|---|
-| `dragon_tiger_daily` | Eastmoney `RPT_DAILYBILLBOARD_DETAILSNEW` | One completed trading date | Implemented as a local immutable revision chain |
-| `sector_breadth` | Eastmoney `m:90+t:2` board pages plus SH/SZ/BJ benchmark quote responses | One completed trading date | Implemented as a separate local immutable revision chain; see `MARKET_BREADTH.md` |
-| `capital_flow` | Eastmoney `m:90+t:2` board pages with provider-reported order-size buckets | One completed quote date | Implemented as a separate local immutable revision chain; see `CAPITAL_FLOW.md` |
-| `intraday` | Eastmoney `trends2` | One completed date and selected interval | Implemented as `state/intraday`; f52-f55 OHLC is retained and wider intervals can be locally derived from validated 1-minute evidence |
-| `valuation` | Eastmoney quote fields | Current quote snapshot | Implemented as `state/valuation`; PE/PB/cash-flow historical percentiles remain null |
-| `news` | Eastmoney快讯 + 个股公告 | One completed cutoff | Implemented as `state/news`; publication time, URL, source and revision are retained |
-| Valuation temperature | None | - | Not implemented; current quote fields are not historical percentile evidence |
-| Sentiment model / hot list | None | - | Not implemented; `lexicon-v1` is a low-confidence research annotation only |
+| `dragon_tiger_daily` | Eastmoney `RPT_DAILYBILLBOARD_DETAILSNEW` | One completed trading date | Full reported pagination is validated and stored as immutable revisions. It is third-party event evidence, not sentiment. |
+| `sector_breadth` | Eastmoney board pages plus SH/SZ/BJ benchmark quotes | One completed trading date | Provider-defined, potentially overlapping boards and market-width counts; see `MARKET_BREADTH.md`. |
+| `capital_flow` | Eastmoney provider-defined order-size buckets | One completed quote date | Signed CNY amounts and percentages are retained; board rows must not be summed as whole-market flow. |
+| `intraday` | Eastmoney `trends2` | One completed date and selected interval | Historical minute evidence with retained `f52-f55` OHLC mapping; not a real-time or Tick feed. |
+| `valuation` | Eastmoney quote and `RPT_VALUEANALYSIS_DET` | Current quote plus bounded history | Current fields are available for configured instruments. Historical PE/PB/cash-flow/sales percentiles are stock-only and require at least 120 valid observations. |
+| `fundamentals` | Eastmoney `RPT_LICO_FN_CPD` | Completed-session cutoff | Stock-only disclosed financial periods. Both notice and update dates must be no later than the cutoff. |
+| `official_disclosures` | SSE and CNINFO | Bounded completed-date window | Official metadata and PDF links only. Provider and security coverage gaps remain explicit; PDF bodies are not archived. |
+| `news` | Eastmoney news and individual announcement aggregation | One completed cutoff | Third-party evidence kept separate from official disclosures. `lexicon-v1` is not a sentiment model. |
+| `order_book` | Eastmoney public quote | One observed snapshot | Level-1 five-level bids/asks, lot/share units, spread, and bounded depth imbalance; not Tick, full depth, or Level-2. |
 
-The system identifies the default refresh date from the latest locally
-validated market snapshot. It does not guess a trading day from the wall clock
-and a GET request never contacts Eastmoney.
+The default closing date for daily datasets comes from the latest locally
+validated market snapshot. The system does not guess a trading date from the
+wall clock, and every GET endpoint reads local evidence without contacting a
+provider.
 
-## Refresh
+## Refresh Commands
 
-From the repository root:
-
-```powershell
-.\.venv\Scripts\python.exe -m ai_trade.cli market-intelligence-refresh
-```
-
-An explicit historical date can be requested for controlled backfill:
+Closing market datasets have independent commands so failure in one source
+cannot change another dataset's availability:
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli market-intelligence-refresh --date 2026-07-17
-```
-
-The **市场情报** page exposes the same fixed background job as **刷新龙虎榜**.
-The job downloads every reported page, validates the complete response, and
-publishes only after the whole dataset passes. A failed or cancelled refresh
-leaves the previous complete snapshot untouched. The page distinguishes a
-running refresh, a failed job, a valid empty result, a stale snapshot, and a
-workspace that has never refreshed this dataset.
-
-Market breadth has its own command and fixed background action, so a failure
-cannot make a Dragon-Tiger snapshot available or unavailable:
-
-```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli market-breadth-refresh --date 2026-07-17
-```
-
-Its complete validation, source scope, filters, storage format, and observed
-single-source limitations are documented in [Market Breadth and Board
-Rankings](MARKET_BREADTH.md).
-
-Board capital flow also has its own command and fixed background action:
-
-```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli capital-flow-refresh --date 2026-07-17
 ```
 
-It retains main, super-large, large, medium, and small provider-reported net
-amounts and percentages. The source endpoint does not become a historical
-archive when an older date is supplied: every returned quote date must match
-the requested date before publication. Provider scope, bucket methodology,
-filters, storage, and non-aggregation rules are documented in [Board
-Capital-Flow Evidence](CAPITAL_FLOW.md).
-
-The bounded minute, valuation, and news feeds use independent commands and
-background jobs:
+Instrument evidence also uses separate bounded refreshes:
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_trade.cli intraday-refresh --symbol 510300 --interval 5
-.\.venv\Scripts\python.exe -m ai_trade.cli valuation-refresh --symbol 510300
-.\.venv\Scripts\python.exe -m ai_trade.cli news-refresh --symbol 510300
+.\.venv\Scripts\python.exe -m ai_trade.cli valuation-refresh --symbol 600519
+.\.venv\Scripts\python.exe -m ai_trade.cli fundamentals-refresh --symbol 600519 --periods 8
+.\.venv\Scripts\python.exe -m ai_trade.cli disclosures-refresh --symbol 600519 --lookback-days 30 --limit 50
+.\.venv\Scripts\python.exe -m ai_trade.cli news-refresh --symbol 600519
+.\.venv\Scripts\python.exe -m ai_trade.cli order-book-refresh --symbol 510300
 ```
 
-The minute endpoint is historical research evidence, not a real-time quote or
-Level-2 stream. The valuation endpoint records current PE/PB and market-cap
-fields only. News annotations use a transparent fixed lexicon and do not
-change the assistant's unavailable sentiment role.
+The Market Intelligence page exposes matching fixed background actions. A
+failed or cancelled action leaves the previous complete revision untouched.
+The UI distinguishes a running refresh, provider failure, valid empty filter,
+partial coverage, stale snapshot, and a dataset that has never been refreshed.
 
-## Validation Contract
+## Point-in-time and Coverage Rules
 
-The provider accepts only the documented daily report envelope and a bounded
-set of fields. Validation includes:
+Fundamental records are accepted only for configured `STOCK` instruments.
+For each report period, `NOTICE_DATE` and `UPDATE_DATE` must both be on or
+before the completed-session cutoff; the newest eligible update wins when the
+provider returns multiple versions for one period. EPS, revenue, parent net
+profit, weighted ROE, revenue and profit growth, book value per share,
+operating cash flow per share, and gross margin remain nullable provider
+fields. ETFs are reported as unsupported instead of receiving inferred company
+metrics. This evidence is not yet consumed by the AI assistant's fundamental
+role, so that role remains `UNAVAILABLE`.
 
-- HTTP response size, page count, row count, and total reported count;
-- one requested trade date on every row;
-- unique `TRADE_ID + SECURITY_CODE + CHANGE_TYPE` source identity;
-- six-digit symbols, known SH/SZ/BJ market codes, and bounded text;
-- finite prices, percentages, and amounts;
-- nonnegative buy, sell, and deal amounts; and
-- internal buy/sell/net-amount consistency within the declared currency
-  precision.
+Historical valuation percentiles are calculated only for configured stocks.
+The store retains the source field, observation count, first and last date,
+and provider response fingerprint for `PE_TTM`, `PE_LAR`, `PB_MRQ`,
+`PCF_OCF_TTM`, and `PS_TTM`. Only positive finite completed-session values are
+eligible. A percentile remains null when the current value is invalid or fewer
+than 120 observations exist. ETF history is explicitly unsupported, and price
+history is never substituted for valuation history.
 
-Duplicate JSON keys, malformed pages, date leakage, missing fields, non-finite
-numbers, count mismatches, and inconsistent amounts reject the entire refresh.
-The public endpoint is not an exchange feed and its availability and terms may
-change; successful structural validation does not turn it into certified data.
+Official-disclosure routing is deliberately narrow:
+
+| Instrument | Official metadata route |
+|---|---|
+| Shanghai stock | SSE |
+| Shenzhen stock | CNINFO designated platform |
+| Shenzhen ETF present in the CNINFO fund master | CNINFO designated platform |
+| Shanghai ETF, Beijing market, or missing CNINFO master entry | Explicit coverage gap |
+
+Only official metadata and allowlisted PDF URLs are archived. The system does
+not download, sign, or WORM-store PDF bodies, and it does not infer sentiment
+from disclosure titles. Eastmoney news and announcement aggregation remains a
+separate third-party dataset with its own provenance.
+
+The order-book store validates one observed public quote per instrument. It
+retains five bid and ask ranks, CNY prices, provider volumes in lots, normalized
+share volumes (`lots * 100`), best bid/ask, spread, observation timestamp, and
+bounded imbalance. Missing levels remain a visible partial snapshot. This is
+ephemeral Level-1 research evidence, not a replayable order-event stream or an
+execution-quality quote.
 
 ## Immutable Revisions
 
-Validated records are normalized, deterministically ordered, and stored below:
+Validated records are normalized and stored below:
 
 ```text
 state/market_intelligence/dragon_tiger/YYYY-MM-DD/
@@ -113,47 +103,47 @@ state/market_intelligence/sector_breadth/YYYY-MM-DD/
 state/market_intelligence/capital_flow/YYYY-MM-DD/
 state/intraday/<symbol>/YYYY-MM-DD/<interval>/
 state/valuation/YYYY-MM-DD/
+state/fundamentals/YYYY-MM-DD/
+state/disclosures/YYYY-MM-DD/
 state/news/YYYY-MM-DD/
+state/order_book/YYYY-MM-DD/
 ```
 
-Each revision carries the source report, retrieval time, response and evidence
-fingerprints, coverage totals, summary values, authority declaration, and the
-normalized records. Repeating the same normalized record set reuses the existing
-revision. If those normalized records change for the same trade date, a new
-revision is appended with a `supersedes` link; an old file is never overwritten.
+Each committed revision retains normalized records, coverage, source response
+fingerprints, and a full content fingerprint. Retrieval time and revision-chain
+metadata are excluded only from the normalized evidence identity, so repeating
+the same evidence reuses the existing revision. Changed evidence appends a new
+revision with a `supersedes` link; an old file is never overwritten.
 
-These SHA-256 values detect accidental changes and inconsistent local edits;
-they are not signatures, remote attestation, or WORM storage. A local
-administrator can rewrite or delete files. The directory is ignored by Git,
+These SHA-256 values detect accidental changes and inconsistent local edits.
+They are not signatures, remote attestation, or WORM storage. A local
+administrator can rewrite or delete files. The directories are ignored by Git,
 excluded from release artifacts, and outside the Cloudflare R2 market-cache
-allowlist. It therefore does not consume the configured R2 snapshot budget and
-is not restored by `cloud-restore`.
+allowlist.
 
-## Read API
+## Read APIs
 
 ```text
 GET /api/market-intelligence
-GET /api/market-intelligence?date=2026-07-17&market=SZ&symbol=000722&q=涨幅&limit=100
 GET /api/market-breadth
-GET /api/market-breadth?date=2026-07-17&q=银行&sort=advance_share&direction=desc&limit=100
 GET /api/capital-flow
-GET /api/capital-flow?date=2026-07-17&q=银行&sort=main_net_inflow&direction=desc&limit=100
 GET /api/intraday?symbol=510300&date=2026-07-17&interval=5&limit=120
-GET /api/valuation?date=2026-07-17&symbol=510300&limit=100
-GET /api/news?date=2026-07-17&symbol=510300&kind=announcement&limit=100
+GET /api/valuation?date=2026-07-17&symbol=600519&limit=100
+GET /api/fundamentals?date=2026-07-17&symbol=600519&limit=100
+GET /api/disclosures?date=2026-07-17&symbol=600519&provider=sse&limit=100
+GET /api/news?date=2026-07-17&symbol=600519&kind=announcement&limit=100
+GET /api/order-book?date=2026-07-17&symbol=510300&limit=100
 ```
 
-Supported filters are `date`, `market`, `symbol`, `q`, `limit`, `interval`, and
-`kind` according to the dataset. The minute endpoint requires a six-digit
-`symbol`; parameters are unique and bounded, and unknown or repeated
-parameters fail with HTTP 400.
-Filtering changes only the returned view, not the immutable source snapshot.
-The response keeps source, coverage, fingerprints, revision history, status,
-warnings, and fixed authority alongside the filtered rows.
+Supported filters vary by dataset and are strictly allowlisted and bounded.
+Unknown, repeated, malformed, or oversized parameters fail with HTTP 400.
+Filtering changes only the returned local view, not the source revision. Every
+response retains status, source, coverage, warnings, fingerprints, and fixed
+authority metadata.
 
 ## Authority Boundary
 
-Every snapshot and response fixes:
+Every snapshot and API response fixes:
 
 ```json
 {
@@ -162,13 +152,12 @@ Every snapshot and response fixes:
 }
 ```
 
-Minute, valuation, news, Dragon-Tiger, breadth, and capital-flow rows may support
-a human research review. They cannot modify
-a strategy candidate, mark fundamental or sentiment coverage as available,
-write a paper or broker ledger, create an order, satisfy a promotion gate, or
-unlock live trading. Board flow remains a single-source provider-methodology
-view, not a whole-market total. Current valuation fields are not historical
-temperature, and the news lexicon is not a market-sentiment model. Licensed
-tick, order-book, multi-source news, historical valuation, and sentiment
-adapters still require their own date, methodology, licensing, completeness,
-staleness, and cross-source contracts.
+These rows may support human research review. They cannot modify a strategy
+candidate, write a paper or broker ledger, create an order, satisfy a promotion
+gate, or unlock live trading. Fundamental evidence does not automatically make
+the assistant's fundamental role available, and official disclosures, news,
+Dragon-Tiger rows, breadth, flow, or depth do not make sentiment coverage
+available. Remaining work includes licensed real-time minute/Tick and Level-2
+feeds, broader official-market coverage and PDF body archival, independent
+fundamental/valuation reconciliation, and a complete multi-source hot-list and
+sentiment methodology.

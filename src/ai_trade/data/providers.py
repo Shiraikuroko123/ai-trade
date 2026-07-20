@@ -214,9 +214,58 @@ class _YahooProvider:
         return is_transport_failure(error)
 
 
+class _TushareProvider:
+    descriptor = ProviderDescriptor(
+        key="tushare",
+        display_name="Tushare Pro",
+        implementation="tushare.pro.daily_reference",
+        daily_bars=True,
+        intraday_bars=False,
+        quotes=False,
+        status="implemented_reference_only_requires_token",
+        snapshot_eligible=False,
+        supported_adjustments=("none", "forward"),
+    )
+    primary_source_label = "network"
+    fallback_source_label = "tushare_network_fallback"
+
+    def download(
+        self,
+        config: AppConfig,
+        instrument: Instrument,
+        output_path: Path,
+        *,
+        cache_path: Path | None,
+        cutoff: date,
+        proxy_mode: str,
+        network_errors: list[str],
+        provider_metadata: dict[str, object],
+    ) -> Path:
+        from .tushare import download_instrument
+
+        try:
+            return download_instrument(
+                config,
+                instrument,
+                output_path,
+                cutoff=cutoff,
+                proxy_mode=proxy_mode,
+                provider_metadata=provider_metadata,
+            )
+        except Exception as exc:
+            network_errors.append(f"{type(exc).__name__}: {exc}")
+            raise
+
+    def is_transport_failure(self, error: Exception) -> bool:
+        from .tushare import is_transport_failure
+
+        return is_transport_failure(error)
+
+
 _PROVIDERS: dict[str, MarketDataProvider] = {
     "eastmoney": _EastmoneyProvider(),
     "tencent": _TencentProvider(),
+    "tushare": _TushareProvider(),
     "yahoo": _YahooProvider(),
 }
 

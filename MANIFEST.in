@@ -48,8 +48,12 @@ include src/ai_trade/data/market_breadth.py
 include src/ai_trade/data/capital_flow.py
 include src/ai_trade/data/cross_check.py
 include src/ai_trade/data/evidence_io.py
+include src/ai_trade/data/disclosures.py
+include src/ai_trade/data/fundamentals.py
 include src/ai_trade/data/intraday.py
 include src/ai_trade/data/news.py
+include src/ai_trade/data/order_book.py
+include src/ai_trade/data/tushare.py
 include src/ai_trade/data/valuation.py
 include src/ai_trade/notification_delivery.py
 include src/ai_trade/research_archive.py

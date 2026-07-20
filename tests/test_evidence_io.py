@@ -6,7 +6,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from ai_trade.data.evidence_io import atomic_create_json, evidence_store_lock
+from ai_trade.data.evidence_io import (
+    DateRevisionSpec,
+    ImmutableDateRevisionStore,
+    atomic_create_json,
+    evidence_store_lock,
+)
 
 
 class EvidenceIoTests(unittest.TestCase):
@@ -66,6 +71,33 @@ class EvidenceIoTests(unittest.TestCase):
             [json.loads(path.read_text(encoding="utf-8"))["revision"] for path in paths],
             list(range(1, 9)),
         )
+
+    def test_generic_date_store_reuses_and_chains_validated_revisions(self):
+        store = ImmutableDateRevisionStore(
+            self.root,
+            DateRevisionSpec("sample", "Sample", "sample"),
+            lambda value: self.assertIsInstance(value.get("records"), list),
+        )
+        draft = {
+            "schema_version": 1,
+            "dataset": "sample",
+            "trade_date": "2026-07-17",
+            "retrieved_at": "2026-07-20T00:00:00Z",
+            "records": [{"value": 1}],
+        }
+        first = store.publish(draft)
+        reused = store.publish(
+            {**draft, "retrieved_at": "2026-07-20T00:01:00Z"}
+        )
+        changed = store.publish({**draft, "records": [{"value": 2}]})
+        self.assertEqual(first["revision"], 1)
+        self.assertTrue(reused["reused"])
+        self.assertEqual(changed["revision"], 2)
+        self.assertEqual(changed["supersedes"], first["revision_id"])
+        latest = store.latest(include_revisions=True)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["records"], [{"value": 2}])
+        self.assertEqual(len(latest["revisions"]), 2)
 
 
 if __name__ == "__main__":

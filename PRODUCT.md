@@ -2,7 +2,7 @@
 
 ## Release Baseline
 
-`v0.14.0` is the current public release. It provides completed-session market review, research and strategy validation, paper accounting, optional private R2 backup, broker-readiness controls, an auditable multi-instrument screen with source and data-quality disclosure, bounded Yahoo OHLCV reference reconciliation, historical minute evidence, current valuation fields, traceable news/announcement evidence, and optional HMAC webhook delivery. It does not provide tick/Level-2 data, historical valuation percentiles, a complete sentiment model, a working live-broker adapter, or automatic real-money execution.
+`v0.15.0` is the current public release. It adds a credentialed Tushare daily reference route, stock-only point-in-time fundamentals, stock-only historical valuation percentiles, official SSE/CNINFO disclosure metadata, and immutable public Level-1 five-level order-book snapshots to the existing completed-session market review, research, paper accounting, optional private R2 backup, broker-readiness controls, historical minute evidence, third-party news evidence, and HMAC webhook delivery. It does not provide Tick or Level-2 data, a complete sentiment model, complete official coverage for every ETF/market, a working live-broker adapter, or automatic real-money execution.
 
 ## Register
 

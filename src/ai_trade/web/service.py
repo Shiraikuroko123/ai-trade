@@ -27,13 +27,16 @@ from ..broker.scope import create_broker_ledger_scope
 from ..config import AppConfig
 from ..data.capital_flow import CapitalFlowQuery, CapitalFlowStore
 from ..data.cross_check import cross_source_projection
+from ..data.disclosures import DisclosureQuery, DisclosureStore
 from ..data.eastmoney import completed_session_cutoff
+from ..data.fundamentals import FundamentalQuery, FundamentalStore
 from ..data.market import MarketData
 from ..data.market_breadth import MarketBreadthQuery, MarketBreadthStore
 from ..data.market_intelligence import DragonTigerQuery, DragonTigerStore
 from ..data.intraday import IntradayQuery, IntradayStore
 from ..data.valuation import ValuationQuery, ValuationStore
 from ..data.news import NewsQuery, NewsStore
+from ..data.order_book import OrderBookQuery, OrderBookStore
 from ..diagnostics import diagnose
 from ..json_utils import load_unique_json
 from ..monitoring import MonitoringEngine
@@ -1302,6 +1305,33 @@ class DashboardService:
         """Read current valuation evidence without contacting a provider."""
 
         result = ValuationStore(self.config).list(query)
+        result["generated_at"] = _now()
+        return result
+
+    def fundamentals(
+        self, query: FundamentalQuery | None = None
+    ) -> dict[str, Any]:
+        """Read validated local company fundamentals without network I/O."""
+
+        result = FundamentalStore(self.config).list(query)
+        result["generated_at"] = _now()
+        return result
+
+    def disclosures(
+        self, query: DisclosureQuery | None = None
+    ) -> dict[str, Any]:
+        """Read official disclosure metadata without contacting a provider."""
+
+        result = DisclosureStore(self.config).list(query)
+        result["generated_at"] = _now()
+        return result
+
+    def order_book(
+        self, query: OrderBookQuery | None = None
+    ) -> dict[str, Any]:
+        """Read validated local Level-1 depth without contacting a provider."""
+
+        result = OrderBookStore(self.config).list(query)
         result["generated_at"] = _now()
         return result
 

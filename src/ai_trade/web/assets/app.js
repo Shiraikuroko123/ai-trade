@@ -61,7 +61,10 @@ const JOB_LABELS = {
   "refresh-market-breadth": "刷新市场宽度",
   "refresh-capital-flow": "刷新资金流",
   "refresh-intraday": "刷新分钟行情",
-  "refresh-valuation": "刷新当前估值",
+  "refresh-valuation": "刷新估值与分位",
+  "refresh-fundamentals": "刷新基本面",
+  "refresh-disclosures": "刷新官方披露",
+  "refresh-order-book": "刷新五档盘口",
   "refresh-news": "刷新新闻公告",
   "monitoring-scan": "运行收盘监控",
 };
@@ -271,6 +274,23 @@ const state = {
     date: "",
     symbol: "",
     limit: "200",
+  },
+  fundamentalsFilters: {
+    date: "",
+    symbol: "",
+    limit: "100",
+  },
+  disclosuresFilters: {
+    date: "",
+    symbol: "",
+    provider: "all",
+    query: "",
+    limit: "200",
+  },
+  orderBookFilters: {
+    date: "",
+    symbol: "",
+    limit: "100",
   },
   newsFilters: {
     date: "",
@@ -973,6 +993,38 @@ function valuationPath() {
   return `/api/valuation${query ? `?${query}` : ""}`;
 }
 
+function fundamentalsPath() {
+  const params = new URLSearchParams();
+  const filters = state.fundamentalsFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.limit && filters.limit !== "100") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/fundamentals${query ? `?${query}` : ""}`;
+}
+
+function disclosuresPath() {
+  const params = new URLSearchParams();
+  const filters = state.disclosuresFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.provider && filters.provider !== "all") params.set("provider", filters.provider);
+  if (filters.query) params.set("q", filters.query);
+  if (filters.limit && filters.limit !== "200") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/disclosures${query ? `?${query}` : ""}`;
+}
+
+function orderBookPath() {
+  const params = new URLSearchParams();
+  const filters = state.orderBookFilters || {};
+  if (filters.date) params.set("date", filters.date);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.limit && filters.limit !== "100") params.set("limit", filters.limit);
+  const query = params.toString();
+  return `/api/order-book${query ? `?${query}` : ""}`;
+}
+
 function newsPath() {
   const params = new URLSearchParams();
   const filters = state.newsFilters || {};
@@ -1019,12 +1071,15 @@ async function loadRoute() {
         universe_error: universeResult.status === "rejected" ? friendlyError(universeResult.reason?.message) : "",
       };
     } else if (requestedRoute === "intelligence") {
-      const [dragonTigerResult, breadthResult, capitalFlowResult, intradayResult, valuationResult, newsResult] = await Promise.allSettled([
+      const [dragonTigerResult, breadthResult, capitalFlowResult, intradayResult, valuationResult, fundamentalsResult, disclosuresResult, orderBookResult, newsResult] = await Promise.allSettled([
         api(marketIntelligencePath(), { signal }),
         api(marketBreadthPath(), { signal }),
         api(capitalFlowPath(), { signal }),
         api(intradayPath(), { signal }),
         api(valuationPath(), { signal }),
+        api(fundamentalsPath(), { signal }),
+        api(disclosuresPath(), { signal }),
+        api(orderBookPath(), { signal }),
         api(newsPath(), { signal }),
       ]);
       if (
@@ -1033,6 +1088,9 @@ async function loadRoute() {
         && capitalFlowResult.status === "rejected"
         && intradayResult.status === "rejected"
         && valuationResult.status === "rejected"
+        && fundamentalsResult.status === "rejected"
+        && disclosuresResult.status === "rejected"
+        && orderBookResult.status === "rejected"
         && newsResult.status === "rejected"
       ) {
         throw dragonTigerResult.reason;
@@ -1048,6 +1106,12 @@ async function loadRoute() {
         intraday_error: intradayResult.status === "rejected" ? friendlyError(intradayResult.reason?.message) : "",
         valuation: valuationResult.status === "fulfilled" ? valuationResult.value : null,
         valuation_error: valuationResult.status === "rejected" ? friendlyError(valuationResult.reason?.message) : "",
+        fundamentals: fundamentalsResult.status === "fulfilled" ? fundamentalsResult.value : null,
+        fundamentals_error: fundamentalsResult.status === "rejected" ? friendlyError(fundamentalsResult.reason?.message) : "",
+        disclosures: disclosuresResult.status === "fulfilled" ? disclosuresResult.value : null,
+        disclosures_error: disclosuresResult.status === "rejected" ? friendlyError(disclosuresResult.reason?.message) : "",
+        order_book: orderBookResult.status === "fulfilled" ? orderBookResult.value : null,
+        order_book_error: orderBookResult.status === "rejected" ? friendlyError(orderBookResult.reason?.message) : "",
         news: newsResult.status === "fulfilled" ? newsResult.value : null,
         news_error: newsResult.status === "rejected" ? friendlyError(newsResult.reason?.message) : "",
         generated_at: breadthResult.status === "fulfilled"
@@ -1404,6 +1468,68 @@ async function clearValuationFilters() {
   state.valuationFilters = { date: "", symbol: "", limit: "200" };
   await loadRoute();
   restoreFocusAfterRender("[data-valuation-filter-clear]", "intelligence");
+}
+
+async function applyFundamentalsFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.fundamentalsFilters = {
+    date: String(values.get("date") || ""),
+    symbol: String(values.get("symbol") || "").trim(),
+    limit: String(values.get("limit") || "100"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#fundamentals-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearFundamentalsFilters() {
+  state.fundamentalsFilters = { date: "", symbol: "", limit: "100" };
+  await loadRoute();
+  restoreFocusAfterRender("[data-fundamentals-filter-clear]", "intelligence");
+}
+
+async function applyDisclosuresFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.disclosuresFilters = {
+    date: String(values.get("date") || ""),
+    symbol: String(values.get("symbol") || "").trim(),
+    provider: String(values.get("provider") || "all"),
+    query: String(values.get("q") || "").trim(),
+    limit: String(values.get("limit") || "200"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#disclosures-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearDisclosuresFilters() {
+  state.disclosuresFilters = {
+    date: "",
+    symbol: "",
+    provider: "all",
+    query: "",
+    limit: "200",
+  };
+  await loadRoute();
+  restoreFocusAfterRender("[data-disclosures-filter-clear]", "intelligence");
+}
+
+async function applyOrderBookFilterForm(form) {
+  if (!form) return;
+  const values = new FormData(form);
+  state.orderBookFilters = {
+    date: String(values.get("date") || ""),
+    symbol: String(values.get("symbol") || "").trim(),
+    limit: String(values.get("limit") || "100"),
+  };
+  await loadRoute();
+  restoreFocusAfterRender('#order-book-filter-form button[type="submit"]', "intelligence");
+}
+
+async function clearOrderBookFilters() {
+  state.orderBookFilters = { date: "", symbol: "", limit: "100" };
+  await loadRoute();
+  restoreFocusAfterRender("[data-order-book-filter-clear]", "intelligence");
 }
 
 async function applyNewsFilterForm(form) {
@@ -5415,19 +5541,113 @@ function renderValuationEvidence(data, requestError = "") {
   const source = snapshot.source || {};
   const status = String(snapshot.status || "unavailable").toLowerCase();
   const statusKind = researchEvidenceStatusKind(status);
-  const form = `<form class="filter-form valuation-filter-form" id="valuation-filter-form" aria-describedby="valuation-filter-help"><div class="field"><label for="valuation-date">快照日期</label><input id="valuation-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div><div class="field"><label for="valuation-symbol">证券代码</label><input id="valuation-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="留空查看全部"></div><div class="field"><label for="valuation-limit">最多返回</label><input id="valuation-limit" name="limit" type="number" min="1" max="500" value="${escapeHtml(filters.limit || "200")}"></div><div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-valuation-filter-clear>重置</button></div></form><p id="valuation-filter-help" class="section-note">当前字段按来源缩放规则固化；留空证券代码时读取本地快照中的全部标的。</p>`;
+  const form = `<form class="filter-form valuation-filter-form" id="valuation-filter-form" aria-describedby="valuation-filter-help"><div class="field"><label for="valuation-date">快照日期</label><input id="valuation-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div><div class="field"><label for="valuation-symbol">证券代码</label><input id="valuation-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="留空查看全部"></div><div class="field"><label for="valuation-limit">最多返回</label><input id="valuation-limit" name="limit" type="number" min="1" max="500" value="${escapeHtml(filters.limit || "200")}"></div><div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-valuation-filter-clear>重置</button></div></form><p id="valuation-filter-help" class="section-note">股票历史分位使用已完成交易日的正值有限样本；ETF 不用价格历史替代估值历史。</p>`;
   const rows = records.length
-    ? records.map((item) => `<tr><td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || "名称未提供")}</span></td><td class="numeric">${formatNumber(item.price, 3)}</td><td class="numeric ${tone(item.change_pct)}">${formatPercentPoints(item.change_pct, true)}</td><td class="numeric">${formatNumber(item.pe_ttm, 2)}</td><td class="numeric">${formatNumber(item.pe_static, 2)}</td><td class="numeric">${formatNumber(item.pe_dynamic, 2)}</td><td class="numeric">${formatNumber(item.pb, 2)}</td><td class="numeric">${formatCompactMoney(item.market_cap)}</td><td class="numeric">${formatCompactMoney(item.float_market_cap)}</td><td>${statusChip("未接入", "warning")}</td></tr>`).join("")
-    : emptyRow(10, snapshot.available === true ? "当前筛选没有估值记录" : "尚无已发布的当前估值证据");
+    ? records.map((item) => {
+      const history = item.valuation_history || {};
+      const percentiles = item.valuation_percentiles || {};
+      const available = history.available === true;
+      const historyLabel = available
+        ? "分位可用"
+        : history.status === "instrument_type_not_supported"
+          ? "非股票"
+          : history.status === "insufficient_history" ? "样本不足" : "不可用";
+      const historyKind = available ? "success" : "warning";
+      const percentile = (value) => value == null ? "—" : `${formatNumber(value, 1)}%`;
+      return `<tr><td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || "名称未提供")}</span></td><td class="numeric">${formatNumber(item.price, 3)}</td><td class="numeric ${tone(item.change_pct)}">${formatPercentPoints(item.change_pct, true)}</td><td class="numeric">${formatNumber(item.pe_ttm, 2)}</td><td class="numeric">${percentile(percentiles.pe_ttm)}</td><td class="numeric">${formatNumber(item.pe_static, 2)}</td><td class="numeric">${percentile(percentiles.pe_static)}</td><td class="numeric">${formatNumber(item.pb, 2)}</td><td class="numeric">${percentile(percentiles.pb)}</td><td class="numeric">${percentile(percentiles.cash_flow)}</td><td>${statusChip(historyLabel, historyKind)}<span class="table-subtext">${formatInteger(history.sample_count)} 条 · ${escapeHtml(history.sample_start || "—")} 至 ${escapeHtml(history.sample_end || "—")}</span></td><td class="numeric">${formatCompactMoney(item.market_cap)}</td></tr>`;
+    }).join("")
+    : emptyRow(12, snapshot.available === true ? "当前筛选没有估值记录" : "尚无已发布的估值证据");
   const coverage = summary.valuation_metric_coverage || {};
   return `<section id="valuation-evidence" class="intelligence-dataset valuation-dataset" tabindex="-1">
-    ${pageIntro("当前估值字段", "记录当前 PE、PB 与市值字段及原始映射；不把价格历史伪装成估值水温。", actionButton("refresh-valuation", "primary"))}
+    ${pageIntro("当前估值与历史分位", "股票按历史估值序列计算 PE、PB、现金流和 PS 经验分位；ETF 保持明确不可用。", actionButton("refresh-valuation", "primary"))}
     <section class="intelligence-filter-band" aria-label="当前估值筛选">${form}</section>
-    <section class="metric-strip" aria-label="当前估值摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · 显示 ${formatInteger(summary.returned_count ?? records.length)} 条`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("PE TTM / PB 覆盖", `${formatInteger(coverage.pe_ttm)} / ${formatInteger(coverage.pb)}`, `请求 ${formatInteger(summary.requested_count)} 个标的`)}${metric("来源错误", formatInteger(summary.error_count), snapshot.errors?.length ? "部分标的未发布新值" : "未记录来源错误", summary.error_count ? "tone-warning" : "tone-positive")}${metric("历史估值分位", "不可用", "PE / PB / 现金流分位均未接入", "tone-warning")}</section>
+    <section class="metric-strip" aria-label="当前估值摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · 显示 ${formatInteger(summary.returned_count ?? records.length)} 条`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("PE TTM / PB 覆盖", `${formatInteger(coverage.pe_ttm)} / ${formatInteger(coverage.pb)}`, `请求 ${formatInteger(summary.requested_count)} 个标的`)}${metric("历史分位可用", formatInteger(summary.historical_percentile_available_count), `支持 ${formatInteger(summary.historical_percentile_supported_count)} · 不支持 ${formatInteger(summary.historical_percentile_unsupported_count)}`, summary.historical_percentile_available_count ? "tone-positive" : "tone-warning")}${metric("历史响应 / 错误", `${formatInteger(source.history_response_count)} / ${formatInteger(summary.error_count)}`, `最低 ${formatInteger(records[0]?.valuation_history?.minimum_observations || 120)} 个正值样本`, summary.error_count ? "tone-warning" : "tone-info")}</section>
     ${researchEvidenceCallouts(snapshot, requestError, "refresh-valuation", "当前估值")}
-    <section class="panel">${panelHeader("估值明细", `${snapshot.trade_date || "日期不可用"} · 当前字段，不是历史分位`)}<div class="table-wrap" aria-label="当前估值宽表"><table class="data-table valuation-table"><thead><tr><th>证券</th><th class="numeric">价格</th><th class="numeric">涨跌幅</th><th class="numeric">PE TTM</th><th class="numeric">静态 PE</th><th class="numeric">动态 PE</th><th class="numeric">PB</th><th class="numeric">总市值</th><th class="numeric">流通市值</th><th>历史分位</th></tr></thead><tbody>${rows}</tbody></table></div></section>
-    <section class="equal-layout"><article class="panel">${panelHeader("字段映射", "来源字段、缩放规则和响应指纹")}<div class="path-list"><div class="path-row"><span>价格 / 涨跌</span><code>${escapeHtml(source.scaling?.price || "—")} · ${escapeHtml(source.scaling?.change_pct || "—")}</code></div><div class="path-row"><span>PE / PB</span><code>${escapeHtml(source.scaling?.pe_ttm || "—")} · ${escapeHtml(source.scaling?.pb || "—")}</code></div><div class="path-row"><span>市值单位</span><code>${escapeHtml(source.scaling?.market_cap || "—")}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article><article class="panel">${panelHeader("缺失能力", "历史序列接入前保持空值")}<div class="check-list">${detailRow("历史 PE 分位", "UNAVAILABLE", "warning")}${detailRow("历史 PB 分位", "UNAVAILABLE", "warning")}${detailRow("现金流估值分位", "UNAVAILABLE", "warning")}${detailRow("交易授权", "禁止", "danger")}</div></article></section>
-    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>这些是东方财富当前报价字段，不是经过跨期校验的估值水温。缺失分位保持空值；当前估值不会修改策略、持仓、订单或交易权限。</p></aside>
+    <section class="panel">${panelHeader("估值明细", `${snapshot.trade_date || "日期不可用"} · 当前值与已完成交易日历史分位`)}<div class="table-wrap" aria-label="当前估值与历史分位宽表"><table class="data-table valuation-table"><thead><tr><th>证券</th><th class="numeric">价格</th><th class="numeric">涨跌幅</th><th class="numeric">PE TTM</th><th class="numeric">PE 分位</th><th class="numeric">静态 PE</th><th class="numeric">静态分位</th><th class="numeric">PB</th><th class="numeric">PB 分位</th><th class="numeric">现金流分位</th><th>历史样本</th><th class="numeric">总市值</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="equal-layout"><article class="panel">${panelHeader("字段映射", "即时字段、历史报告和响应指纹")}<div class="path-list"><div class="path-row"><span>价格 / 涨跌</span><code>${escapeHtml(source.scaling?.price || "—")} · ${escapeHtml(source.scaling?.change_pct || "—")}</code></div><div class="path-row"><span>当前 PE / PB</span><code>${escapeHtml(source.scaling?.pe_ttm || "—")} · ${escapeHtml(source.scaling?.pb || "—")}</code></div><div class="path-row"><span>历史报告</span><code>${escapeHtml(source.history_report_name || "—")}</code></div><div class="path-row"><span>分位方法</span><code>${escapeHtml(source.percentile_method || "—")}</code></div><div class="path-row"><span>即时 / 历史响应指纹</span><code>${escapeHtml(shortFingerprint(source.response_sha256))} / ${escapeHtml(shortFingerprint(source.history_response_sha256))}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article><article class="panel">${panelHeader("历史估值口径", "股票专用，空值不推断")}<div class="check-list">${detailRow("历史 PE 分位", summary.historical_percentile_available_count ? "已接入" : "暂无可用样本", summary.historical_percentile_available_count ? "success" : "warning")}${detailRow("历史 PB 分位", summary.historical_percentile_available_count ? "已接入" : "暂无可用样本", summary.historical_percentile_available_count ? "success" : "warning")}${detailRow("现金流估值分位", summary.historical_percentile_available_count ? "已接入" : "暂无可用样本", summary.historical_percentile_available_count ? "success" : "warning")}${detailRow("ETF 历史估值", "不推断", "warning")}${detailRow("交易授权", "禁止", "danger")}</div></article></section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>历史分位是东方财富股票估值序列的经验分布，要求至少 120 个正值有限样本；它不是内在价值、跨源共识或交易信号。当前估值不会修改策略、持仓、订单或交易权限。</p></aside>
+  </section>`;
+}
+
+function renderFundamentalsEvidence(data, requestError = "") {
+  const snapshot = data || {};
+  const filters = snapshot.filters || state.fundamentalsFilters || {};
+  const records = Array.isArray(snapshot.records) ? snapshot.records : [];
+  const summary = snapshot.summary || {};
+  const source = snapshot.source || {};
+  const status = String(snapshot.status || "unavailable").toLowerCase();
+  const statusKind = researchEvidenceStatusKind(status);
+  const form = `<form class="filter-form fundamentals-filter-form" id="fundamentals-filter-form" aria-describedby="fundamentals-filter-help"><div class="field"><label for="fundamentals-date">快照日期</label><input id="fundamentals-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div><div class="field"><label for="fundamentals-symbol">股票代码</label><input id="fundamentals-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="留空查看全部股票"></div><div class="field"><label for="fundamentals-limit">最多返回</label><input id="fundamentals-limit" name="limit" type="number" min="1" max="500" value="${escapeHtml(filters.limit || "100")}"></div><div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-fundamentals-filter-clear>重置</button></div></form><p id="fundamentals-filter-help" class="section-note">只读取公告日和更新日不晚于快照截止日的股票财务期；ETF 不生成公司基本面。</p>`;
+  const rows = records.length
+    ? records.map((item) => {
+      const period = Array.isArray(item.periods) ? item.periods[0] || {} : {};
+      return `<tr><td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || "名称未提供")}</span></td><td>${escapeHtml(period.report_date || "—")}<span class="table-subtext">披露 ${escapeHtml(period.notice_date || "—")}</span></td><td class="numeric">${formatNumber(period.basic_eps, 3)}</td><td class="numeric">${formatCompactMoney(period.revenue)}</td><td class="numeric">${formatCompactMoney(period.parent_net_profit)}</td><td class="numeric ${tone(period.revenue_yoy_pct)}">${formatPercentPoints(period.revenue_yoy_pct, true)}</td><td class="numeric ${tone(period.net_profit_yoy_pct)}">${formatPercentPoints(period.net_profit_yoy_pct, true)}</td><td class="numeric">${formatPercentPoints(period.weighted_roe_pct)}</td><td class="numeric">${formatNumber(period.book_value_per_share, 3)}</td><td class="numeric">${formatNumber(period.operating_cash_flow_per_share, 3)}</td><td class="numeric">${formatPercentPoints(period.gross_margin_pct)}</td><td class="numeric">${formatInteger(item.periods?.length)}</td></tr>`;
+    }).join("")
+    : emptyRow(12, snapshot.available === true ? "当前筛选没有股票基本面记录" : "尚无已发布的基本面证据");
+  return `<section id="fundamentals-evidence" class="intelligence-dataset fundamentals-dataset" tabindex="-1">
+    ${pageIntro("股票基本面证据", "按披露时间点保存 EPS、营收、归母净利、ROE、每股现金流及增长字段。", actionButton("refresh-fundamentals", "primary"))}
+    <section class="intelligence-filter-band" aria-label="股票基本面筛选">${form}</section>
+    <section class="metric-strip" aria-label="股票基本面摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · 显示 ${formatInteger(summary.returned_count ?? records.length)} 只股票`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("财务期", formatInteger(summary.period_count), `请求 ${formatInteger(summary.requested_count)} · 返回 ${formatInteger(summary.returned_count)}`)}${metric("非股票 / 错误", `${formatInteger(summary.unsupported_count)} / ${formatInteger(summary.error_count)}`, summary.unsupported_count ? "ETF 等证券保持不可用" : "未记录类型缺口", summary.error_count || summary.unsupported_count ? "tone-warning" : "tone-positive")}${metric("来源响应", formatInteger(source.response_count), `${source.provider || "未提供"} · 单一第三方标准化来源`, "tone-info")}</section>
+    ${researchEvidenceCallouts(snapshot, requestError, "refresh-fundamentals", "基本面")}
+    <section class="panel">${panelHeader("最新可见财务期", `${snapshot.trade_date || "日期不可用"} · 点时披露过滤`)}<div class="table-wrap" aria-label="股票基本面宽表"><table class="data-table fundamentals-table"><thead><tr><th>股票</th><th>报告 / 披露日</th><th class="numeric">EPS</th><th class="numeric">营收</th><th class="numeric">归母净利</th><th class="numeric">营收同比</th><th class="numeric">净利同比</th><th class="numeric">加权 ROE</th><th class="numeric">每股净资产</th><th class="numeric">每股经营现金流</th><th class="numeric">毛利率</th><th class="numeric">可见期数</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="equal-layout"><article class="panel">${panelHeader("来源与点时口径", "财务报告、披露时间与响应指纹")}<div class="path-list"><div class="path-row"><span>来源报告</span><code>${escapeHtml(source.report_name || "—")}</code></div><div class="path-row"><span>点时过滤</span><code>${escapeHtml(source.point_in_time_filter || "—")}</code></div><div class="path-row"><span>来源认证</span><code>${escapeHtml(source.certification || "—")}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article><article class="panel">${panelHeader("覆盖边界", "公司财务字段不能外推到基金")}<div class="check-list">${detailRow("股票财务期", snapshot.available ? "已接入" : "待刷新", snapshot.available ? "success" : "warning")}${detailRow("ETF 公司基本面", "不支持", "warning")}${detailRow("独立跨源财务核对", "未接入", "warning")}${detailRow("交易授权", "禁止", "danger")}</div></article></section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>基本面字段来自东方财富标准化财务披露，并按公告日与更新日过滤；它不是交易所原始报表，也没有独立跨源核对。所有结论仍固定为 research_only。</p></aside>
+  </section>`;
+}
+
+function renderDisclosuresEvidence(data, requestError = "") {
+  const snapshot = data || {};
+  const filters = snapshot.filters || state.disclosuresFilters || {};
+  const records = Array.isArray(snapshot.records) ? snapshot.records : [];
+  const coverage = Array.isArray(snapshot.coverage) ? snapshot.coverage : [];
+  const summary = snapshot.summary || {};
+  const source = snapshot.source || {};
+  const status = String(snapshot.status || "unavailable").toLowerCase();
+  const statusKind = researchEvidenceStatusKind(status);
+  const form = `<form class="filter-form disclosures-filter-form" id="disclosures-filter-form" aria-describedby="disclosures-filter-help"><div class="field"><label for="disclosures-date">快照日期</label><input id="disclosures-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div><div class="field"><label for="disclosures-symbol">证券代码</label><input id="disclosures-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="留空查看全部"></div><div class="field"><label for="disclosures-provider">官方来源</label><select id="disclosures-provider" name="provider"><option value="all"${String(filters.provider || "all") === "all" ? " selected" : ""}>全部</option><option value="sse"${filters.provider === "sse" ? " selected" : ""}>上交所</option><option value="cninfo"${filters.provider === "cninfo" ? " selected" : ""}>巨潮资讯</option></select></div><div class="field disclosures-query"><label for="disclosures-query">公告标题</label><input id="disclosures-query" name="q" type="search" maxlength="200" value="${escapeHtml(filters.q ?? filters.query ?? "")}" placeholder="输入关键词"></div><div class="field"><label for="disclosures-limit">最多返回</label><input id="disclosures-limit" name="limit" type="number" min="1" max="500" value="${escapeHtml(filters.limit || "200")}"></div><div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-disclosures-filter-clear>重置</button></div></form><p id="disclosures-filter-help" class="section-note">官方元数据与 PDF 链接单独归档；筛选不会请求网络，PDF 正文尚未下载归档。</p>`;
+  const rows = records.length
+    ? records.map((item) => `<tr><td>${statusChip(item.source_provider === "sse" ? "上交所" : "巨潮资讯", "info")}</td><td><a class="evidence-link" href="${escapeHtml(item.document_url || "#")}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(item.title || "标题不可用")}</strong></a><span class="table-subtext">${escapeHtml(item.category || "未分类")}</span></td><td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || "名称未提供")}</span></td><td>${formatDate(item.published_at, true)}</td><td>${escapeHtml(item.effective_date || "—")}</td><td>${escapeHtml(item.source_authority || "—")}</td><td>${escapeHtml(item.document_format || "—")}</td></tr>`).join("")
+    : emptyRow(7, snapshot.available === true ? "当前筛选没有官方披露" : "尚无已发布的官方披露证据");
+  const gapRows = coverage.filter((item) => ["unavailable", "error"].includes(item.status));
+  const coverageRows = gapRows.length
+    ? gapRows.map((item) => `<tr><td class="mono">${escapeHtml(item.symbol || "—")}</td><td>${escapeHtml(item.market || "—")} · ${escapeHtml(item.instrument_type || "—")}</td><td>${statusChip(item.status === "error" ? "请求失败" : "未覆盖", "warning")}</td><td>${escapeHtml(item.message || item.reason || "覆盖原因未提供")}</td></tr>`).join("")
+    : emptyRow(4, coverage.length ? "所选证券未记录官方覆盖缺口" : "尚无覆盖审计");
+  return `<section id="disclosures-evidence" class="intelligence-dataset disclosures-dataset" tabindex="-1">
+    ${pageIntro("官方披露证据", "上交所与巨潮指定披露平台独立于第三方新闻归档，并逐证券显示市场覆盖。", actionButton("refresh-disclosures", "primary"))}
+    <section class="intelligence-filter-band" aria-label="官方披露筛选">${form}</section>
+    <section class="metric-strip" aria-label="官方披露摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · ${escapeHtml(snapshot.window?.start || "—")} 至 ${escapeHtml(snapshot.window?.end || "—")}`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("官方记录", formatInteger(summary.record_count), `上交所 ${formatInteger(summary.sse_count)} · 巨潮 ${formatInteger(summary.cninfo_count)}`)}${metric("覆盖证券 / 缺口", `${formatInteger(summary.covered_symbol_count)} / ${formatInteger(summary.coverage_gap_count)}`, `错误 ${formatInteger(summary.error_count)}`, summary.coverage_gap_count ? "tone-warning" : "tone-positive")}${metric("响应 / 正文归档", `${formatInteger(source.response_count)} / 否`, "官方元数据已固化，PDF 正文未归档", "tone-info")}</section>
+    ${researchEvidenceCallouts(snapshot, requestError, "refresh-disclosures", "官方披露")}
+    <section class="panel">${panelHeader("官方公告", `${snapshot.trade_date || "日期不可用"} · 按发布时间倒序`)}<div class="table-wrap" aria-label="官方披露宽表"><table class="data-table disclosures-table"><thead><tr><th>官方来源</th><th>公告标题</th><th>证券</th><th>发布时间</th><th>生效日</th><th>发布机构</th><th>格式</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="equal-layout"><article class="panel">${panelHeader("覆盖缺口", "不把无法验证的市场标记为已覆盖")}<div class="table-wrap"><table class="data-table compact"><thead><tr><th>证券</th><th>市场 / 类型</th><th>状态</th><th>原因</th></tr></thead><tbody>${coverageRows}</tbody></table></div></article><article class="panel">${panelHeader("来源与指纹", "官方元数据，不包含 PDF 正文")}<div class="path-list"><div class="path-row"><span>来源认证</span><code>${escapeHtml(source.certification || "—")}</code></div><div class="path-row"><span>上交所接口</span><code>${escapeHtml(source.sse_endpoint || "—")}</code></div><div class="path-row"><span>巨潮接口</span><code>${escapeHtml(source.cninfo_query_endpoint || "—")}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article></section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>官方披露保持为来源证据，不自动生成情绪分数、投资结论或交易授权。沪市 ETF、北交所及巨潮主数据无法识别的证券会明确显示覆盖缺口。</p></aside>
+  </section>`;
+}
+
+function renderOrderBookEvidence(data, requestError = "") {
+  const snapshot = data || {};
+  const filters = snapshot.filters || state.orderBookFilters || {};
+  const records = Array.isArray(snapshot.records) ? snapshot.records : [];
+  const summary = snapshot.summary || {};
+  const source = snapshot.source || {};
+  const status = String(snapshot.status || "unavailable").toLowerCase();
+  const statusKind = researchEvidenceStatusKind(status);
+  const form = `<form class="filter-form order-book-filter-form" id="order-book-filter-form" aria-describedby="order-book-filter-help"><div class="field"><label for="order-book-date">快照日期</label><input id="order-book-date" name="date" type="date" value="${escapeHtml(filters.trade_date ?? filters.date ?? "")}"></div><div class="field"><label for="order-book-symbol">证券代码</label><input id="order-book-symbol" name="symbol" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(filters.symbol || "")}" placeholder="留空查看全部"></div><div class="field"><label for="order-book-limit">最多返回</label><input id="order-book-limit" name="limit" type="number" min="1" max="500" value="${escapeHtml(filters.limit || "100")}"></div><div class="filter-actions"><button class="button secondary" type="submit">应用筛选</button><button class="button secondary" type="button" data-order-book-filter-clear>重置</button></div></form><p id="order-book-filter-help" class="section-note">每个不可变修订是一帧公开 Level-1 五档快照，不是逐笔委托或可回放订单流。</p>`;
+  const depthCell = (level) => `<strong>${formatNumber(level?.price, 3)}</strong><span class="table-subtext numeric">${level?.volume_shares == null ? "—" : formatInteger(level.volume_shares)} 股</span>`;
+  const rows = records.length
+    ? records.map((item) => {
+      const buys = Array.isArray(item.buy_levels) ? item.buy_levels : [];
+      const sells = Array.isArray(item.sell_levels) ? item.sell_levels : [];
+      return `<tr><td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || "名称未提供")}</span></td><td>${formatDate(item.observed_at, true)}<span class="table-subtext">${statusChip(item.status === "complete" ? "五档完整" : "部分档位", item.status === "complete" ? "success" : "warning")}</span></td><td class="numeric">${formatNumber(item.latest, 3)}</td>${[...buys].reverse().map(depthCell).map((cell) => `<td class="numeric depth-cell">${cell}</td>`).join("")}${sells.map(depthCell).map((cell) => `<td class="numeric depth-cell">${cell}</td>`).join("")}<td class="numeric">${formatNumber(item.spread, 4)}</td><td class="numeric ${tone(item.depth_imbalance)}">${formatPercent(item.depth_imbalance, true)}</td></tr>`;
+    }).join("")
+    : emptyRow(15, snapshot.available === true ? "当前筛选没有盘口快照" : "尚无已发布的五档盘口证据");
+  return `<section id="order-book-evidence" class="intelligence-dataset order-book-dataset" tabindex="-1">
+    ${pageIntro("Level-1 五档盘口", "保存买卖各五档价格与股数、价差和深度不平衡；不宣称 Tick 或 Level-2。", actionButton("refresh-order-book", "primary"))}
+    <section class="intelligence-filter-band" aria-label="五档盘口筛选">${form}</section>
+    <section class="metric-strip" aria-label="五档盘口摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · 显示 ${formatInteger(summary.returned_count ?? records.length)} 个证券`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("完整 / 部分五档", `${formatInteger(summary.complete_depth_count)} / ${formatInteger(summary.partial_depth_count)}`, `请求 ${formatInteger(summary.requested_count)} 个证券`)}${metric("来源错误", formatInteger(summary.error_count), summary.error_count ? "部分证券没有有效深度" : "未记录来源错误", summary.error_count ? "tone-warning" : "tone-positive")}${metric("单位 / 认证", "元 / 股", `${source.certification || "未提供"}`, "tone-info")}</section>
+    ${researchEvidenceCallouts(snapshot, requestError, "refresh-order-book", "五档盘口")}
+    <section class="panel">${panelHeader("五档深度", `${snapshot.trade_date || "日期不可用"} · 买五至卖五`)}<div class="table-wrap" aria-label="Level-1 五档盘口宽表"><table class="data-table order-book-table"><thead><tr><th>证券</th><th>观察时间</th><th class="numeric">最新</th><th class="numeric">买五</th><th class="numeric">买四</th><th class="numeric">买三</th><th class="numeric">买二</th><th class="numeric">买一</th><th class="numeric">卖一</th><th class="numeric">卖二</th><th class="numeric">卖三</th><th class="numeric">卖四</th><th class="numeric">卖五</th><th class="numeric">价差</th><th class="numeric">深度不平衡</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="equal-layout"><article class="panel">${panelHeader("字段与单位", "公开 Level-1 映射和响应指纹")}<div class="path-list"><div class="path-row"><span>价格单位</span><code>${escapeHtml(source.price_unit || "—")}</code></div><div class="path-row"><span>原始 / 规范化量</span><code>${escapeHtml(source.raw_volume_unit || "—")} → ${escapeHtml(source.normalized_volume_unit || "—")}</code></div><div class="path-row"><span>量换算</span><code>${escapeHtml(source.volume_scaling || "—")}</code></div><div class="path-row"><span>浮点模式</span><code>${escapeHtml(source.float_mode || "—")}</code></div><div class="path-row"><span>响应 / 证据指纹</span><code>${escapeHtml(shortFingerprint(source.response_sha256))} / ${escapeHtml(shortFingerprint(snapshot.evidence_fingerprint))}</code></div></div></article><article class="panel">${panelHeader("能力边界", "一帧快照不能替代逐笔和全深度")}<div class="check-list">${detailRow("公开五档 Level-1", snapshot.available ? "已接入" : "待刷新", snapshot.available ? "success" : "warning")}${detailRow("Tick 逐笔", "未接入", "warning")}${detailRow("Level-2 全深度", "未接入", "warning")}${detailRow("交易所认证", "否", "warning")}${detailRow("交易授权", "禁止", "danger")}</div></article></section>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>盘口深度来自东方财富公开 Level-1 报价，原始手数按 100 股换算。深度不平衡只是当前快照的数量比，不是情绪模型、委托流重建或下单依据。</p></aside>
   </section>`;
 }
 
@@ -5450,13 +5670,13 @@ function renderNewsEvidence(data, requestError = "") {
     ? records.map((item) => { const annotation = item.sentiment_annotation || {}; return `<tr><td>${item.kind === "announcement" ? statusChip("公告", "info") : statusChip("快讯", "neutral")}</td><td><a class="evidence-link" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(item.title || "标题不可用")}</strong></a><span class="table-subtext">${escapeHtml(item.summary || "摘要不可用")}</span></td><td class="mono">${escapeHtml(item.symbol || "全市场")}</td><td>${formatDate(item.published_at, true)}</td><td>${escapeHtml(item.source || "—")}</td><td><strong>${escapeHtml(newsSentimentLabel(annotation))}</strong><span class="table-subtext">lexicon-v1 · ${formatNumber(annotation.score, 2)} · ${escapeHtml(annotation.confidence || "none")}</span></td></tr>`; }).join("")
     : emptyRow(6, snapshot.available === true ? "当前筛选没有匹配内容" : "尚无已发布的新闻或公告证据");
   return `<section id="news-evidence" class="intelligence-dataset news-dataset" tabindex="-1">
-    ${pageIntro("新闻与公告证据", "保留发布时间、原文链接、来源指纹和不可变修订；低置信度词典标注单独披露。", actionButton("refresh-news", "primary"))}
+    ${pageIntro("第三方新闻与公告", "与官方披露分库存放；保留发布时间、原文链接和低置信度词典注释。", actionButton("refresh-news", "primary"))}
     <section class="intelligence-filter-band" aria-label="新闻公告筛选">${form}</section>
     <section class="metric-strip" aria-label="新闻公告摘要">${metric("证据状态", researchEvidenceStatusLabel(status), `${snapshot.trade_date || "日期不可用"} · 显示 ${formatInteger(summary.returned_count ?? records.length)} 条`, statusKind === "success" ? "tone-positive" : statusKind === "warning" ? "tone-warning" : "tone-negative")}${metric("快讯 / 公告", `${formatInteger(summary.news_count)} / ${formatInteger(summary.announcement_count)}`, `匹配证券 ${formatInteger(summary.symbol_count)} 个`)}${metric("词典正向 / 负向", `${formatInteger(annotationCounts.positive)} / ${formatInteger(annotationCounts.negative)}`, `中性 ${formatInteger(annotationCounts.neutral)} · 低置信度注释`)}${metric("来源响应", formatInteger(source.response_count), `${source.provider || "未提供"} · 非交易所认证`)}</section>
     ${researchEvidenceCallouts(snapshot, requestError, "refresh-news", "新闻公告")}
-    <section class="panel">${panelHeader("新闻与公告", `${snapshot.trade_date || "日期不可用"} · 按发布时间倒序`)}<div class="table-wrap" aria-label="新闻公告宽表"><table class="data-table news-table"><thead><tr><th>类型</th><th>标题与摘要</th><th>证券</th><th>发布时间</th><th>来源</th><th>透明词典标注</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+    <section class="panel">${panelHeader("第三方新闻与公告", `${snapshot.trade_date || "日期不可用"} · 按发布时间倒序`)}<div class="table-wrap" aria-label="第三方新闻公告宽表"><table class="data-table news-table"><thead><tr><th>类型</th><th>标题与摘要</th><th>证券</th><th>发布时间</th><th>来源</th><th>透明词典标注</th></tr></thead><tbody>${rows}</tbody></table></div></section>
     <section class="equal-layout"><article class="panel">${panelHeader("来源与指纹", "快讯与个股公告独立请求")}<div class="path-list"><div class="path-row"><span>快讯接口</span><code>${escapeHtml(source.news_endpoint || "—")}</code></div><div class="path-row"><span>公告接口</span><code>${escapeHtml(source.announcement_endpoint || "—")}</code></div><div class="path-row"><span>响应数量</span><code>${formatInteger(source.response_count)}</code></div><div class="path-row"><span>响应指纹</span><code>${escapeHtml(source.response_sha256 || "—")}</code></div><div class="path-row"><span>证据指纹</span><code>${escapeHtml(snapshot.evidence_fingerprint || "—")}</code></div></div></article><article class="panel">${panelHeader("标注边界", "透明计数，不是情绪模型")}<p class="section-note">lexicon-v1 仅统计固定正负词命中并给出低置信度标签；它没有市场基准、训练样本、讽刺识别或跨源校准，也不会改变 AI 分析中的 sentiment coverage。</p><div class="check-list">${detailRow("基本面角色", "仍未完整接入", "warning")}${detailRow("情绪角色", "仍为 UNAVAILABLE", "warning")}${detailRow("交易授权", "禁止", "danger")}</div></article></section>
-    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>快讯和公告来自单一第三方公共来源；词典注释不等于新闻热度、市场情绪或投资建议。任何内容都不能生成订单或放宽策略与风险门禁。</p></aside>
+    <aside class="callout info intelligence-boundary"><strong>研究权限边界</strong><p>本区快讯和公告来自单一第三方公共来源，不属于官方披露证据；词典注释不等于新闻热度、市场情绪或投资建议。任何内容都不能生成订单或放宽策略与风险门禁。</p></aside>
   </section>`;
 }
 
@@ -5466,12 +5686,18 @@ function renderMarketIntelligence(payload) {
   const capitalFlow = payload?.capital_flow || {};
   const intraday = payload?.intraday || {};
   const valuation = payload?.valuation || {};
+  const fundamentals = payload?.fundamentals || {};
+  const disclosures = payload?.disclosures || {};
+  const orderBook = payload?.order_book || {};
   const news = payload?.news || {};
   return `<div class="page-stack intelligence-page">
-    ${pageIntro("市场研究证据", "先看新闻与当前估值，再复核分钟行情、市场宽度、资金流和龙虎榜；每个数据集独立披露来源与缺失能力。")}
-    <nav class="intelligence-jump-nav" aria-label="市场情报数据集"><a href="#intelligence" data-intelligence-jump="news-evidence">新闻与公告</a><a href="#intelligence" data-intelligence-jump="valuation-evidence">当前估值</a><a href="#intelligence" data-intelligence-jump="intraday-evidence">分钟行情</a><a href="#intelligence" data-intelligence-jump="market-breadth-evidence">市场宽度</a><a href="#intelligence" data-intelligence-jump="capital-flow-evidence">板块资金流</a><a href="#intelligence" data-intelligence-jump="dragon-tiger-evidence">龙虎榜</a></nav>
+    ${pageIntro("市场研究证据", "官方披露、第三方新闻、基本面、估值分位和 Level-1 盘口分开审计，再复核分钟行情与收盘事件。")}
+    <nav class="intelligence-jump-nav" aria-label="市场情报数据集"><a href="#intelligence" data-intelligence-jump="disclosures-evidence">官方披露</a><a href="#intelligence" data-intelligence-jump="news-evidence">第三方新闻</a><a href="#intelligence" data-intelligence-jump="fundamentals-evidence">股票基本面</a><a href="#intelligence" data-intelligence-jump="valuation-evidence">估值分位</a><a href="#intelligence" data-intelligence-jump="order-book-evidence">五档盘口</a><a href="#intelligence" data-intelligence-jump="intraday-evidence">分钟行情</a><a href="#intelligence" data-intelligence-jump="market-breadth-evidence">市场宽度</a><a href="#intelligence" data-intelligence-jump="capital-flow-evidence">板块资金流</a><a href="#intelligence" data-intelligence-jump="dragon-tiger-evidence">龙虎榜</a></nav>
+    ${renderDisclosuresEvidence(disclosures, payload?.disclosures_error || "")}
     ${renderNewsEvidence(news, payload?.news_error || "")}
+    ${renderFundamentalsEvidence(fundamentals, payload?.fundamentals_error || "")}
     ${renderValuationEvidence(valuation, payload?.valuation_error || "")}
+    ${renderOrderBookEvidence(orderBook, payload?.order_book_error || "")}
     ${renderIntradayEvidence(intraday, payload?.intraday_error || "")}
     ${renderMarketBreadth(breadth, payload?.breadth_error || "")}
     ${renderCapitalFlow(capitalFlow, payload?.capital_flow_error || "")}
@@ -7300,8 +7526,11 @@ function notify(message, error = false) {
 
 function jumpToIntelligenceDataset(link) {
   const allowed = new Set([
+    "disclosures-evidence",
     "news-evidence",
+    "fundamentals-evidence",
     "valuation-evidence",
+    "order-book-evidence",
     "intraday-evidence",
     "market-breadth-evidence",
     "capital-flow-evidence",
@@ -7363,6 +7592,21 @@ document.addEventListener("click", (event) => {
   const valuationFilterClear = event.target.closest("[data-valuation-filter-clear]");
   if (valuationFilterClear) {
     clearValuationFilters();
+    return;
+  }
+  const fundamentalsFilterClear = event.target.closest("[data-fundamentals-filter-clear]");
+  if (fundamentalsFilterClear) {
+    clearFundamentalsFilters();
+    return;
+  }
+  const disclosuresFilterClear = event.target.closest("[data-disclosures-filter-clear]");
+  if (disclosuresFilterClear) {
+    clearDisclosuresFilters();
+    return;
+  }
+  const orderBookFilterClear = event.target.closest("[data-order-book-filter-clear]");
+  if (orderBookFilterClear) {
+    clearOrderBookFilters();
     return;
   }
   const newsFilterClear = event.target.closest("[data-news-filter-clear]");
@@ -7751,6 +7995,15 @@ document.addEventListener("submit", (event) => {
   } else if (event.target.id === "valuation-filter-form") {
     event.preventDefault();
     if (event.target.reportValidity()) applyValuationFilterForm(event.target);
+  } else if (event.target.id === "fundamentals-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyFundamentalsFilterForm(event.target);
+  } else if (event.target.id === "disclosures-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyDisclosuresFilterForm(event.target);
+  } else if (event.target.id === "order-book-filter-form") {
+    event.preventDefault();
+    if (event.target.reportValidity()) applyOrderBookFilterForm(event.target);
   } else if (event.target.id === "news-filter-form") {
     event.preventDefault();
     if (event.target.reportValidity()) applyNewsFilterForm(event.target);

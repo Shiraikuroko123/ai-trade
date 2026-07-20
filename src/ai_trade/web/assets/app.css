@@ -2296,6 +2296,9 @@ progress {
 
 .intraday-filter-form,
 .valuation-filter-form,
+.fundamentals-filter-form,
+.disclosures-filter-form,
+.order-book-filter-form,
 .news-filter-form {
   align-items: end;
   display: grid;
@@ -2304,12 +2307,16 @@ progress {
   width: 100%;
 }
 
-.news-filter-form {
+.news-filter-form,
+.disclosures-filter-form {
   grid-template-columns: repeat(3, minmax(130px, 0.8fr)) minmax(220px, 1.5fr) minmax(110px, 0.55fr) auto;
 }
 
 .intraday-filter-form .filter-actions,
 .valuation-filter-form .filter-actions,
+.fundamentals-filter-form .filter-actions,
+.disclosures-filter-form .filter-actions,
+.order-book-filter-form .filter-actions,
 .news-filter-form .filter-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2322,8 +2329,38 @@ progress {
 }
 
 .valuation-table {
-  min-width: 1280px;
-  width: max(100%, 1380px);
+  min-width: 1580px;
+  width: max(100%, 1680px);
+}
+
+.fundamentals-table {
+  min-width: 1540px;
+  width: max(100%, 1640px);
+}
+
+.disclosures-table {
+  min-width: 1180px;
+  width: max(100%, 1280px);
+}
+
+.disclosures-table td:nth-child(2) {
+  max-width: 480px;
+  min-width: 300px;
+  white-space: normal;
+}
+
+.order-book-table {
+  min-width: 1840px;
+  width: max(100%, 1940px);
+}
+
+.order-book-table .depth-cell {
+  min-width: 96px;
+}
+
+.order-book-table .depth-cell strong,
+.order-book-table .depth-cell span {
+  display: block;
 }
 
 .news-table {
@@ -4496,6 +4533,9 @@ progress {
   .capital-flow-filter-form,
   .intraday-filter-form,
   .valuation-filter-form,
+  .fundamentals-filter-form,
+  .disclosures-filter-form,
+  .order-book-filter-form,
   .news-filter-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
@@ -4525,9 +4565,13 @@ progress {
   }
 
   .news-filter-form .news-query,
+  .disclosures-filter-form .disclosures-query,
   .news-filter-form .filter-actions,
   .intraday-filter-form .filter-actions,
-  .valuation-filter-form .filter-actions {
+  .valuation-filter-form .filter-actions,
+  .fundamentals-filter-form .filter-actions,
+  .disclosures-filter-form .filter-actions,
+  .order-book-filter-form .filter-actions {
     grid-column: 1 / -1;
   }
 
@@ -4900,6 +4944,9 @@ progress {
   .capital-flow-filter-form,
   .intraday-filter-form,
   .valuation-filter-form,
+  .fundamentals-filter-form,
+  .disclosures-filter-form,
+  .order-book-filter-form,
   .news-filter-form {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -4914,9 +4961,13 @@ progress {
   .capital-flow-filter-form .capital-flow-query,
   .capital-flow-filter-form .filter-actions,
   .news-filter-form .news-query,
+  .disclosures-filter-form .disclosures-query,
   .news-filter-form .filter-actions,
   .intraday-filter-form .filter-actions,
-  .valuation-filter-form .filter-actions {
+  .valuation-filter-form .filter-actions,
+  .fundamentals-filter-form .filter-actions,
+  .disclosures-filter-form .filter-actions,
+  .order-book-filter-form .filter-actions {
     grid-column: auto;
   }
 
@@ -4925,6 +4976,9 @@ progress {
   .capital-flow-filter-form .filter-actions,
   .intraday-filter-form .filter-actions,
   .valuation-filter-form .filter-actions,
+  .fundamentals-filter-form .filter-actions,
+  .disclosures-filter-form .filter-actions,
+  .order-book-filter-form .filter-actions,
   .news-filter-form .filter-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4935,6 +4989,9 @@ progress {
   .capital-flow-filter-form .button,
   .intraday-filter-form .button,
   .valuation-filter-form .button,
+  .fundamentals-filter-form .button,
+  .disclosures-filter-form .button,
+  .order-book-filter-form .button,
   .news-filter-form .button {
     width: 100%;
   }

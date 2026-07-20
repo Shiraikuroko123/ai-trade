@@ -1,6 +1,6 @@
 # AI K-line Assistant
 
-AI Trade `v0.14.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
+AI Trade `v0.15.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
 
 ## Contract
 
@@ -27,13 +27,15 @@ Every new analysis also returns five deterministic, evidence-bound views under
 |---|---|---|
 | `technical` | Available | EMA20/EMA50, 20-session momentum, RSI, candle structure, and breakout state |
 | `risk` | Available | Annualized volatility, ATR14 percentage, and support reference |
-| `fundamental_coverage` | `UNAVAILABLE` until a validated financial-data provider is configured | Explicit coverage evidence; no financial conclusion is inferred |
-| `sentiment_coverage` | `UNAVAILABLE` until traceable news, flow, or sentiment data is configured | Explicit coverage evidence; model prose cannot fill the gap |
+| `fundamental_coverage` | `UNAVAILABLE`; the new stock-only evidence store is not yet wired into the assistant | Explicit coverage evidence; no financial conclusion is inferred |
+| `sentiment_coverage` | `UNAVAILABLE`; traceable source records exist but no complete sentiment methodology is wired in | Explicit coverage evidence; model prose cannot fill the gap |
 | `strategy_gate` | Available | Deterministic conclusion, research gate, and assessment evidence |
 
-The current-release Dragon-Tiger List market-intelligence dataset is a single-source
-closing event ledger. It is not a validated sentiment methodology and therefore
-does not change `sentiment_coverage` from `UNAVAILABLE`.
+The current release has separate stock fundamentals, official disclosures,
+third-party news, Dragon-Tiger List, breadth, capital-flow, and Level-1 depth
+stores. The assistant does not yet consume the fundamental store, and none of
+the other datasets forms a validated sentiment methodology. The corresponding
+coverage views therefore remain `UNAVAILABLE`.
 
 Each view contains `status`, `stance`, `summary`, `limitation`, and
 `evidence_ids`. The engine rejects a result with an unknown view, duplicate

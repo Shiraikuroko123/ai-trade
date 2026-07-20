@@ -73,8 +73,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.14.0-research-evidence-webhook", self.html)
-        self.assertIn("app.js?v=0.14.0-research-evidence-webhook", self.html)
+        self.assertIn("app.css?v=0.15.0-five-priority-gaps", self.html)
+        self.assertIn("app.js?v=0.15.0-five-priority-gaps", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)

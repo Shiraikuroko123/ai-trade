@@ -44,9 +44,13 @@ WHEEL_REQUIRED = {
     "ai_trade/strategy_lab/store.py",
     "ai_trade/data/cache_snapshot.py",
     "ai_trade/data/capital_flow.py",
+    "ai_trade/data/disclosures.py",
     "ai_trade/data/evidence_io.py",
+    "ai_trade/data/fundamentals.py",
     "ai_trade/data/intraday.py",
     "ai_trade/data/news.py",
+    "ai_trade/data/order_book.py",
+    "ai_trade/data/tushare.py",
     "ai_trade/data/valuation.py",
     "ai_trade/data/cross_check.py",
     "ai_trade/data/market_breadth.py",
@@ -154,9 +158,13 @@ SDIST_REQUIRED = {
     "src/ai_trade/strategy_lab/store.py",
     "src/ai_trade/data/cache_snapshot.py",
     "src/ai_trade/data/capital_flow.py",
+    "src/ai_trade/data/disclosures.py",
     "src/ai_trade/data/evidence_io.py",
+    "src/ai_trade/data/fundamentals.py",
     "src/ai_trade/data/intraday.py",
     "src/ai_trade/data/news.py",
+    "src/ai_trade/data/order_book.py",
+    "src/ai_trade/data/tushare.py",
     "src/ai_trade/data/valuation.py",
     "src/ai_trade/data/cross_check.py",
     "src/ai_trade/notification_delivery.py",
@@ -283,7 +291,7 @@ SENSITIVE_CONTENT_PATTERNS = (
     (
         "literal credential",
         re.compile(
-            r"\b(?:AI_TRADE_AI_API_KEY|"
+            r"\b(?:AI_TRADE_AI_API_KEY|AI_TRADE_TUSHARE_TOKEN|"
             r"AI_TRADE_R2_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|"
             r"ANTHROPIC_API_KEY|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|"
             r"DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|GH_TOKEN|GITHUB_TOKEN|"

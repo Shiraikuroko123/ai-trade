@@ -7,14 +7,14 @@
 
 [架构](docs/ARCHITECTURE.md) · [Docker 部署](docs/DOCKER_DEPLOYMENT.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-`v0.14.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页现在还提供有界历史分钟行情、当前 PE/PB/市值字段、带发布时间和原文指纹的新闻/公告，以及可选的 HMAC Webhook 外部通知；这些新增证据仍固定为 `research_only`。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+`v0.15.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页提供九类彼此隔离的证据，包括股票时点基本面、股票历史估值分位、官方披露、第三方新闻和公开 Level-1 五档盘口；这些证据仍固定为 `research_only`。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 或可选 Tushare 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
-本 README 描述 `v0.14.0` 公开发行版及其安全边界。研究监控、持久化日报/周报、龙虎榜、市场宽度与板块排名、板块资金流、历史分钟行情、当前估值、新闻/公告、可选 Webhook、`archive-generate`、Yahoo 独立核对及相关后台任务均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
+本 README 描述 `v0.15.0` 公开发行版及其安全边界。Tushare 独立核对、股票时点基本面、官方披露、股票历史估值分位、公开 Level-1 五档盘口，以及已有的研究监控、归档、市场情报和 Webhook 均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
 
 系统已经贯通以下流程：
 
 1. 按证券上市/退市日期和成分生效区间，生成历史时点可见的动态候选池。
-2. 以东方财富为主数据源、腾讯财经为网络回退，下载、校验并以整套快照缓存候选标的历史行情；默认用 Yahoo Finance 的短窗口 OHLCV 作为独立核对源，Yahoo 不进入策略快照链。
+2. 以东方财富为主数据源、腾讯财经为网络回退，下载、校验并以整套快照缓存候选标的历史行情；默认用 Yahoo Finance、也可用环境变量授权的 Tushare Pro 做短窗口独立核对，两者都不进入策略快照链。
 3. 用趋势、相对强弱、波动率、流动性、资金容量和分组暴露生成目标仓位。
 4. 按信号后下一交易日开盘成交，计入整手、滑点、佣金、印花税、过户费、停牌和涨跌停约束。
 5. 运行历史回测、沪深 300 ETF 基准对比和连续滚动样本外验证。
@@ -36,18 +36,22 @@
 21. 在当前登录账户下把规则告警和失败扫描幂等汇总为本地通知，保留来源与证据指纹，并用追加式动作记录未读、已读和归档；本地收件箱不会确认原告警、发送外部推送或取得交易权限。
 22. 对最近完整日线执行可选的跨源一致性审计，将逐证券实际来源、独立参考源、日期重合、最大偏差和审计指纹写入行情 manifest；回退源供数时禁止同源自检，核对失败也不会替换主快照或提升交易权限。
 23. 提供非 root、只读根文件系统的 Docker/Compose 部署；容器通配绑定必须启用内测认证，宿主机端口固定发布到回环地址，免登录模式不能借容器暴露。
+24. 按已完成会话截止日固化股票财务指标，只接受公告日和更新日均不晚于截止日的期间记录；ETF 保持明确不支持。
+25. 把 SSE 与 CNINFO 官方披露元数据、第三方新闻分别存储和展示，不把第三方聚合信息冒充官方披露，也不自动生成情绪分数。
+26. 对股票的 PE/PB/现金流等历史正值样本计算可复核分位；少于 120 个有效观测或非股票标的时保持不可用。
+27. 固化公开 Level-1 五档买卖盘、价差和深度不平衡，保留“手到股”的换算；它不是 Tick、全深度、Level-2 或执行行情。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
 ## 快速开始
 
-推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.14.0) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
+推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.15.0) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
 
 ```powershell
-New-Item -ItemType Directory -Force .\AI-Trade-v0.14.0 | Out-Null
-Set-Location .\AI-Trade-v0.14.0
+New-Item -ItemType Directory -Force .\AI-Trade-v0.15.0 | Out-Null
+Set-Location .\AI-Trade-v0.15.0
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.14.0/ai_trade-0.14.0-py3-none-any.whl"
+.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.15.0/ai_trade-0.15.0-py3-none-any.whl"
 .\.venv\Scripts\ai-trade.exe init --directory .\workspace
 Set-Location .\workspace
 ..\.venv\Scripts\ai-trade.exe download --force
@@ -231,11 +235,13 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 左侧 **行情** 视图使用随 wheel 本地分发的 KLineChart 10.0.0，不访问 CDN。后端只接受配置证券、`day/week/month` 周期和有界根数；周/月 OHLCV 由已验证日线按自然周期确定性聚合，日期使用该周期最后一个实际交易日，不补造交易会话。页面同时显示配置数据源、实际回退来源、复权口径、已完成交易日、manifest 与行情文件指纹。缓存缺失或陈旧时会明确显示恢复状态，不会在 GET 请求中下载或改写数据。
 
-图表操作只改变当前浏览器视图。指标切换、缩放、十字线和模拟成交标记不会修改策略候选、活动模拟配置、持仓账本、云端快照或券商权限。市场情报页可读取独立固化的历史分钟证据，但它不是 Tick、五档盘口、Level-2 或实时行情，也不会进入策略和交易授权。
+图表操作只改变当前浏览器视图。指标切换、缩放、十字线和模拟成交标记不会修改策略候选、活动模拟配置、持仓账本、云端快照或券商权限。市场情报页可读取独立固化的历史分钟证据和当前 Level-1 五档快照；前者不是实时行情，后者不是 Tick、全深度或 Level-2，两者都不会进入策略和交易授权。
 
 ## 收盘市场情报
 
-`v0.14.0` 的左侧 **市场情报** 视图包含六个独立证据集：历史分钟行情、当前估值字段、新闻/公告、龙虎榜、市场宽度与板块排名、板块资金流。每次刷新都校验日期或截止时间、字段、有限数值、来源响应指纹和规范化证据指纹，再在各自的 `state/` 子目录追加不可覆盖的本地 revision。相同规范化证据会幂等复用，证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。分钟行情保留东方财富 `f52-f55` OHLC 映射，并披露更宽周期的本地确定性聚合；估值页只显示当前 PE/PB/市值，历史估值分位保持不可用；新闻页保留发布时间、原文 URL、来源响应指纹与低置信度 `lexicon-v1` 注释，但不把它冒充成完整市场情绪模型。
+`v0.15.0` 的左侧 **市场情报** 视图包含九个独立证据集：历史分钟行情、当前估值与股票历史分位、股票时点基本面、官方披露、第三方新闻与公告、Level-1 五档盘口、龙虎榜、市场宽度与板块排名、板块资金流。每次刷新都校验日期或截止时间、字段、有限数值、来源响应指纹和规范化证据指纹，再在各自的 `state/` 子目录追加不可覆盖的本地 revision。相同规范化证据会幂等复用，证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
+
+基本面和历史估值分位仅对 `STOCK` 开放：基本面同时按公告日、更新日过滤未来信息，估值分位至少需要 120 个正值有限历史观测。官方披露只归档 SSE/CNINFO 元数据和 PDF 链接，不归档 PDF 正文；上海 ETF、北京市场及主数据缺口会显式报告。第三方新闻保持独立来源标识和低置信度 `lexicon-v1` 注释，不被冒充为官方披露或完整情绪模型。五档盘口按公开 Level-1 快照保留买卖五档、价差、深度不平衡以及手数到股数的换算，不宣称 Tick、Level-2、可回放订单流或交易所认证。
 
 龙虎榜支持按交易日、市场、六位证券代码和上榜原因筛选；板块排名支持按交易日、名称/代码、涨跌幅、上涨占比、换手率、量比、市值或成分数量排序；资金流支持按交易日、名称/代码、涨跌幅、主力或各订单规模分桶净额/占比排序。GET 请求都只读本地证据且不会触网。页面会区分尚未抓取、合法空筛选、快照滞后、运行中和刷新失败，并披露来源口径、完整性、响应与证据指纹。东方财富是单一公开来源而不是交易所认证数据；`m:90+t:2` 是提供方定义的、可能重叠的板块集合，不等同经许可的纯行业分类；资金流金额沿用提供方订单规模方法且不应求和解释为全市场流入，宽度计数也不等同市场情绪，因此 AI 的 `sentiment_coverage` 仍保持 `UNAVAILABLE`。总览见 [市场情报证据](docs/MARKET_INTELLIGENCE.md)，板块数据口径、命令和接口见 [市场宽度与板块排名](docs/MARKET_BREADTH.md) 与 [板块资金流证据](docs/CAPITAL_FLOW.md)。
 
@@ -245,8 +251,11 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 .\.venv\Scripts\python.exe -m ai_trade.cli market-breadth-refresh
 .\.venv\Scripts\python.exe -m ai_trade.cli capital-flow-refresh
 .\.venv\Scripts\python.exe -m ai_trade.cli intraday-refresh --symbol 510300 --interval 5
-.\.venv\Scripts\python.exe -m ai_trade.cli valuation-refresh --symbol 510300
-.\.venv\Scripts\python.exe -m ai_trade.cli news-refresh --symbol 510300
+.\.venv\Scripts\python.exe -m ai_trade.cli valuation-refresh --symbol 600519
+.\.venv\Scripts\python.exe -m ai_trade.cli fundamentals-refresh --symbol 600519 --periods 8
+.\.venv\Scripts\python.exe -m ai_trade.cli disclosures-refresh --symbol 600519 --lookback-days 30
+.\.venv\Scripts\python.exe -m ai_trade.cli news-refresh --symbol 600519
+.\.venv\Scripts\python.exe -m ai_trade.cli order-book-refresh --symbol 510300
 ```
 
 ## 证券池批量筛选
@@ -257,7 +266,7 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 完成上面的启动步骤后，打开命令打印的回环地址，在左侧导航选择 **AI 分析**。默认本地模式不需要 API Key；选择标的和 **回看交易日** 后即可对已完成 K 线做研究复核。助理结论只有 `NO_ACTION`、`WATCH`、`REVIEW_CANDIDATE` 和 `REDUCE_RISK`：它们都不是买卖指令，其中 `REDUCE_RISK` 也只表示需要人工检查风险，不表示自动卖出或调整仓位。
 
-`v0.14.0` 会为每份新分析生成确定性的 **视角冲突审计**。页面把技术面、风险面与策略门禁之间的实质分歧，和基本面/情绪数据尚未接入造成的覆盖缺口分别列出，并显示本地确定性结论、模型建议、最终研究结论和权限守卫结果。模型试图放宽本地结论时会被阻断并留下文字记录；这不是多模型并行或投票，也不会生成订单、改变持仓或取得交易权限。旧分析没有该结构时会明确要求重新运行，不会伪造历史审计。
+`v0.15.0` 会为每份新分析生成确定性的 **视角冲突审计**。页面把技术面、风险面与策略门禁之间的实质分歧，和助理尚未消费基本面证据、尚无完整情绪数据造成的覆盖缺口分别列出，并显示本地确定性结论、模型建议、最终研究结论和权限守卫结果。市场情报中的股票基本面已经可供人工审阅，但尚未接入助理的基本面角色，所以该角色仍明确为 `UNAVAILABLE`。模型试图放宽本地结论时会被阻断并留下文字记录；这不是多模型并行或投票，也不会生成订单、改变持仓或取得交易权限。
 
 需要使用自己的 OpenAI 兼容模型端点时，在 PowerShell 运行：
 
@@ -279,7 +288,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
 
 ## 研究日志与日报/周报归档
 
-本节的持久化日报/周报、生成接口和计划任务已包含在 `v0.14.0` wheel 中。
+本节的持久化日报/周报、生成接口和计划任务已包含在 `v0.15.0` wheel 中。
 
 **研究** 页面中的“研究日志”用于记录人工观察、研究理由和复盘结论。每条记录按用户隔离，带有研究日期、记录类型、可选证券、标题、笔记、观点和确信度；服务器会自动绑定登录用户和记录人，并在写入时保存可重算的内容指纹、行情快照日期/指纹以及当前策略候选状态。行情或策略证据暂不可用时会显式记录 `available=false`，不会用空值冒充已验证证据。
 

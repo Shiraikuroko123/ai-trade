@@ -114,6 +114,79 @@ class CliTests(unittest.TestCase):
             user_id="local-owner",
         )
 
+    def test_v015_evidence_refresh_commands_parse_and_dispatch(self):
+        cases = (
+            (
+                [
+                    "fundamentals-refresh",
+                    "--symbol",
+                    "600519",
+                    "--periods",
+                    "4",
+                ],
+                "ai_trade.data.fundamentals.refresh_fundamentals",
+                {"symbols": ["600519"], "periods_per_symbol": 4},
+            ),
+            (
+                [
+                    "disclosures-refresh",
+                    "--symbol",
+                    "000001",
+                    "--lookback-days",
+                    "14",
+                    "--limit",
+                    "20",
+                ],
+                "ai_trade.data.disclosures.refresh_disclosures",
+                {
+                    "symbols": ["000001"],
+                    "lookback_days": 14,
+                    "limit_per_symbol": 20,
+                },
+            ),
+            (
+                ["order-book-refresh", "--symbol", "510300"],
+                "ai_trade.data.order_book.refresh_order_book",
+                {"symbols": ["510300"]},
+            ),
+        )
+        config = object()
+        result = {"available": True, "records": []}
+
+        for argv, target, expected_kwargs in cases:
+            with self.subTest(command=argv[0]):
+                parsed = build_parser().parse_args(argv)
+                self.assertEqual(parsed.command, argv[0])
+                output = io.StringIO()
+                with (
+                    patch("ai_trade.cli.load_config", return_value=config),
+                    patch("ai_trade.cli._configure_logging"),
+                    patch(target, return_value=result) as refresh,
+                    redirect_stdout(output),
+                ):
+                    status = main(argv)
+
+                self.assertEqual(status, 0)
+                self.assertEqual(json.loads(output.getvalue()), result)
+                refresh.assert_called_once_with(config, **expected_kwargs)
+
+    def test_v015_evidence_refresh_command_reports_unavailable(self):
+        unavailable = {"available": False, "errors": [{"code": "coverage_gap"}]}
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=object()),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.data.order_book.refresh_order_book",
+                return_value=unavailable,
+            ),
+            redirect_stdout(output),
+        ):
+            status = main(["order-book-refresh", "--symbol", "510300"])
+
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output.getvalue()), unavailable)
+
     def test_market_intelligence_refresh_uses_explicit_iso_date(self):
         parsed = build_parser().parse_args(
             ["market-intelligence-refresh", "--date", "2024-01-05"]

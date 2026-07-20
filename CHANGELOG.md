@@ -1,6 +1,50 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.14.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.15.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+
+## 0.15.0 - 2026-07-20
+
+- Registered a credentialed Tushare Pro daily-bar adapter as an independent
+  reference-only provider. It supports configured A-shares and ETFs, `none`
+  and forward adjustment, completed-session bounds, lot volume, CNY amount
+  normalization, strict response schemas, and bounded retries. The token is
+  read only from `AI_TRADE_TUSHARE_TOKEN`, is never persisted, and Tushare
+  cannot supply a strategy-visible snapshot or network fallback.
+- Added stock-only point-in-time company fundamentals under
+  `state/fundamentals`. EPS, revenue, parent net profit, weighted ROE, growth,
+  book value, operating cash flow per share, and gross margin are retained
+  only when both disclosure and update dates are within the completed cutoff.
+  ETFs and other non-company instruments are explicitly unsupported.
+- Extended valuation evidence with stock-only historical `PE_TTM`, `PE_LAR`,
+  `PB_MRQ`, `PCF_OCF_TTM`, and `PS_TTM` series. Empirical percentiles require
+  at least 120 positive finite completed-session observations, retain sample
+  counts/date ranges and source-response fingerprints, and remain null for
+  ETFs or insufficient histories. Price history is never substituted.
+- Added a separate official-disclosure store under `state/disclosures`.
+  Shanghai-listed stocks use SSE metadata; Shenzhen stocks and CNINFO-master
+  recognized Shenzhen ETFs use the designated CNINFO platform. Official PDF
+  links, publication time, per-security coverage, response fingerprints, and
+  immutable revisions are retained. Shanghai ETF, Beijing, missing-master,
+  and provider gaps stay explicit; PDF bodies are not WORM-archived and no
+  sentiment score is inferred.
+- Added immutable public Level-1 five-level order-book snapshots under
+  `state/order_book`. Buy/sell ranks, CNY prices, provider lots, normalized
+  shares, spread, observed time, and bounded depth imbalance are validated.
+  The surface is explicitly not Tick, full-depth, Level-2, exchange-certified,
+  replayable, or execution-authorized.
+- Added fixed CLI/background refresh actions, bounded local-only read APIs,
+  safe state-directory configuration, distribution requirements, and distinct
+  responsive Market Intelligence sections for fundamentals, official
+  disclosures, historical valuation percentiles, and five-level depth.
+  Third-party news remains visibly separate from official disclosure evidence.
+- Hardened the shared immutable evidence store so retrieval timestamps and
+  revision-chain metadata do not create false revisions, while the complete
+  committed record remains protected by its content fingerprint.
+- Remaining gaps include AKShare/TDX/WenCai adapters, licensed minute/Tick and
+  Level-2 data, full official coverage for every ETF/market, PDF body archival,
+  a complete multi-source sentiment/hot-list model, isolated multi-model MoA,
+  email/Toast/mobile push, R2 digest sync, signatures/WORM storage, and live
+  broker execution.
 
 ## 0.14.0 - 2026-07-20
 

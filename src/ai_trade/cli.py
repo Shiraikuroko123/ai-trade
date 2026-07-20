@@ -122,6 +122,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Configured six-digit symbol; repeat to refresh a subset",
     )
 
+    fundamentals = subparsers.add_parser(
+        "fundamentals-refresh",
+        help="Refresh stock-only point-in-time company fundamental evidence",
+    )
+    fundamentals.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Configured STOCK symbol; repeat to refresh a subset",
+    )
+    fundamentals.add_argument("--periods", type=int, default=8)
+
+    disclosures = subparsers.add_parser(
+        "disclosures-refresh",
+        help="Refresh official SSE and CNINFO disclosure metadata",
+    )
+    disclosures.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Configured symbol; repeat to refresh a subset",
+    )
+    disclosures.add_argument("--lookback-days", type=int, default=30)
+    disclosures.add_argument("--limit", type=int, default=50, dest="limit_per_symbol")
+
+    order_book = subparsers.add_parser(
+        "order-book-refresh",
+        help="Refresh public Level-1 five-level order-book snapshots",
+    )
+    order_book.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Configured six-digit symbol; repeat to refresh a subset",
+    )
+
     news = subparsers.add_parser(
         "news-refresh",
         help="Refresh bounded news and announcement evidence",
@@ -587,6 +623,33 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result.get("available") is True and not (
                 result.get("errors") and not result.get("records")
             ) else 1
+        if args.command == "fundamentals-refresh":
+            from .data.fundamentals import refresh_fundamentals
+
+            result = refresh_fundamentals(
+                config,
+                symbols=args.symbols,
+                periods_per_symbol=args.periods,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result.get("available") is True else 1
+        if args.command == "disclosures-refresh":
+            from .data.disclosures import refresh_disclosures
+
+            result = refresh_disclosures(
+                config,
+                symbols=args.symbols,
+                lookback_days=args.lookback_days,
+                limit_per_symbol=args.limit_per_symbol,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result.get("available") is True else 1
+        if args.command == "order-book-refresh":
+            from .data.order_book import refresh_order_book
+
+            result = refresh_order_book(config, symbols=args.symbols)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result.get("available") is True else 1
         if args.command == "news-refresh":
             from .data.news import refresh_news
 

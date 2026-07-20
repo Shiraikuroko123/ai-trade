@@ -1,6 +1,6 @@
 # Broker Adapter Boundary
 
-AI Trade `v0.14.0` defines and tests a broker boundary. The core wheel intentionally ships no broker-specific implementation. The source repository now includes an independently installable QMT read-only observation plugin under `adapters/qmt`; it cannot place or cancel orders. Installing any adapter does not unlock live trading.
+AI Trade `v0.15.0` defines and tests a broker boundary. The core wheel intentionally ships no broker-specific implementation. The source repository now includes an independently installable QMT read-only observation plugin under `adapters/qmt`; it cannot place or cancel orders. Installing any adapter does not unlock live trading.
 
 ## Plugin Contract
 

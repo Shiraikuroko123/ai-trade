@@ -21,17 +21,19 @@ from ai_trade.data.providers import (
 class DataProviderRegistryTests(unittest.TestCase):
     def test_registry_exposes_only_implemented_providers(self):
         self.assertEqual(
-            registered_provider_names(), ("eastmoney", "tencent", "yahoo")
+            registered_provider_names(), ("eastmoney", "tencent", "tushare", "yahoo")
         )
         self.assertEqual(snapshot_provider_names(), ("eastmoney", "tencent"))
         catalog = provider_catalog()
         self.assertEqual(
-            [item["key"] for item in catalog], ["eastmoney", "tencent", "yahoo"]
+            [item["key"] for item in catalog],
+            ["eastmoney", "tencent", "tushare", "yahoo"],
         )
         self.assertTrue(all(item["daily_bars"] for item in catalog))
         intraday = {item["key"]: item["intraday_bars"] for item in catalog}
         self.assertTrue(intraday["eastmoney"])
         self.assertFalse(intraday["tencent"])
+        self.assertFalse(intraday["tushare"])
         self.assertFalse(intraday["yahoo"])
         yahoo = next(item for item in catalog if item["key"] == "yahoo")
         self.assertFalse(yahoo["snapshot_eligible"])
@@ -39,10 +41,14 @@ class DataProviderRegistryTests(unittest.TestCase):
             yahoo["cross_check_fields"],
             ["open", "high", "low", "close", "volume"],
         )
+        tushare = next(item for item in catalog if item["key"] == "tushare")
+        self.assertFalse(tushare["snapshot_eligible"])
+        self.assertEqual(tushare["status"], "implemented_reference_only_requires_token")
 
     def test_provider_lookup_is_normalized_and_rejects_unknown_sources(self):
         self.assertEqual(provider_for(" EASTMONEY ").descriptor.key, "eastmoney")
         self.assertEqual(provider_for(" Yahoo ").descriptor.key, "yahoo")
+        self.assertEqual(provider_for(" Tushare ").descriptor.key, "tushare")
         with self.assertRaisesRegex(ProviderConfigurationError, "registered providers"):
             provider_for("akshare")
 
@@ -58,6 +64,11 @@ class DataProviderRegistryTests(unittest.TestCase):
 
             raw["data"]["provider"] = "eastmoney"
             raw["data"]["fallback_provider"] = "yahoo"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "data.fallback_provider"):
+                load_config(path)
+
+            raw["data"]["fallback_provider"] = "tushare"
             path.write_text(json.dumps(raw), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "data.fallback_provider"):
                 load_config(path)

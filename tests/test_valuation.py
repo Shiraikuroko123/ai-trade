@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +23,9 @@ def _config(root: Path):
             }
         },
         instruments=[
-            Instrument("600000", "Test", "SH", "equity"),
+            Instrument(
+                "600000", "Test", "SH", "equity", instrument_type="STOCK"
+            ),
             Instrument("510300", "ETF", "SH", "ETF"),
         ],
         valuation_dir=root / "valuation",
@@ -65,6 +67,35 @@ def _payload(symbol: str, *, pe: int = 500, pb: int = 125):
     }
 
 
+def _history_payload(symbol: str, count: int = 130):
+    start = date(2026, 7, 17)
+    return {
+        "success": True,
+        "code": 0,
+        "message": "ok",
+        "result": {
+            "count": count,
+            "data": [
+                {
+                    "SECURITY_CODE": symbol,
+                    "SECURITY_NAME_ABBR": "Test Name",
+                    "TRADE_DATE": (
+                        start - timedelta(days=index)
+                    ).isoformat()
+                    + " 00:00:00",
+                    "CLOSE_PRICE": 10.0,
+                    "PE_TTM": float(count - index),
+                    "PE_LAR": float(count - index + 1),
+                    "PB_MRQ": float(count - index + 2),
+                    "PCF_OCF_TTM": float(count - index + 3),
+                    "PS_TTM": float(count - index + 4),
+                }
+                for index in range(count)
+            ],
+        },
+    }
+
+
 class ValuationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -74,13 +105,15 @@ class ValuationTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_refresh_scales_provider_fields_and_keeps_percentiles_unavailable(self):
+    def test_refresh_scales_fields_and_computes_stock_only_percentiles(self):
         responses = {
             "1.600000": _Response(_payload("600000")),
             "1.510300": _Response(_payload("510300", pe=0, pb=0)),
         }
 
         def open_request(request, _timeout, _proxy):
+            if "RPT_VALUEANALYSIS_DET" in request.full_url:
+                return _Response(_history_payload("600000"))
             return responses[request.full_url.split("secid=")[1].split("&", 1)[0]]
 
         with patch("ai_trade.data.valuation._open_request", side_effect=open_request):
@@ -96,7 +129,13 @@ class ValuationTests(unittest.TestCase):
         self.assertEqual(first["pe_ttm"], 5.0)
         self.assertEqual(first["pb"], 1.25)
         self.assertIsNone(result["records"][1]["pe_ttm"])
-        self.assertIsNone(first["valuation_percentiles"]["pb"])
+        self.assertEqual(first["valuation_percentiles"]["pb"], 100.0)
+        self.assertEqual(first["valuation_history"]["sample_count"], 130)
+        self.assertTrue(first["valuation_history"]["available"])
+        self.assertEqual(
+            result["records"][1]["valuation_history"]["status"],
+            "instrument_type_not_supported",
+        )
         self.assertFalse(result["authority"]["execution_authorized"])
 
         visible = ValuationStore(self.config).list(ValuationQuery(symbol="600000"))
@@ -108,6 +147,8 @@ class ValuationTests(unittest.TestCase):
 
         def open_request(request, _timeout, _proxy):
             calls["count"] += 1
+            if "RPT_VALUEANALYSIS_DET" in request.full_url:
+                return _Response(_history_payload("600000"))
             if "600000" in request.full_url:
                 return _Response(_payload("600000"))
             raise OSError("provider down")
@@ -143,6 +184,8 @@ class ValuationTests(unittest.TestCase):
 
         def open_request(request, _timeout, _proxy):
             seen.append(request.full_url)
+            if "RPT_VALUEANALYSIS_DET" in request.full_url:
+                return _Response(_history_payload("600000"))
             return _Response(payload)
 
         with patch("ai_trade.data.valuation._open_request", side_effect=open_request):
@@ -155,7 +198,36 @@ class ValuationTests(unittest.TestCase):
         self.assertEqual(result["records"][0]["pe_ttm"], 4.2)
         self.assertEqual(result["records"][0]["pb"], 0.41)
         self.assertEqual(result["records"][0]["change_pct"], 1.58)
-        self.assertNotIn("fltt=2", seen[0])
+        quote_url = next(url for url in seen if "secid=" in url)
+        self.assertNotIn("fltt=2", quote_url)
+
+    def test_history_page_totals_must_remain_consistent(self):
+        first_page = _history_payload("600000", count=600)
+        first_page["result"]["data"] = first_page["result"]["data"][:500]
+        second_page = _history_payload("600000", count=599)
+        second_page["result"]["data"] = second_page["result"]["data"][500:]
+
+        def open_request(request, _timeout, _proxy):
+            if "RPT_VALUEANALYSIS_DET" not in request.full_url:
+                return _Response(_payload("600000"))
+            return _Response(
+                first_page if "pageNumber=1" in request.full_url else second_page
+            )
+
+        with patch("ai_trade.data.valuation._open_request", side_effect=open_request):
+            result = refresh_valuation(
+                self.config,
+                symbols=["600000"],
+                as_of=datetime(2026, 7, 20, 8, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(
+            result["errors"][0]["code"], "valuation_history_provider_error"
+        )
+        self.assertEqual(
+            result["records"][0]["valuation_history"]["status"], "unavailable"
+        )
 
 
 if __name__ == "__main__":
