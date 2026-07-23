@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import ipaddress
+import hashlib
 import json
 import os
 import socket
+import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -17,11 +19,19 @@ from ..json_utils import loads_unique_json
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_RESPONSE_BYTES = 512 * 1024
+MAX_COMPLETION_TOKENS = 1400
+PROMPT_TEMPLATE_VERSION = "assistant-enhancement-v2"
+_RETRYABLE_ERRORS = {
+    "model_rate_limited",
+    "model_server_error",
+    "model_transport_error",
+}
 
 
 class AssistantProviderError(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, audit: dict[str, Any] | None = None):
         self.code = code
+        self.audit = audit
         super().__init__(code)
 
 
@@ -71,7 +81,15 @@ class OpenAICompatibleProvider:
         data_date: str,
         diagnosis: dict[str, Any],
         assessment: dict[str, Any],
+        max_retries: int = 0,
+        audit_hook: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[dict[str, Any], dict[str, int]]:
+        if (
+            isinstance(max_retries, bool)
+            or not isinstance(max_retries, int)
+            or not 0 <= max_retries <= 3
+        ):
+            raise ValueError("max_retries must be an integer between 0 and 3")
         evidence = diagnosis["evidence"]
         allowed_ids = {str(item["evidence_id"]) for item in evidence}
         public_input = {
@@ -98,9 +116,9 @@ class OpenAICompatibleProvider:
             '"scenarios":[{"name":string,"trigger":string,"implication":string}]}}.'
         )
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        previous = ""
         validation_errors: list[str] = []
-        for attempt in range(2):
+        request_attempt = 0
+        for validation_round in range(2):
             messages = [
                 {"role": "system", "content": instruction},
                 {
@@ -108,45 +126,93 @@ class OpenAICompatibleProvider:
                     "content": json.dumps(public_input, ensure_ascii=False, separators=(",", ":")),
                 },
             ]
-            if attempt:
+            if validation_round:
                 messages.append(
                     {
                         "role": "user",
                         "content": (
                             "The previous JSON failed validation. Return a corrected JSON object. "
-                            f"Errors: {validation_errors}. Previous public output: {previous[:12000]}"
+                            f"Errors: {validation_errors}."
                         ),
                     }
                 )
-            try:
-                value, call_usage, raw = self._complete(messages)
-            except AssistantProviderError as exc:
-                if exc.code == "invalid_model_response" and attempt == 0:
-                    validation_errors = ["response was not a valid structured JSON object"]
-                    continue
-                raise
-            for name in usage:
-                usage[name] += call_usage[name]
-            normalized, validation_errors = _validate_enhancement(value, allowed_ids)
-            if not validation_errors:
-                return normalized, usage
-            previous = raw
+            retry = 0
+            while True:
+                request_attempt += 1
+                request_sha256 = hashlib.sha256(
+                    self._completion_body(messages)
+                ).hexdigest()
+                started = time.monotonic()
+                try:
+                    value, call_usage, raw = self._complete(messages)
+                except AssistantProviderError as exc:
+                    _emit_audit(
+                        audit_hook,
+                        {
+                            "attempt": request_attempt,
+                            "validation_round": validation_round + 1,
+                            "retry": retry,
+                            "request_sha256": request_sha256,
+                            "response_sha256": None,
+                            "outcome": "error",
+                            "error_code": exc.code,
+                            "elapsed_ms": _elapsed_ms(started),
+                            "usage": _zero_usage(),
+                        },
+                    )
+                    if exc.code in _RETRYABLE_ERRORS and retry < max_retries:
+                        time.sleep(min(2.0, 0.25 * (2**retry)))
+                        retry += 1
+                        continue
+                    if exc.code == "invalid_model_response" and validation_round == 0:
+                        validation_errors = [
+                            "response was not a valid structured JSON object"
+                        ]
+                        break
+                    raise
+                for name in usage:
+                    usage[name] += call_usage[name]
+                normalized, validation_errors = _validate_enhancement(
+                    value, allowed_ids
+                )
+                response_sha256 = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+                if not validation_errors:
+                    _emit_audit(
+                        audit_hook,
+                        {
+                            "attempt": request_attempt,
+                            "validation_round": validation_round + 1,
+                            "retry": retry,
+                            "request_sha256": request_sha256,
+                            "response_sha256": response_sha256,
+                            "outcome": "success",
+                            "error_code": None,
+                            "elapsed_ms": _elapsed_ms(started),
+                            "usage": call_usage,
+                        },
+                    )
+                    return normalized, usage
+                _emit_audit(
+                    audit_hook,
+                    {
+                        "attempt": request_attempt,
+                        "validation_round": validation_round + 1,
+                        "retry": retry,
+                        "request_sha256": request_sha256,
+                        "response_sha256": response_sha256,
+                        "outcome": "invalid",
+                        "error_code": "invalid_model_response",
+                        "elapsed_ms": _elapsed_ms(started),
+                        "usage": call_usage,
+                    },
+                )
+                break
         raise AssistantProviderError("invalid_model_response")
 
     def _complete(
         self, messages: list[dict[str, str]]
     ) -> tuple[dict[str, Any], dict[str, int], str]:
-        body = json.dumps(
-            {
-                "model": self.settings.model,
-                "messages": messages,
-                "temperature": 0.1,
-                "max_tokens": 1400,
-                "response_format": {"type": "json_object"},
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        body = self._completion_body(messages)
         request = Request(
             self.settings.endpoint,
             data=body,
@@ -169,6 +235,12 @@ class OpenAICompatibleProvider:
         except HTTPError as exc:
             if exc.code == 429:
                 raise AssistantProviderError("model_rate_limited") from None
+            if exc.code in {401, 403}:
+                raise AssistantProviderError("model_auth_error") from None
+            if exc.code in {400, 404, 409, 422}:
+                raise AssistantProviderError("model_request_rejected") from None
+            if 500 <= exc.code <= 599:
+                raise AssistantProviderError("model_server_error") from None
             raise AssistantProviderError("model_http_error") from None
         except (URLError, TimeoutError, socket.timeout, OSError, ValueError):
             raise AssistantProviderError("model_transport_error") from None
@@ -190,6 +262,19 @@ class OpenAICompatibleProvider:
         except (KeyError, IndexError, TypeError, ValueError, UnicodeError):
             raise AssistantProviderError("invalid_model_response") from None
         return value, usage, raw
+
+    def _completion_body(self, messages: list[dict[str, str]]) -> bytes:
+        return json.dumps(
+            {
+                "model": self.settings.model,
+                "messages": messages,
+                "temperature": 0.1,
+                "max_tokens": MAX_COMPLETION_TOKENS,
+                "response_format": {"type": "json_object"},
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 
 class _SameOriginRedirectHandler(HTTPRedirectHandler):
@@ -381,6 +466,22 @@ def _scenarios(value: Any, errors: list[str]) -> list[dict[str, str]]:
 
 def _safe_token_count(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _emit_audit(
+    hook: Callable[[dict[str, Any]], None] | None,
+    value: dict[str, Any],
+) -> None:
+    if hook is not None:
+        hook(value)
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int(round((time.monotonic() - started) * 1000)))
+
+
+def _zero_usage() -> dict[str, int]:
+    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
 def _bounded_float(raw: str | None, default: float, minimum: float, maximum: float) -> float:

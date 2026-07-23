@@ -1,6 +1,6 @@
 # Paper Trading Operations
 
-This document starts from the public `v0.15.0` paper-account baseline. Paper execution remains isolated from the read-only market chart, AI assistant, strategy-lab candidate editing, cloud backup, and the unavailable live-broker route. The persistent research-digest, market-intelligence, and webhook task sections are included in the `v0.15.0` wheel and remain derivative, research-only evidence.
+This document starts from the public `v0.16.0` paper-account baseline. Paper execution remains isolated from the read-only market chart, AI assistant, strategy-lab candidate editing, cloud backup, and the unavailable live-broker route. The persistent research-digest, market-intelligence, and webhook task sections are included in the `v0.16.0` wheel and remain derivative, research-only evidence.
 
 ## Daily Flow
 

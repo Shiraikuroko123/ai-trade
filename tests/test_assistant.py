@@ -49,6 +49,18 @@ class _Market:
         return Instrument(symbol, "沪深300ETF", "SH", "equity")
 
 
+class _StockMarket(_Market):
+    def instrument(self, symbol):
+        assert symbol == self._symbol
+        return Instrument(
+            symbol,
+            "测试股票",
+            "SH",
+            "equity",
+            instrument_type="STOCK",
+        )
+
+
 class AssistantEngineTests(unittest.TestCase):
     def test_local_analysis_schema_evidence_chart_and_safe_record(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -330,6 +342,129 @@ class AssistantEngineTests(unittest.TestCase):
                 [row["evidence_id"] for row in second["diagnosis"]["evidence"]],
             )
 
+    def test_stock_analysis_binds_same_date_fundamental_and_valuation_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = _config(root)
+            config.fundamentals_dir = root / "state" / "fundamentals"
+            config.valuation_dir = root / "state" / "valuation"
+            market = _StockMarket(_bars(220), symbol="600000")
+            data_date = market.latest_date().isoformat()
+            fundamentals = _fundamental_snapshot(data_date)
+            valuation = _valuation_snapshot(data_date, percentile=90.0)
+
+            with (
+                patch(
+                    "ai_trade.assistant.engine.FundamentalStore.list",
+                    return_value=fundamentals,
+                ) as fundamental_list,
+                patch(
+                    "ai_trade.assistant.engine.ValuationStore.list",
+                    return_value=valuation,
+                ) as valuation_list,
+            ):
+                result = AssistantEngine(config).analyze(market, "600000")
+
+            self.assertEqual(
+                fundamental_list.call_args.args[0].trade_date.isoformat(), data_date
+            )
+            self.assertEqual(
+                valuation_list.call_args.args[0].trade_date.isoformat(), data_date
+            )
+            features = result["features"]["fundamental"]
+            self.assertTrue(features["available"])
+            self.assertTrue(features["abstained"])
+            self.assertEqual(
+                features["abstention_reason"], "conflicting_directional_evidence"
+            )
+            perspective = next(
+                item
+                for item in result["perspectives"]
+                if item["key"] == "fundamental_coverage"
+            )
+            self.assertEqual(perspective["status"], "AVAILABLE")
+            self.assertEqual(perspective["stance"], "MIXED")
+            self.assertIn("明确弃权", perspective["summary"])
+            self.assertIn("fundamental.weighted_roe_pct", perspective["evidence_ids"])
+            evidence = {
+                item["evidence_id"]: item
+                for item in result["diagnosis"]["evidence"]
+            }
+            self.assertEqual(
+                evidence["fundamental.weighted_roe_pct"]["provenance"][
+                    "fundamentals"
+                ]["record_fingerprint"],
+                "f" * 64,
+            )
+            self.assertEqual(
+                result["snapshot"]["research_evidence"],
+                {
+                    "fundamentals_record_fingerprint": "f" * 64,
+                    "valuation_record_fingerprint": "v" * 64,
+                },
+            )
+            self.assertEqual(result["conflict_audit"]["status"], "INCOMPLETE")
+
+    def test_stock_fundamental_role_abstains_when_directional_data_is_sparse(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = _config(root)
+            market = _StockMarket(_bars(220), symbol="600000")
+            data_date = market.latest_date().isoformat()
+            sparse = _fundamental_snapshot(data_date)
+            period = sparse["records"][0]["periods"][0]
+            for key in (
+                "revenue_yoy_pct",
+                "net_profit_yoy_pct",
+                "operating_cash_flow_per_share",
+            ):
+                period[key] = None
+            with (
+                patch(
+                    "ai_trade.assistant.engine.FundamentalStore.list",
+                    return_value=sparse,
+                ),
+                patch(
+                    "ai_trade.assistant.engine.ValuationStore.list",
+                    return_value={},
+                ),
+            ):
+                result = AssistantEngine(config).analyze(market, "600000")
+
+            features = result["features"]["fundamental"]
+            self.assertEqual(
+                features["abstention_reason"], "insufficient_directional_evidence"
+            )
+            self.assertEqual(features["stance"], "MIXED")
+
+    def test_provisional_valuation_is_excluded_from_completed_bar_analysis(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _config(Path(temporary))
+            market = _StockMarket(_bars(220), symbol="600000")
+            data_date = market.latest_date().isoformat()
+            valuation = _valuation_snapshot(data_date, percentile=10.0)
+            valuation["status"] = "provisional"
+            with (
+                patch(
+                    "ai_trade.assistant.engine.FundamentalStore.list",
+                    return_value={},
+                ),
+                patch(
+                    "ai_trade.assistant.engine.ValuationStore.list",
+                    return_value=valuation,
+                ),
+            ):
+                result = AssistantEngine(config).analyze(market, "600000")
+
+            features = result["features"]["fundamental"]
+            self.assertFalse(features["available"])
+            self.assertFalse(features["valuation_available"])
+            self.assertIsNone(
+                result["snapshot"]["research_evidence"][
+                    "valuation_record_fingerprint"
+                ]
+            )
+
 
 class ProviderPolicyTests(unittest.TestCase):
     def test_response_limit_is_fixed_and_not_environment_configurable(self):
@@ -436,6 +571,67 @@ def _config(root: Path):
         project_root=root,
         raw={"data": {"provider": "eastmoney", "adjustment": "forward"}},
     )
+
+
+def _fundamental_snapshot(data_date: str) -> dict:
+    return {
+        "dataset": "fundamentals",
+        "available": True,
+        "status": "current",
+        "trade_date": data_date,
+        "revision_id": "fundamentals_" + "1" * 32,
+        "revision": 1,
+        "evidence_fingerprint": "e" * 64,
+        "record_fingerprint": "f" * 64,
+        "source": {
+            "provider": "eastmoney",
+            "certification": "third_party_not_exchange_certified",
+        },
+        "records": [
+            {
+                "symbol": "600000",
+                "periods": [
+                    {
+                        "report_date": "2026-03-31",
+                        "weighted_roe_pct": 10.0,
+                        "revenue_yoy_pct": 5.0,
+                        "net_profit_yoy_pct": 6.0,
+                        "operating_cash_flow_per_share": 3.0,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _valuation_snapshot(data_date: str, *, percentile: float) -> dict:
+    return {
+        "dataset": "valuation",
+        "available": True,
+        "status": "current",
+        "trade_date": data_date,
+        "revision_id": "valuation_" + "2" * 32,
+        "revision": 1,
+        "evidence_fingerprint": "d" * 64,
+        "record_fingerprint": "v" * 64,
+        "source": {
+            "provider": "eastmoney",
+            "certification": "not_exchange_certified",
+        },
+        "records": [
+            {
+                "symbol": "600000",
+                "pe_ttm": 5.0,
+                "pb": 1.25,
+                "valuation_percentiles": {
+                    "pe_ttm": percentile,
+                    "pb": percentile,
+                    "cash_flow": percentile,
+                    "ps_ttm": percentile,
+                },
+            }
+        ],
+    }
 
 
 def _bars(count: int, daily_return: float = 0.001) -> list[Bar]:

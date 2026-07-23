@@ -58,6 +58,7 @@ include src/ai_trade/data/valuation.py
 include src/ai_trade/notification_delivery.py
 include src/ai_trade/research_archive.py
 include src/ai_trade/research_digest.py
+include src/ai_trade/assistant/governance.py
 include src/ai_trade/web/assets/app.css
 include src/ai_trade/web/assets/app.js
 include src/ai_trade/web/assets/auth.css

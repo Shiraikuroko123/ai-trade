@@ -1,6 +1,6 @@
 # AI K-line Assistant
 
-AI Trade `v0.15.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
+AI Trade `v0.16.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
 
 ## Contract
 
@@ -27,15 +27,20 @@ Every new analysis also returns five deterministic, evidence-bound views under
 |---|---|---|
 | `technical` | Available | EMA20/EMA50, 20-session momentum, RSI, candle structure, and breakout state |
 | `risk` | Available | Annualized volatility, ATR14 percentage, and support reference |
-| `fundamental_coverage` | `UNAVAILABLE`; the new stock-only evidence store is not yet wired into the assistant | Explicit coverage evidence; no financial conclusion is inferred |
+| `fundamental_coverage` | Available for exact-date stock evidence; explicitly abstains when sparse or conflicting | Point-in-time financial fields plus current and historical valuation evidence, each cited by evidence ID |
 | `sentiment_coverage` | `UNAVAILABLE`; traceable source records exist but no complete sentiment methodology is wired in | Explicit coverage evidence; model prose cannot fill the gap |
 | `strategy_gate` | Available | Deterministic conclusion, research gate, and assessment evidence |
 
-The current release has separate stock fundamentals, official disclosures,
-third-party news, Dragon-Tiger List, breadth, capital-flow, and Level-1 depth
-stores. The assistant does not yet consume the fundamental store, and none of
-the other datasets forms a validated sentiment methodology. The corresponding
-coverage views therefore remain `UNAVAILABLE`.
+The current release reads stock fundamentals and valuation evidence already
+stored for the exact final K-line date. It performs no network fetch during an
+analysis, accepts only `current` or `partial` records, and excludes
+`provisional` valuation so pre-close observations cannot leak into a completed
+bar review. ETFs remain explicitly unsupported. Fewer than two directional
+signals, or a conflict between supportive and adverse signals, produces a
+`MIXED` abstention rather than an inferred conclusion. Sentiment remains
+`UNAVAILABLE`: official disclosures, third-party news, Dragon-Tiger List,
+breadth, capital flow, and Level-1 depth do not form a validated sentiment
+methodology.
 
 Each view contains `status`, `stance`, `summary`, `limitation`, and
 `evidence_ids`. The engine rejects a result with an unknown view, duplicate
@@ -81,7 +86,9 @@ Enforcement outside the model must keep `authority="research_only"` and reject a
 
 ## Windows Model Configuration
 
-Model-enhanced mode reads exactly these current-user environment variables:
+Model-enhanced mode reads these environment variables. The Windows helper sets
+the endpoint, credential, timeout, and core governance limits for the current
+user; Compose exposes the same values explicitly:
 
 | Variable | Purpose | Rule |
 |---|---|---|
@@ -89,6 +96,13 @@ Model-enhanced mode reads exactly these current-user environment variables:
 | `AI_TRADE_AI_MODEL` | Model ID supported by that endpoint | Required for model-enhanced mode |
 | `AI_TRADE_AI_API_KEY` | Provider credential | Required; never stored in assistant history |
 | `AI_TRADE_AI_TIMEOUT_SECONDS` | Request timeout | Integer from 1 through 120; default 30 |
+| `AI_TRADE_AI_MAX_RETRIES` | Retry budget after the first attempt | Integer 0-3; default 1; only rate-limit, server, and transport failures retry |
+| `AI_TRADE_AI_MAX_CONCURRENT_CALLS` | Process-level concurrency cap | Integer 1-8; default 1 |
+| `AI_TRADE_AI_MAX_TOKENS_PER_CALL` | Conservative accounted Token limit per logical call | Integer 2,000-10,000,000; default 50,000 |
+| `AI_TRADE_AI_DAILY_TOKEN_BUDGET` | Per-user accounted Token budget | UTC day; default 100,000 |
+| `AI_TRADE_AI_INPUT_COST_PER_MILLION_USD` | Optional input price for estimates | Must be configured together with output price |
+| `AI_TRADE_AI_OUTPUT_COST_PER_MILLION_USD` | Optional output price for estimates | Must be configured together with input price |
+| `AI_TRADE_AI_DAILY_COST_BUDGET_USD` | Optional per-user daily cost ceiling | Requires both price variables; UTC day |
 
 Configure the values interactively:
 
@@ -98,7 +112,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1
 
 The Base URL defaults to `https://api.openai.com/v1`. The script reads the API key with `SecureString`, does not echo it, and does not create a repository `.env`, JSON, or credential file. It rejects URL credentials, query strings, fragments, non-HTTPS remote endpoints, and unsupported timeouts. Restart the workstation after configuration so the running process inherits the user environment.
 
-Remove all four variables and continue with zero-key local mode:
+Remove all model and governance variables and continue with zero-key local mode:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
@@ -120,7 +134,22 @@ Open the printed loopback URL, choose **AI 分析** in the left navigation, sele
 
 Model-enhanced mode discloses bounded indicators and evidence derived from the selected completed K-line window to the configured provider. Review its retention, training, residency, and account policies before enabling the mode. Never include broker or fund passwords, tokens, private positions, personal identifiers, material non-public information, or third-party confidential text.
 
-Per-user results are stored under `state/assistant/`. The repository's `state/*` rule excludes them from Git. The R2 exporter reads only a market-cache allowlist and cannot include assistant history, while release verification rejects every `state/` member. The API key is not written to assistant records, reports, cloud snapshots, browser payloads, or release artifacts.
+Per-user results are stored under `state/assistant/`. Immutable call records are
+stored under `state/assistant_calls/`, and normalized schema-validated public
+enhancement output is cached under `state/assistant_model_cache/`. User IDs are
+represented by SHA-256 directory keys. A cache hit gets a new call audit and is
+not charged again. Failed attempts without provider usage are conservatively
+accounted against estimated attempted capacity. Audit/cache corruption or
+publication failure disables later model calls in the process and falls back
+to the deterministic local result. Records contain hashes and public output
+only: no API key, endpoint URL, raw prompt, raw provider response, or hidden
+reasoning is saved.
+
+The repository's `state/*` rule excludes all of these records from Git. The R2
+exporter reads only a market-cache allowlist and cannot include them, while
+release verification rejects every `state/` member. The API key is not written
+to assistant records, reports, cloud snapshots, browser payloads, or release
+artifacts.
 
 ## Clean-room Reference
 

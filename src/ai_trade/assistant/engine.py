@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -17,10 +18,15 @@ from .features import (
 )
 from .provider import (
     AssistantProviderError,
+    MAX_COMPLETION_TOKENS,
     OpenAICompatibleProvider,
+    PROMPT_TEMPLATE_VERSION,
     ProviderSettings,
 )
+from .governance import GovernanceSettings, ModelCallGovernance
 from .store import AssistantRecordStore
+from ..data.fundamentals import FundamentalQuery, FundamentalStore
+from ..data.valuation import ValuationQuery, ValuationStore
 
 
 SCHEMA_VERSION = 1
@@ -51,10 +57,20 @@ class AssistantEngine:
             if self._settings is not None
             else None
         )
+        self._governance_settings, governance_error = (
+            GovernanceSettings.from_environment()
+        )
+        if governance_error:
+            self._configuration_error = governance_error
+        self._governance = (
+            self._new_governance()
+            if self._provider is not None and self._governance_settings is not None
+            else None
+        )
         self._store = AssistantRecordStore(config.project_root)
 
     def status(self) -> dict[str, Any]:
-        configured = self._provider is not None
+        configured = self._provider is not None and self._governance_settings is not None
         return {
             "schema_version": SCHEMA_VERSION,
             "local_available": True,
@@ -64,6 +80,11 @@ class AssistantEngine:
             "provider": "openai-compatible" if configured else None,
             "model": self._settings.model if self._settings is not None else None,
             "configuration_error": self._configuration_error,
+            "governance": (
+                self._governance_settings.public_status()
+                if self._governance_settings is not None
+                else None
+            ),
             "authority": "research_only",
             "research_views": list(RESEARCH_PERSPECTIVE_KEYS),
             "conflict_audit": {
@@ -85,7 +106,9 @@ class AssistantEngine:
         selected_symbol = _validate_symbol(market, symbol)
         selected_lookback = _validate_lookback(lookback)
         selected_mode = _validate_mode(mode)
-        if selected_mode == "model" and self._provider is None:
+        if selected_mode == "model" and (
+            self._provider is None or self._governance_settings is None
+        ):
             raise RuntimeError("AI model mode is not configured")
 
         market_date = market.latest_date()
@@ -95,7 +118,12 @@ class AssistantEngine:
                 f"At least 60 completed market bars are required for {selected_symbol}"
             )
         instrument = market.instrument(selected_symbol)
-        local = build_local_analysis(bars)
+        research_evidence, evidence_warnings = _load_research_evidence(
+            self.config,
+            instrument,
+            bars[-1].date,
+        )
+        local = build_local_analysis(bars, research_evidence=research_evidence)
         deterministic_conclusion = str(local["assessment"]["conclusion"])
         model_review: dict[str, Any] = {
             "mode": selected_mode,
@@ -107,7 +135,13 @@ class AssistantEngine:
             "relaxation_blocked": False,
             "tightened": False,
         }
-        snapshot = _snapshot(self.config, market, selected_symbol, bars)
+        snapshot = _snapshot(
+            self.config,
+            market,
+            selected_symbol,
+            bars,
+            research_binding=local["features"]["fundamental"]["snapshot_binding"],
+        )
         previous = _previous_for_symbol(
             self._store.history(user_id, limit=20), selected_symbol
         )
@@ -117,24 +151,35 @@ class AssistantEngine:
             if selected_mode == "model" and self._settings
             else LOCAL_MODEL
         )
-        warnings: list[str] = []
+        warnings: list[str] = list(evidence_warnings)
         model_enhanced = False
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        model_call: dict[str, Any] | None = None
 
         if selected_mode == "model":
             try:
-                enhancement, usage = self._provider.enhance(
+                if self._governance is None:
+                    self._governance = self._new_governance()
+                enhancement, usage, model_call = self._governance.enhance(
+                    user_id=user_id,
                     symbol=selected_symbol,
                     data_date=bars[-1].date.isoformat(),
                     diagnosis=local["diagnosis"],
                     assessment=local["assessment"],
+                    provider=self._provider,
                 )
                 model_review.update(_apply_enhancement(local, enhancement))
                 model_enhanced = True
             except AssistantProviderError as exc:
+                model_call = exc.audit
                 warnings.append(
                     "Model enhancement was unavailable; deterministic local analysis was used "
                     f"({exc.code})."
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                warnings.append(
+                    "Model enhancement was unavailable; deterministic local analysis was used "
+                    "(model_governance_unavailable)."
                 )
 
         local["conflict_audit"] = build_perspective_conflict_audit(
@@ -172,6 +217,7 @@ class AssistantEngine:
             "warnings": warnings,
             "model_enhanced": model_enhanced,
             "usage": usage,
+            "model_call": model_call,
         }
         if errors:
             raise RuntimeError("Assistant analysis failed internal validation")
@@ -180,6 +226,18 @@ class AssistantEngine:
 
     def history(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
         return self._store.history(user_id, limit)
+
+    def _new_governance(self) -> ModelCallGovernance:
+        if self._governance_settings is None or self._settings is None:
+            raise RuntimeError("AI model governance is not configured")
+        return ModelCallGovernance(
+            Path(self.config.project_root),
+            self._governance_settings,
+            model=str(self._settings.model),
+            endpoint=str(getattr(self._settings, "endpoint", "test-provider")),
+            template_version=PROMPT_TEMPLATE_VERSION,
+            maximum_completion_tokens=MAX_COMPLETION_TOKENS,
+        )
 
 
 def _validate_symbol(market: Any, symbol: str) -> str:
@@ -212,7 +270,14 @@ def _validate_mode(value: str) -> str:
     return value
 
 
-def _snapshot(config: Any, market: Any, symbol: str, bars: list[Any]) -> dict[str, Any]:
+def _snapshot(
+    config: Any,
+    market: Any,
+    symbol: str,
+    bars: list[Any],
+    *,
+    research_binding: dict[str, Any],
+) -> dict[str, Any]:
     raw_data = getattr(config, "raw", {}).get("data", {})
     canonical_bars = [
         [
@@ -232,6 +297,7 @@ def _snapshot(config: Any, market: Any, symbol: str, bars: list[Any]) -> dict[st
         "adjustment": raw_data.get("adjustment", "none"),
         "bars": canonical_bars,
         "source_sha256": _safe_sha256(getattr(market, "file_hashes", {}).get(symbol)),
+        "research_evidence": research_binding,
     }
     digest = hashlib.sha256(
         json.dumps(
@@ -253,7 +319,64 @@ def _snapshot(config: Any, market: Any, symbol: str, bars: list[Any]) -> dict[st
         "end_date": bars[-1].date.isoformat(),
         "source_sha256": payload["source_sha256"] or None,
         "window_sha256": digest,
+        "research_evidence": research_binding,
     }
+
+
+def _load_research_evidence(
+    config: Any,
+    instrument: Any,
+    data_date: date,
+) -> tuple[dict[str, Any], list[str]]:
+    if str(getattr(instrument, "instrument_type", "")).strip().upper() != "STOCK":
+        return (
+            {
+                "fundamentals": {},
+                "valuation": {},
+                "limitation": "公司基本面与历史估值分位仅支持股票标的，当前标的不适用。",
+            },
+            [],
+        )
+
+    project_root = Path(config.project_root)
+    fundamentals_root = Path(
+        getattr(config, "fundamentals_dir", project_root / "state" / "fundamentals")
+    )
+    valuation_root = Path(
+        getattr(config, "valuation_dir", project_root / "state" / "valuation")
+    )
+    warnings: list[str] = []
+    try:
+        fundamentals = FundamentalStore(fundamentals_root).list(
+            FundamentalQuery(trade_date=data_date, symbol=instrument.symbol, limit=1)
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        fundamentals = {}
+        warnings.append(
+            "Fundamental evidence could not be validated and was excluded "
+            "(fundamental_evidence_invalid)."
+        )
+    try:
+        valuation = ValuationStore(valuation_root).list(
+            ValuationQuery(trade_date=data_date, symbol=instrument.symbol, limit=1)
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        valuation = {}
+        warnings.append(
+            "Valuation evidence could not be validated and was excluded "
+            "(valuation_evidence_invalid)."
+        )
+    return (
+        {
+            "fundamentals": fundamentals,
+            "valuation": valuation,
+            "limitation": (
+                "需先刷新并校验与 K 线末日完全相同的股票基本面和估值快照；"
+                "缺失、损坏或日期不一致时不会回退到其他日期。"
+            ),
+        },
+        warnings,
+    )
 
 
 def _apply_enhancement(

@@ -1,6 +1,35 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.15.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.16.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+
+## 0.16.0 - 2026-07-23
+
+- Added an AI-call governance boundary around the optional OpenAI-compatible
+  wording layer. Every request now passes pre-I/O per-call and UTC-day Token
+  budgets, a process concurrency cap, bounded retry policy, and per-user
+  cross-process serialization before network access.
+- Added immutable per-call audit records with role, model, prompt-template
+  version, endpoint/evidence/request/response fingerprints, attempt-level
+  latency and failure classes, retries, provider usage, conservative accounted
+  Token usage, optional estimated USD cost, cache outcome, and budget state.
+  API keys, endpoint URLs, raw prompts, raw model responses, and hidden
+  reasoning are never stored in these records.
+- Added a per-user immutable cache for schema-validated public enhancement
+  output. Cache hits are independently audited and are not charged again;
+  audit/cache corruption or publication failure disables model enhancement and
+  preserves the deterministic local result.
+- Wired stock-only point-in-time fundamentals and historical valuation
+  percentiles into the assistant on the exact final K-line date. Analysis reads
+  only existing local immutable records, accepts `current`/`partial` evidence,
+  excludes provisional valuation, binds source fingerprints to the analysis
+  snapshot, and cites stable evidence IDs.
+- Added explicit fundamental-role abstention for sparse or conflicting
+  directional evidence. ETFs remain unsupported, sentiment coverage remains
+  `UNAVAILABLE`, and neither fundamental evidence nor model text can relax the
+  deterministic conclusion or gain execution authority.
+- Added governance limits and call-audit summaries to the AI workstation,
+  exposed the limits through Windows and Compose configuration, and extended
+  unit, UI, Docker, package-manifest, and distribution verification coverage.
 
 ## 0.15.0 - 2026-07-20
 

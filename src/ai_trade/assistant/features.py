@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from datetime import date
 from typing import Any, Sequence
 
 
@@ -23,7 +24,10 @@ RESEARCH_PERSPECTIVE_KEYS = (
 PERSPECTIVE_AUDIT_METHOD = "deterministic-perspective-audit-v1"
 
 
-def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
+def build_local_analysis(
+    bars: Sequence[Any],
+    research_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not bars:
         raise ValueError("No completed bars are available for assistant analysis")
     _validate_bars(bars)
@@ -90,6 +94,7 @@ def build_local_analysis(bars: Sequence[Any]) -> dict[str, Any]:
         "last_candle": candle,
         "breakout20": breakout,
         "bar_count": len(bars),
+        "fundamental": _fundamental_features(research_evidence),
     }
     evidence = _evidence(features, trend, regime, volatility, gate)
     diagnosis_refs = [item["evidence_id"] for item in evidence]
@@ -194,6 +199,31 @@ def build_research_perspectives(
         "REDUCE_RISK": "ADVERSE",
         "NO_ACTION": "CAUTION",
     }.get(conclusion, "CAUTION")
+    fundamental = (
+        features.get("fundamental")
+        if isinstance(features.get("fundamental"), dict)
+        else {}
+    )
+    fundamental_available = fundamental.get("available") is True
+    fundamental_stance = (
+        str(fundamental.get("stance") or "MIXED")
+        if fundamental_available
+        else "NOT_AVAILABLE"
+    )
+    fundamental_refs = refs(
+        "coverage.fundamentals",
+        "fundamental.report_date",
+        "fundamental.weighted_roe_pct",
+        "fundamental.revenue_yoy_pct",
+        "fundamental.net_profit_yoy_pct",
+        "fundamental.operating_cash_flow_per_share",
+        "valuation.pe_ttm",
+        "valuation.pb",
+        "valuation.percentile.pe_ttm",
+        "valuation.percentile.pb",
+        "valuation.percentile.cash_flow",
+        "valuation.percentile.ps_ttm",
+    )
 
     return [
         {
@@ -231,11 +261,22 @@ def build_research_perspectives(
         {
             "key": "fundamental_coverage",
             "label": "基本面覆盖",
-            "status": "UNAVAILABLE",
-            "stance": "NOT_AVAILABLE",
-            "summary": "当前快照未包含财务报表、估值或公司行动数据，基本面暂不可评估。",
-            "evidence_ids": refs("coverage.fundamentals"),
-            "limitation": "接入并校验授权基本面数据源后才可启用该视角。",
+            "status": "AVAILABLE" if fundamental_available else "UNAVAILABLE",
+            "stance": fundamental_stance,
+            "summary": (
+                _fundamental_summary(fundamental)
+                if fundamental_available
+                else "当前 K 线日期没有匹配的股票点时基本面快照，基本面暂不可评估。"
+            ),
+            "evidence_ids": fundamental_refs,
+            "limitation": (
+                "只使用同一交易日已落盘的第三方财务与估值证据，不改变确定性交易结论。"
+                if fundamental_available
+                else str(
+                    fundamental.get("limitation")
+                    or "需先刷新并校验同一交易日的股票基本面快照。"
+                )
+            ),
         },
         {
             "key": "sentiment_coverage",
@@ -315,6 +356,7 @@ def build_perspective_conflict_audit(
 
     technical = str(by_key["technical"].get("stance"))
     risk = str(by_key["risk"].get("stance"))
+    fundamental = str(by_key["fundamental_coverage"].get("stance"))
     strategy = str(by_key["strategy_gate"].get("stance"))
     if (technical, risk) in {
         ("SUPPORTIVE", "ADVERSE"),
@@ -328,6 +370,17 @@ def build_perspective_conflict_audit(
             ),
             perspective_keys=["technical", "risk"],
             resolution="等待新收盘证据，或由人工同时核对趋势、波动和组合暴露。",
+        )
+    if (technical, fundamental) in {
+        ("SUPPORTIVE", "ADVERSE"),
+        ("ADVERSE", "SUPPORTIVE"),
+    }:
+        append_conflict(
+            "technical_fundamental_divergence",
+            title="技术面与基本面证据分歧",
+            summary="同一快照中的价格趋势与已披露财务、估值证据方向相反，不能只依据单一视角推进复核。",
+            perspective_keys=["technical", "fundamental_coverage"],
+            resolution="保留分歧并由人工核对披露期、估值分位和价格窗口；基本面角色不直接改写交易结论。",
         )
     if strategy == "REVIEW" and technical != "SUPPORTIVE":
         append_conflict(
@@ -566,6 +619,9 @@ def _evidence(
     volatility: str,
     gate: str,
 ) -> list[dict[str, Any]]:
+    fundamental = features["fundamental"]
+    fundamental_available = fundamental.get("available") is True
+    valuation_available = fundamental.get("valuation_available") is True
     rows = [
         (
             "price.close",
@@ -655,10 +711,19 @@ def _evidence(
         (
             "coverage.fundamentals",
             "基本面数据覆盖",
-            "UNAVAILABLE",
-            "当前快照没有财务报表、估值和公司行动数据",
-            "warning",
+            "AVAILABLE" if fundamental_available else "UNAVAILABLE",
+            (
+                "已绑定同一交易日的点时财务证据"
+                + ("和估值分位" if valuation_available else "；同日估值证据不可用")
+                if fundamental_available
+                else str(
+                    fundamental.get("limitation")
+                    or "当前快照没有同一交易日的股票点时基本面证据"
+                )
+            ),
+            "neutral" if fundamental_available else "warning",
         ),
+        *_fundamental_evidence_rows(fundamental),
         (
             "coverage.sentiment",
             "情绪数据覆盖",
@@ -674,7 +739,7 @@ def _evidence(
             "warning" if gate != "PROCEED" else "neutral",
         ),
     ]
-    return [
+    result = [
         {
             "evidence_id": evidence_id,
             "label": label,
@@ -684,6 +749,309 @@ def _evidence(
         }
         for evidence_id, label, value, interpretation, tone in rows
     ]
+    for item in result:
+        evidence_id = str(item["evidence_id"])
+        if evidence_id == "coverage.fundamentals" or evidence_id.startswith(
+            ("fundamental.", "valuation.")
+        ):
+            item["provenance"] = _fundamental_provenance(
+                fundamental,
+                valuation=evidence_id.startswith("valuation."),
+            )
+    return result
+
+
+def _fundamental_features(research_evidence: dict[str, Any] | None) -> dict[str, Any]:
+    source = research_evidence if isinstance(research_evidence, dict) else {}
+    fundamental_snapshot = (
+        source.get("fundamentals")
+        if isinstance(source.get("fundamentals"), dict)
+        else {}
+    )
+    valuation_snapshot = (
+        source.get("valuation")
+        if isinstance(source.get("valuation"), dict)
+        else {}
+    )
+    fundamental_record = _single_evidence_record(fundamental_snapshot)
+    valuation_record = _single_evidence_record(valuation_snapshot)
+    period = {}
+    periods = fundamental_record.get("periods")
+    if isinstance(periods, list) and periods and isinstance(periods[0], dict):
+        period = periods[0]
+
+    metrics = {
+        "report_date": _bounded_date_text(period.get("report_date")),
+        "weighted_roe_pct": _finite_number(period.get("weighted_roe_pct")),
+        "revenue_yoy_pct": _finite_number(period.get("revenue_yoy_pct")),
+        "net_profit_yoy_pct": _finite_number(period.get("net_profit_yoy_pct")),
+        "operating_cash_flow_per_share": _finite_number(
+            period.get("operating_cash_flow_per_share")
+        ),
+        "pe_ttm": _finite_number(valuation_record.get("pe_ttm")),
+        "pb": _finite_number(valuation_record.get("pb")),
+    }
+    raw_percentiles = valuation_record.get("valuation_percentiles")
+    percentiles = {
+        key: _finite_number(raw_percentiles.get(key))
+        if isinstance(raw_percentiles, dict)
+        else None
+        for key in ("pe_ttm", "pb", "cash_flow", "ps_ttm")
+    }
+    fundamental_available = bool(fundamental_record)
+    valuation_available = bool(valuation_record)
+    available = fundamental_available or valuation_available
+    positive, adverse = _fundamental_direction_counts(metrics, percentiles)
+    directional_count = positive + adverse
+    if not available:
+        stance = "NOT_AVAILABLE"
+        abstention_reason = "matching_snapshot_unavailable"
+    elif directional_count < 2:
+        stance = "MIXED"
+        abstention_reason = "insufficient_directional_evidence"
+    elif positive and adverse:
+        stance = "MIXED"
+        abstention_reason = "conflicting_directional_evidence"
+    elif positive:
+        stance = "SUPPORTIVE"
+        abstention_reason = None
+    else:
+        stance = "ADVERSE"
+        abstention_reason = None
+
+    return {
+        "available": available,
+        "fundamentals_available": fundamental_available,
+        "valuation_available": valuation_available,
+        "stance": stance,
+        "abstained": abstention_reason is not None,
+        "abstention_reason": abstention_reason,
+        "directional_evidence_count": directional_count,
+        "positive_evidence_count": positive,
+        "adverse_evidence_count": adverse,
+        **metrics,
+        "valuation_percentiles": percentiles,
+        "fundamental_provenance": (
+            _evidence_provenance(fundamental_snapshot)
+            if fundamental_available
+            else None
+        ),
+        "valuation_provenance": (
+            _evidence_provenance(valuation_snapshot) if valuation_available else None
+        ),
+        "snapshot_binding": {
+            "fundamentals_record_fingerprint": (
+                fundamental_snapshot.get("record_fingerprint")
+                if fundamental_available
+                else None
+            ),
+            "valuation_record_fingerprint": (
+                valuation_snapshot.get("record_fingerprint")
+                if valuation_available
+                else None
+            ),
+        },
+        "limitation": str(
+            source.get("limitation")
+            or "当前 K 线日期没有匹配且可验证的股票基本面或估值快照。"
+        ),
+    }
+
+
+def _single_evidence_record(snapshot: dict[str, Any]) -> dict[str, Any]:
+    if (
+        snapshot.get("available") is not True
+        or snapshot.get("status") not in {"current", "partial"}
+    ):
+        return {}
+    records = snapshot.get("records")
+    if not isinstance(records, list) or len(records) != 1:
+        return {}
+    return records[0] if isinstance(records[0], dict) else {}
+
+
+def _evidence_provenance(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    if snapshot.get("available") is not True:
+        return None
+    source = snapshot.get("source") if isinstance(snapshot.get("source"), dict) else {}
+    return {
+        "dataset": snapshot.get("dataset"),
+        "trade_date": snapshot.get("trade_date"),
+        "revision_id": snapshot.get("revision_id"),
+        "revision": snapshot.get("revision"),
+        "evidence_fingerprint": snapshot.get("evidence_fingerprint"),
+        "record_fingerprint": snapshot.get("record_fingerprint"),
+        "provider": source.get("provider"),
+        "certification": source.get("certification"),
+    }
+
+
+def _fundamental_direction_counts(
+    metrics: dict[str, Any], percentiles: dict[str, float | None]
+) -> tuple[int, int]:
+    positive = 0
+    adverse = 0
+    roe = metrics["weighted_roe_pct"]
+    if roe is not None:
+        positive += roe >= 8.0
+        adverse += roe <= 0.0
+    for name in ("revenue_yoy_pct", "net_profit_yoy_pct"):
+        value = metrics[name]
+        if value is not None:
+            positive += value > 0.0
+            adverse += value < 0.0
+    cash_flow = metrics["operating_cash_flow_per_share"]
+    if cash_flow is not None:
+        positive += cash_flow > 0.0
+        adverse += cash_flow < 0.0
+
+    available_percentiles = [
+        value for value in percentiles.values() if value is not None
+    ]
+    low_valuation = any(value <= 25.0 for value in available_percentiles)
+    high_valuation = any(value >= 75.0 for value in available_percentiles)
+    if low_valuation and not high_valuation:
+        positive += 1
+    elif high_valuation and not low_valuation:
+        adverse += 1
+    elif low_valuation and high_valuation:
+        positive += 1
+        adverse += 1
+    return int(positive), int(adverse)
+
+
+def _fundamental_evidence_rows(
+    fundamental: dict[str, Any],
+) -> list[tuple[str, str, Any, str, str]]:
+    rows: list[tuple[str, str, Any, str, str]] = []
+
+    def append(
+        evidence_id: str,
+        label: str,
+        value: Any,
+        interpretation: str,
+        tone: str = "neutral",
+    ) -> None:
+        if value is not None:
+            rows.append((evidence_id, label, value, interpretation, tone))
+
+    append(
+        "fundamental.report_date",
+        "最新已披露报告期",
+        fundamental.get("report_date"),
+        "报告期、公告日和更新日均不晚于分析交易日。",
+    )
+    append(
+        "fundamental.weighted_roe_pct",
+        "加权净资产收益率",
+        fundamental.get("weighted_roe_pct"),
+        "第三方规范化的已披露百分比，仅用于研究比较。",
+    )
+    append(
+        "fundamental.revenue_yoy_pct",
+        "营业收入同比",
+        fundamental.get("revenue_yoy_pct"),
+        "正负方向用于基本面角色判断，不外推未来增长。",
+    )
+    append(
+        "fundamental.net_profit_yoy_pct",
+        "归母净利润同比",
+        fundamental.get("net_profit_yoy_pct"),
+        "正负方向用于基本面角色判断，不外推未来利润。",
+    )
+    append(
+        "fundamental.operating_cash_flow_per_share",
+        "每股经营现金流",
+        fundamental.get("operating_cash_flow_per_share"),
+        "已披露期间值，不替代现金流量表复核。",
+    )
+    append(
+        "valuation.pe_ttm",
+        "市盈率 TTM",
+        fundamental.get("pe_ttm"),
+        "当前第三方估值快照；单独数值不判断高低。",
+    )
+    append(
+        "valuation.pb",
+        "市净率",
+        fundamental.get("pb"),
+        "当前第三方估值快照；单独数值不判断高低。",
+    )
+    percentiles = fundamental.get("valuation_percentiles")
+    if not isinstance(percentiles, dict):
+        percentiles = {}
+    percentile_labels = {
+        "pe_ttm": "市盈率历史分位",
+        "pb": "市净率历史分位",
+        "cash_flow": "市现率历史分位",
+        "ps_ttm": "市销率历史分位",
+    }
+    for key, label in percentile_labels.items():
+        append(
+            f"valuation.percentile.{key}",
+            label,
+            percentiles.get(key),
+            "基于至少 120 个正有限历史样本的经验分位，越高表示相对历史越高。",
+        )
+    return rows
+
+
+def _fundamental_provenance(
+    fundamental: dict[str, Any], *, valuation: bool
+) -> dict[str, Any] | None:
+    if valuation:
+        value = fundamental.get("valuation_provenance")
+        return dict(value) if isinstance(value, dict) else None
+    financial = fundamental.get("fundamental_provenance")
+    valuation_value = fundamental.get("valuation_provenance")
+    if not isinstance(financial, dict) and not isinstance(valuation_value, dict):
+        return None
+    return {
+        "fundamentals": dict(financial) if isinstance(financial, dict) else None,
+        "valuation": (
+            dict(valuation_value) if isinstance(valuation_value, dict) else None
+        ),
+    }
+
+
+def _fundamental_summary(fundamental: dict[str, Any]) -> str:
+    available_parts = []
+    if fundamental.get("fundamentals_available") is True:
+        available_parts.append("点时财务")
+    if fundamental.get("valuation_available") is True:
+        available_parts.append("估值")
+    scope = "和".join(available_parts) or "基本面"
+    reason = fundamental.get("abstention_reason")
+    if reason == "insufficient_directional_evidence":
+        return f"已绑定同日{scope}证据，但方向性指标不足两个，基本面角色明确弃权。"
+    if reason == "conflicting_directional_evidence":
+        return (
+            f"已绑定同日{scope}证据，但支持与不利信号并存，基本面角色明确弃权。"
+        )
+    stance = fundamental.get("stance")
+    label = "偏支持" if stance == "SUPPORTIVE" else "偏不利"
+    return (
+        f"同日{scope}证据{label}；结论引用已登记证据，且不改变确定性交易门禁。"
+    )
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    return round(result, 8) if math.isfinite(result) else None
+
+
+def _bounded_date_text(value: Any) -> str | None:
+    if not isinstance(value, str) or len(value) != 10:
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    if not 1900 <= parsed.year <= 2200:
+        return None
+    return value
 
 
 def _diagnosis_summary(

@@ -2,7 +2,7 @@
 
 ## Release Baseline
 
-`v0.15.0` is the current public release. It adds a credentialed Tushare daily reference route, stock-only point-in-time fundamentals, stock-only historical valuation percentiles, official SSE/CNINFO disclosure metadata, and immutable public Level-1 five-level order-book snapshots to the existing completed-session market review, research, paper accounting, optional private R2 backup, broker-readiness controls, historical minute evidence, third-party news evidence, and HMAC webhook delivery. It does not provide Tick or Level-2 data, a complete sentiment model, complete official coverage for every ETF/market, a working live-broker adapter, or automatic real-money execution.
+`v0.16.0` is the current public release. It adds immutable per-call model governance, bounded retry/concurrency/Token/cost controls, a validated per-user enhancement cache, and exact-date stock fundamental/valuation evidence in the research-only assistant. The existing credentialed Tushare daily reference route, official SSE/CNINFO disclosure metadata, public Level-1 five-level snapshots, completed-session market review, research, paper accounting, optional private R2 backup, broker-readiness controls, historical minute evidence, third-party news evidence, and HMAC webhook delivery remain intact. It does not provide Tick or Level-2 data, a complete sentiment model, complete official coverage for every ETF/market, multi-model judging, a working live-broker adapter, or automatic real-money execution.
 
 ## Register
 

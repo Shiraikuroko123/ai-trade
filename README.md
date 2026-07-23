@@ -7,9 +7,9 @@
 
 [架构](docs/ARCHITECTURE.md) · [Docker 部署](docs/DOCKER_DEPLOYMENT.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-`v0.15.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页提供九类彼此隔离的证据，包括股票时点基本面、股票历史估值分位、官方披露、第三方新闻和公开 Level-1 五档盘口；这些证据仍固定为 `research_only`。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 或可选 Tushare 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+`v0.16.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页提供九类彼此隔离的证据，包括股票时点基本面、股票历史估值分位、官方披露、第三方新闻和公开 Level-1 五档盘口；这些证据仍固定为 `research_only`。AI K 线助理现在按同一交易日消费已有的股票基本面与估值记录，并为每次可选模型调用保存不可变治理审计、预算和缓存状态；确定性结论与执行权限边界不变。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 或可选 Tushare 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
-本 README 描述 `v0.15.0` 公开发行版及其安全边界。Tushare 独立核对、股票时点基本面、官方披露、股票历史估值分位、公开 Level-1 五档盘口，以及已有的研究监控、归档、市场情报和 Webhook 均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
+本 README 描述 `v0.16.0` 公开发行版及其安全边界。AI 调用治理、股票基本面/估值助理接线、Tushare 独立核对、官方披露、公开 Level-1 五档盘口，以及已有的研究监控、归档、市场情报和 Webhook 均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
 
 系统已经贯通以下流程：
 
@@ -45,13 +45,13 @@
 
 ## 快速开始
 
-推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.15.0) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
+推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.16.0) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
 
 ```powershell
-New-Item -ItemType Directory -Force .\AI-Trade-v0.15.0 | Out-Null
-Set-Location .\AI-Trade-v0.15.0
+New-Item -ItemType Directory -Force .\AI-Trade-v0.16.0 | Out-Null
+Set-Location .\AI-Trade-v0.16.0
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.15.0/ai_trade-0.15.0-py3-none-any.whl"
+.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.16.0/ai_trade-0.16.0-py3-none-any.whl"
 .\.venv\Scripts\ai-trade.exe init --directory .\workspace
 Set-Location .\workspace
 ..\.venv\Scripts\ai-trade.exe download --force
@@ -239,7 +239,7 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 ## 收盘市场情报
 
-`v0.15.0` 的左侧 **市场情报** 视图包含九个独立证据集：历史分钟行情、当前估值与股票历史分位、股票时点基本面、官方披露、第三方新闻与公告、Level-1 五档盘口、龙虎榜、市场宽度与板块排名、板块资金流。每次刷新都校验日期或截止时间、字段、有限数值、来源响应指纹和规范化证据指纹，再在各自的 `state/` 子目录追加不可覆盖的本地 revision。相同规范化证据会幂等复用，证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
+`v0.16.0` 的左侧 **市场情报** 视图包含九个独立证据集：历史分钟行情、当前估值与股票历史分位、股票时点基本面、官方披露、第三方新闻与公告、Level-1 五档盘口、龙虎榜、市场宽度与板块排名、板块资金流。每次刷新都校验日期或截止时间、字段、有限数值、来源响应指纹和规范化证据指纹，再在各自的 `state/` 子目录追加不可覆盖的本地 revision。相同规范化证据会幂等复用，证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
 
 基本面和历史估值分位仅对 `STOCK` 开放：基本面同时按公告日、更新日过滤未来信息，估值分位至少需要 120 个正值有限历史观测。官方披露只归档 SSE/CNINFO 元数据和 PDF 链接，不归档 PDF 正文；上海 ETF、北京市场及主数据缺口会显式报告。第三方新闻保持独立来源标识和低置信度 `lexicon-v1` 注释，不被冒充为官方披露或完整情绪模型。五档盘口按公开 Level-1 快照保留买卖五档、价差、深度不平衡以及手数到股数的换算，不宣称 Tick、Level-2、可回放订单流或交易所认证。
 
@@ -266,7 +266,7 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 完成上面的启动步骤后，打开命令打印的回环地址，在左侧导航选择 **AI 分析**。默认本地模式不需要 API Key；选择标的和 **回看交易日** 后即可对已完成 K 线做研究复核。助理结论只有 `NO_ACTION`、`WATCH`、`REVIEW_CANDIDATE` 和 `REDUCE_RISK`：它们都不是买卖指令，其中 `REDUCE_RISK` 也只表示需要人工检查风险，不表示自动卖出或调整仓位。
 
-`v0.15.0` 会为每份新分析生成确定性的 **视角冲突审计**。页面把技术面、风险面与策略门禁之间的实质分歧，和助理尚未消费基本面证据、尚无完整情绪数据造成的覆盖缺口分别列出，并显示本地确定性结论、模型建议、最终研究结论和权限守卫结果。市场情报中的股票基本面已经可供人工审阅，但尚未接入助理的基本面角色，所以该角色仍明确为 `UNAVAILABLE`。模型试图放宽本地结论时会被阻断并留下文字记录；这不是多模型并行或投票，也不会生成订单、改变持仓或取得交易权限。
+`v0.16.0` 会为每份新分析生成确定性的 **视角冲突审计**。页面把技术面、风险面、基本面/估值面与策略门禁之间的实质分歧，和尚无完整情绪数据造成的覆盖缺口分别列出，并显示本地确定性结论、模型建议、最终研究结论和权限守卫结果。股票基本面角色只读取最终 K 线交易日已经落盘的不可变记录，至少需要两个同向可解释信号；数据稀疏或多空冲突时明确弃权，ETF 和 `provisional` 估值不进入结论。模型试图放宽本地结论时会被阻断并留下文字记录；这不是多模型并行或投票，也不会生成订单、改变持仓或取得交易权限。
 
 需要使用自己的 OpenAI 兼容模型端点时，在 PowerShell 运行：
 
@@ -276,7 +276,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1
 .\.venv\Scripts\python.exe -m ai_trade.cli serve --owner-local
 ```
 
-脚本默认 Base URL 为 `https://api.openai.com/v1`，交互设置当前 Windows 用户的 `AI_TRADE_AI_BASE_URL`、`AI_TRADE_AI_MODEL`、`AI_TRADE_AI_API_KEY` 和 `AI_TRADE_AI_TIMEOUT_SECONDS`。Key 通过 `SecureString` 输入，不回显，也不会写入仓库配置、助理历史、R2 快照或发行包。远程地址必须使用 HTTPS；HTTP 只允许本机 loopback。设置后必须重启工作台，让新进程读取用户环境变量。
+脚本默认 Base URL 为 `https://api.openai.com/v1`，交互设置当前 Windows 用户的端点、模型、Key、超时，以及重试、并发、单次 Token 和 UTC 每日 Token 上限。Key 通过 `SecureString` 输入，不回显，也不会写入仓库配置、助理历史、R2 快照或发行包。远程地址必须使用 HTTPS；HTTP 只允许本机 loopback。每次请求和每次重试都写入不含原始提示词/模型原文的不可变调用审计；经过结构校验的公开增强结果可按用户缓存复用。设置后必须重启工作台，让新进程读取用户环境变量。
 
 关闭模型增强模式并继续使用零 Key 本地模式：
 
@@ -288,7 +288,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
 
 ## 研究日志与日报/周报归档
 
-本节的持久化日报/周报、生成接口和计划任务已包含在 `v0.15.0` wheel 中。
+本节的持久化日报/周报、生成接口和计划任务已包含在 `v0.16.0` wheel 中。
 
 **研究** 页面中的“研究日志”用于记录人工观察、研究理由和复盘结论。每条记录按用户隔离，带有研究日期、记录类型、可选证券、标题、笔记、观点和确信度；服务器会自动绑定登录用户和记录人，并在写入时保存可重算的内容指纹、行情快照日期/指纹以及当前策略候选状态。行情或策略证据暂不可用时会显式记录 `available=false`，不会用空值冒充已验证证据。
 
@@ -547,8 +547,8 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Research Archive Daily' -Confirm:$f
 .\.venv\Scripts\python.exe -m compileall -q src tests scripts adapters/qmt/src
 node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m pip install build==1.2.2.post1
-.\.venv\Scripts\python.exe -m build
-.\.venv\Scripts\python.exe .\scripts\verify_distribution.py .\dist
+.\.venv\Scripts\python.exe -m build --outdir .\dist\release-0.16.0
+.\.venv\Scripts\python.exe .\scripts\verify_distribution.py .\dist\release-0.16.0
 .\.venv\Scripts\python.exe -m ai_trade.cli doctor
 .\.venv\Scripts\python.exe -m ai_trade.cli validate
 .\.venv\Scripts\python.exe -m ai_trade.cli live-check

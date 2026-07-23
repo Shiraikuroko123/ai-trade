@@ -3392,6 +3392,7 @@ function renderAssistant(data) {
     status.model_configured ?? status.configured ?? status.model?.configured
   );
   const modelName = status.model_name || status.model?.name || status.model || "未配置";
+  const governance = status.governance || {};
 
   return `
     <div class="page-stack">
@@ -3421,6 +3422,7 @@ function renderAssistant(data) {
         <div class="assistant-control-meta">
           ${statusChip(modelConfigured ? `模型已就绪 · ${modelName}` : "本地模式可用", modelConfigured ? "success" : "neutral")}
           <span>只读研究权限 · 不生成订单</span>
+          ${assistantGovernanceLimits(governance)}
         </div>
       </section>
 
@@ -3489,6 +3491,8 @@ function assistantResultMarkup(result) {
       ${panelHeader("研究视角", assistantPerspectiveSummary(result.perspectives))}
       ${assistantPerspectivesMarkup(result.perspectives)}
     </section>
+
+    ${assistantModelCallPanel(result.mode, validation.model_call)}
 
     ${assistantConflictAuditPanel(result.conflict_audit)}
 
@@ -3759,6 +3763,23 @@ function assistantEvidenceValue(evidenceId, value) {
     return formatPercent(value, evidenceId === "momentum.return20");
   }
   if (evidenceId === "momentum.rsi14") return formatNumber(value, 1);
+  if ([
+    "fundamental.weighted_roe_pct",
+    "fundamental.revenue_yoy_pct",
+    "fundamental.net_profit_yoy_pct",
+  ].includes(evidenceId)) {
+    return `${formatNumber(value, 2)}%`;
+  }
+  if (evidenceId.startsWith("valuation.percentile.")) {
+    return `${formatNumber(value, 1)} 百分位`;
+  }
+  if ([
+    "fundamental.operating_cash_flow_per_share",
+    "valuation.pe_ttm",
+    "valuation.pb",
+  ].includes(evidenceId)) {
+    return formatNumber(value, 3);
+  }
   if (evidenceId === "structure.last_candle") {
     return { BULLISH: "阳线", BEARISH: "阴线", DOJI: "十字", FLAT: "平盘" }[value] || assistantTerm(value);
   }
@@ -3766,6 +3787,59 @@ function assistantEvidenceValue(evidenceId, value) {
     return typeof value === "number" ? formatNumber(value, 3) : assistantTerm(value);
   }
   return String(value);
+}
+
+function assistantGovernanceLimits(governance) {
+  const perCall = finite(governance?.max_tokens_per_call);
+  const daily = finite(governance?.daily_token_budget);
+  if (perCall === null || daily === null) return "";
+  return `<span>Token 上限：单次 ${formatInteger(perCall)} · 每日 ${formatInteger(daily)}</span>`;
+}
+
+function assistantModelCallPanel(mode, call) {
+  if (mode !== "model") return "";
+  if (!call || typeof call !== "object") {
+    return `<section class="panel assistant-call-panel" aria-label="模型调用审计">
+      ${panelHeader("模型调用审计", "本次没有可用的调用审计摘要")}
+      <div class="empty-state compact-empty" role="status"><strong>模型调用已关闭</strong><p>本地确定性结论仍然有效；审计存储或治理层不可用时不会继续发送模型请求。</p></div>
+    </section>`;
+  }
+  const budget = call.budget || {};
+  const usage = call.usage || {};
+  const dailyLimit = finite(budget.daily_token_limit);
+  const usedAfter = finite(budget.tokens_used_after);
+  const remaining = dailyLimit === null || usedAfter === null
+    ? null
+    : Math.max(0, dailyLimit - usedAfter);
+  const cost = finite(call.estimated_cost_usd);
+  const status = assistantModelCallStatus(call.status, call.error_code);
+  const cacheLabel = call.cache_hit ? "命中 · 未重复计费" : "未命中";
+  const costLabel = budget.cost_accounting_available
+    ? (cost === null ? "—" : `$${formatNumber(cost, 6)}`)
+    : "未配置价格";
+  return `<section class="panel assistant-call-panel" aria-label="模型调用审计">
+    ${panelHeader("模型调用审计", `${status.label} · UTC 预算日 ${escapeHtml(budget.date_utc || "—")}`)}
+    <dl class="assistant-call-grid">
+      <div><dt>调用状态</dt><dd>${statusChip(status.label, status.kind)}</dd></div>
+      <div><dt>缓存</dt><dd>${escapeHtml(cacheLabel)}</dd></div>
+      <div><dt>尝试 / 重试</dt><dd>${formatInteger(call.attempt_count || 0)} / ${formatInteger(call.retry_count || 0)}</dd></div>
+      <div><dt>实际 Token</dt><dd>${formatInteger(usage.total_tokens || 0)}</dd></div>
+      <div><dt>每日剩余</dt><dd>${remaining === null ? "—" : formatInteger(remaining)}</dd></div>
+      <div><dt>估算费用</dt><dd>${escapeHtml(costLabel)}</dd></div>
+      <div><dt>总耗时</dt><dd>${formatInteger(call.latency_ms || 0)} ms</dd></div>
+      <div><dt>审计指纹</dt><dd><code>${escapeHtml(String(call.audit_record_sha256 || "—").slice(0, 16))}</code></dd></div>
+    </dl>
+  </section>`;
+}
+
+function assistantModelCallStatus(value, errorCode) {
+  if (value === "success") return { label: "完成", kind: "success" };
+  if (value === "cache_hit") return { label: "缓存复用", kind: "info" };
+  if (value === "denied") return { label: "预算拒绝", kind: "warning" };
+  if (value === "failed") {
+    return { label: errorCode ? `失败 · ${errorCode}` : "失败", kind: "danger" };
+  }
+  return { label: value || "未知", kind: "neutral" };
 }
 
 function assistantPathOutcome(value) {

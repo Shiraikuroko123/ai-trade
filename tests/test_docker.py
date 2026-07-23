@@ -71,6 +71,20 @@ class DockerDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("qwerty123", self.example)
         self.assertNotIn("sk-", self.example)
 
+    def test_model_governance_limits_are_explicit(self):
+        for name in (
+            "AI_TRADE_AI_MAX_RETRIES",
+            "AI_TRADE_AI_MAX_CONCURRENT_CALLS",
+            "AI_TRADE_AI_MAX_TOKENS_PER_CALL",
+            "AI_TRADE_AI_DAILY_TOKEN_BUDGET",
+            "AI_TRADE_AI_INPUT_COST_PER_MILLION_USD",
+            "AI_TRADE_AI_OUTPUT_COST_PER_MILLION_USD",
+            "AI_TRADE_AI_DAILY_COST_BUDGET_USD",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, self.compose)
+                self.assertIn(name, self.example)
+
 
 if __name__ == "__main__":
     unittest.main()

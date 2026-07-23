@@ -73,8 +73,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.15.0-five-priority-gaps", self.html)
-        self.assertIn("app.js?v=0.15.0-five-priority-gaps", self.html)
+        self.assertIn("app.css?v=0.16.0-ai-governance", self.html)
+        self.assertIn("app.js?v=0.16.0-ai-governance", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -191,6 +191,17 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("缺失数据不会被模型补写", self.javascript)
         self.assertIn("perspective-ledger", self.css)
         self.assertIn("perspective-unavailable", self.css)
+
+    def test_assistant_surfaces_governance_and_call_audit(self):
+        self.assertIn("function assistantGovernanceLimits", self.javascript)
+        self.assertIn("function assistantModelCallPanel", self.javascript)
+        self.assertIn("模型调用审计", self.javascript)
+        self.assertIn("Token 上限：单次", self.javascript)
+        self.assertIn("每日剩余", self.javascript)
+        self.assertIn("命中 · 未重复计费", self.javascript)
+        self.assertIn("fundamental.weighted_roe_pct", self.javascript)
+        self.assertIn("valuation.percentile.", self.javascript)
+        self.assertIn("assistant-call-grid", self.css)
 
     def test_perspective_conflict_audit_is_textual_auditable_and_responsive(self):
         self.assertIn("function assistantConflictAuditMarkup", self.javascript)

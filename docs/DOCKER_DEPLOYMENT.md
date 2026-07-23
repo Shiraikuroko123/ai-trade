@@ -1,6 +1,6 @@
 # Docker 部署
 
-Docker 方案用于从源码启动 `v0.15.0` 工作台。它不改变策略、回测、风控、
+Docker 方案用于从源码启动 `v0.16.0` 工作台。它不改变策略、回测、风控、
 模拟账本或券商权限，也不会把源码部署能力伪装成发行 wheel 中不存在的远程托管服务。
 
 ## 安全边界
@@ -87,6 +87,13 @@ Tushare Token。`AI_TRADE_TUSHARE_TOKEN` 仅从容器环境读取，不写入配
 证据或日志；Tushare 始终是 `reference_only`，不能成为策略主源或回退源。
 外部 Webhook 必须使用 HTTPS，
 密钥至少 16 个 UTF-8 字节；HTTP 只允许容器可达的回环测试端点。
+
+模型治理变量与 Windows 本地模式一致：`AI_TRADE_AI_MAX_RETRIES`、
+`AI_TRADE_AI_MAX_CONCURRENT_CALLS`、`AI_TRADE_AI_MAX_TOKENS_PER_CALL` 和
+`AI_TRADE_AI_DAILY_TOKEN_BUDGET` 分别控制重试、进程并发、单次保守计量和
+UTC 日预算。可同时填写输入/输出每百万 Token 的 USD 价格以显示费用估算；
+只有同时配置两项价格后才能设置每日 USD 上限。审计与模型缓存写入持久化
+`state` 卷，不进入镜像或 R2。
 
 ```powershell
 docker compose --env-file .\.env.docker up -d --force-recreate

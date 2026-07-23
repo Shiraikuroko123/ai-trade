@@ -150,3 +150,25 @@ Public five-level depth is stored in its own `order_book` evidence chain with
 lot/share units and observation time.
 These third-party feeds cannot replace licensed Tick, full-depth, Level-2, or
 execution data.
+
+## Assistant consumption boundary
+
+The `v0.16.0` assistant does not register another provider and never fetches
+network data during analysis. For a configured `STOCK`, it queries the existing
+fundamental and valuation stores using the exact final completed K-line date.
+Only `current` or `partial` evidence is eligible; a `provisional` valuation is
+excluded to prevent pre-close observations from entering a completed-bar
+review. ETFs and other non-company instruments remain unsupported.
+
+Eligible financial fields, PE/PB values, and PE/PB/cash-flow/PS empirical
+percentiles are copied into the analysis evidence ledger with stable evidence
+IDs and their immutable record fingerprints are bound into the assistant
+snapshot. Missing, sparse, or conflicting evidence produces an explicit
+abstention. It is never filled from model prose and never changes execution
+authority.
+
+Both stores currently normalize Eastmoney data. Consuming them together does
+not make them independent sources and must not be presented as cross-source
+confirmation. Tushare remains independent only for the bounded daily-bar
+reference route described above; no Tushare fundamental/valuation comparison
+is implemented in this release.

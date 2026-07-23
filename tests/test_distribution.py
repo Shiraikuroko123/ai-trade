@@ -83,6 +83,7 @@ class DistributionVerificationTests(unittest.TestCase):
             "__init__.py",
             "engine.py",
             "features.py",
+            "governance.py",
             "provider.py",
             "store.py",
         ):

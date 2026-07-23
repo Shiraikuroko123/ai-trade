@@ -1,6 +1,6 @@
 # Market Breadth and Board Rankings
 
-This document describes the `v0.15.0` `sector_breadth` evidence dataset. It is a
+This document describes the `v0.16.0` `sector_breadth` evidence dataset. It is a
 closing research view, not a real-time quote service, industry
 classification license, sentiment score, strategy signal, or order source.
 

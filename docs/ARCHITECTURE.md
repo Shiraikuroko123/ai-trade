@@ -271,13 +271,15 @@ validated completed K-line snapshot
                   X  no order intent, broker call, or gate mutation
 ```
 
-The assistant is a parallel research projection from the validated market snapshot, not a stage in the order pipeline. Local mode requires no API key. Model-enhanced mode uses only the current Windows user's `AI_TRADE_AI_BASE_URL`, `AI_TRADE_AI_MODEL`, `AI_TRADE_AI_API_KEY`, and `AI_TRADE_AI_TIMEOUT_SECONDS`; a remote Base URL must use HTTPS, while plain HTTP is accepted only on a loopback host. The API key is not part of an assistant request payload, result record, report, cloud snapshot, browser response, or release artifact except where the upstream protocol carries it as an authentication header.
+The assistant is a parallel research projection from the validated market snapshot, not a stage in the order pipeline. Local mode requires no API key. Model-enhanced mode uses environment-configured OpenAI-compatible endpoint, model, credential, timeout, retry, concurrency, Token, and optional cost limits; a remote Base URL must use HTTPS, while plain HTTP is accepted only on a loopback host. The API key is not part of an assistant request payload, result record, report, cloud snapshot, browser response, or release artifact except where the upstream protocol carries it as an authentication header.
 
 Assistant conclusions are a closed enum. `REVIEW_CANDIDATE` requests human research review, and `REDUCE_RISK` requests human exposure review; neither is an order side or approval. Enforcement outside the model fixes `authority="research_only"` and prevents assistant data from creating an order intent, target position, entry/exit price, paper-promotion fact, sandbox reconciliation, live authorization, or changed kill-switch state. Provider failures, stale inputs, malformed responses, and unsupported conclusions fail closed.
 
-Every new assistant result also contains `deterministic-perspective-audit-v1`. The audit compares the technical, risk, and strategy-gate stances, records unavailable fundamental and sentiment views as coverage gaps rather than conflicts, and records a blocked model relaxation as a separate authority-guard conflict. The validator reconstructs the audit from the saved perspectives and assessment, then checks that the deterministic, proposed, and effective conclusions obey the same strictness ordering used by the model boundary. This is a deterministic evidence check, not multi-model execution, voting, or model-derived authorization.
+Every new assistant result also contains `deterministic-perspective-audit-v1`. The audit compares technical, risk, exact-date stock fundamental/valuation, and strategy-gate stances, records unavailable sentiment or unsupported/sparse fundamentals as coverage or abstention rather than invented confidence, and records a blocked model relaxation as a separate authority-guard conflict. The validator reconstructs the audit from the saved perspectives and assessment, then checks that the deterministic, proposed, and effective conclusions obey the same strictness ordering used by the model boundary. This is a deterministic evidence check, not multi-model execution, voting, or model-derived authorization.
 
-Per-user assistant records are stored under `state/assistant/`. The repository-wide `state/*` ignore rule excludes them from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history is therefore local operational state rather than a portable report or cloud backup.
+Before model I/O, `ModelCallGovernance` performs per-user single-call and UTC-day Token/cost checks under a cross-process lock and acquires a bounded process semaphore. Each logical call, cache hit, denial, and failed/successful HTTP attempt is committed as immutable hash-bound evidence under `state/assistant_calls/`; normalized validated public enhancements use a separate immutable per-user cache under `state/assistant_model_cache/`. Audit storage failure or tampering fails closed for later model work. Raw prompts, raw provider responses, hidden reasoning, endpoint URLs, and credentials are not stored.
+
+Per-user assistant results, call audits, and model cache records are stored under `state/assistant/`, `state/assistant_calls/`, and `state/assistant_model_cache/`. The repository-wide `state/*` ignore rule excludes them from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history and governance evidence are therefore local operational state rather than a portable report or cloud backup.
 
 ## Append-only Research Journal Boundary
 
@@ -376,7 +378,7 @@ research evidence.
 
 ### Persistent digest ledger
 
-This surface is included in the public `v0.15.0` wheel. It remains derivative
+This surface is included in the public `v0.16.0` wheel. It remains derivative
 research evidence and does not replace the authoritative paper ledger,
 reports, or journal.
 

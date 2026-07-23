@@ -9,7 +9,14 @@ $names = @(
     "AI_TRADE_AI_BASE_URL",
     "AI_TRADE_AI_MODEL",
     "AI_TRADE_AI_API_KEY",
-    "AI_TRADE_AI_TIMEOUT_SECONDS"
+    "AI_TRADE_AI_TIMEOUT_SECONDS",
+    "AI_TRADE_AI_MAX_RETRIES",
+    "AI_TRADE_AI_MAX_CONCURRENT_CALLS",
+    "AI_TRADE_AI_MAX_TOKENS_PER_CALL",
+    "AI_TRADE_AI_DAILY_TOKEN_BUDGET",
+    "AI_TRADE_AI_INPUT_COST_PER_MILLION_USD",
+    "AI_TRADE_AI_OUTPUT_COST_PER_MILLION_USD",
+    "AI_TRADE_AI_DAILY_COST_BUDGET_USD"
 )
 
 function Test-LoopbackHost([Uri]$Uri) {
@@ -87,6 +94,30 @@ try {
         throw "Timeout seconds must be an integer from 1 through 120."
     }
 
+    $maxRetriesInput = (Read-Host "Maximum retries [1]").Trim()
+    $maxRetries = 0
+    if (-not [int]::TryParse($(if ($maxRetriesInput) { $maxRetriesInput } else { "1" }), [ref]$maxRetries) -or $maxRetries -lt 0 -or $maxRetries -gt 3) {
+        throw "Maximum retries must be an integer from 0 through 3."
+    }
+
+    $maxConcurrentInput = (Read-Host "Maximum concurrent calls [1]").Trim()
+    $maxConcurrent = 0
+    if (-not [int]::TryParse($(if ($maxConcurrentInput) { $maxConcurrentInput } else { "1" }), [ref]$maxConcurrent) -or $maxConcurrent -lt 1 -or $maxConcurrent -gt 8) {
+        throw "Maximum concurrent calls must be an integer from 1 through 8."
+    }
+
+    $maxCallTokensInput = (Read-Host "Maximum accounted tokens per call [50000]").Trim()
+    $maxCallTokens = 0
+    if (-not [int]::TryParse($(if ($maxCallTokensInput) { $maxCallTokensInput } else { "50000" }), [ref]$maxCallTokens) -or $maxCallTokens -lt 2000 -or $maxCallTokens -gt 10000000) {
+        throw "Maximum accounted tokens per call must be from 2000 through 10000000."
+    }
+
+    $dailyTokensInput = (Read-Host "Daily accounted token budget in UTC [100000]").Trim()
+    $dailyTokens = 0
+    if (-not [int]::TryParse($(if ($dailyTokensInput) { $dailyTokensInput } else { "100000" }), [ref]$dailyTokens) -or $dailyTokens -lt 1000 -or $dailyTokens -gt 100000000) {
+        throw "Daily accounted token budget must be from 1000 through 100000000."
+    }
+
     $secureKey = Read-Host "API key" -AsSecureString
     $secretPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
     $apiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($secretPointer)
@@ -102,6 +133,10 @@ try {
         "AI_TRADE_AI_MODEL" = $model
         "AI_TRADE_AI_API_KEY" = $apiKey
         "AI_TRADE_AI_TIMEOUT_SECONDS" = [string]$timeoutSeconds
+        "AI_TRADE_AI_MAX_RETRIES" = [string]$maxRetries
+        "AI_TRADE_AI_MAX_CONCURRENT_CALLS" = [string]$maxConcurrent
+        "AI_TRADE_AI_MAX_TOKENS_PER_CALL" = [string]$maxCallTokens
+        "AI_TRADE_AI_DAILY_TOKEN_BUDGET" = [string]$dailyTokens
     }
     $previousUser = @{}
     $previousProcess = @{}
@@ -128,6 +163,7 @@ try {
     Write-Host "Endpoint: $baseUrl"
     Write-Host "Model: $model"
     Write-Host "Timeout: $timeoutSeconds seconds"
+    Write-Host "Governance: $maxRetries retries, $maxConcurrent concurrent call(s), $maxCallTokens tokens/call, $dailyTokens tokens/UTC day"
     Write-Host "Restart the AI Trade workstation before using model mode."
 }
 finally {
