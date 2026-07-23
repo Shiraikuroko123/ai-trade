@@ -20,6 +20,11 @@ from ..json_utils import load_unique_json, loads_unique_json
 from ..models import Instrument
 from .eastmoney import REQUEST_HEADERS, _open_request, _proxy_mode, completed_session_cutoff
 from .evidence_io import atomic_create_json, evidence_store_lock
+from .tushare_reference import (
+    TushareReferenceError,
+    fetch_valuation_reference,
+    token_configured,
+)
 
 
 SCHEMA_VERSION = 1
@@ -45,6 +50,8 @@ _REVISION_FILE = re.compile(r"revision_(\d{8})\.json\Z")
 _REVISION_ID = re.compile(r"valuation_[0-9a-f]{32}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 _AUTHORITY = {"research_only": True, "execution_authorized": False}
+_REFERENCE_METRICS = ("pe_ttm", "pb", "ps_ttm")
+_REFERENCE_TOLERANCE = {"pe_ttm": 0.05, "pb": 0.02, "ps_ttm": 0.03}
 _FIELDS = (
     "f43",
     "f57",
@@ -124,6 +131,7 @@ def refresh_valuation(
     errors: list[dict[str, str]] = []
     response_hashes: list[str] = []
     history_responses: list[dict[str, Any]] = []
+    use_reference = token_configured()
     for instrument in selected_instruments:
         try:
             payload, digest, response_bytes = _download(config, instrument)
@@ -156,11 +164,44 @@ def refresh_valuation(
                             "message": str(exc)[:300],
                         }
                     )
+                independent_check = _unavailable_reference_check(
+                    "token_not_configured"
+                    if not use_reference
+                    else "reference_not_attempted"
+                )
+                if use_reference:
+                    try:
+                        reference = fetch_valuation_reference(
+                            config, instrument, trade_date=cutoff
+                        )
+                        independent_check = _compare_valuation_reference(
+                            record, reference
+                        )
+                    except (
+                        OSError,
+                        TushareReferenceError,
+                        TypeError,
+                        ValueError,
+                    ) as exc:
+                        independent_check = _unavailable_reference_check(
+                            "reference_provider_error", str(exc)[:300]
+                        )
+                        errors.append(
+                            {
+                                "symbol": instrument.symbol,
+                                "code": "valuation_reference_provider_error",
+                                "message": str(exc)[:300],
+                            }
+                        )
             else:
                 record["valuation_history"] = _unavailable_history(
                     "instrument_type_not_supported",
                     "Historical valuation percentiles apply only to STOCK instruments.",
                 )
+                independent_check = _unavailable_reference_check(
+                    "instrument_type_not_supported"
+                )
+            record["independent_check"] = independent_check
             records.append(record)
         except (ValuationProviderError, OSError, ValueError) as exc:
             errors.append(
@@ -193,6 +234,8 @@ def refresh_valuation(
             "history_response_sha256": _fingerprint(history_responses),
             "history_response_count": len(history_responses),
             "certification": "not_exchange_certified",
+            "independent_provider": "tushare" if use_reference else None,
+            "independent_check_role": "reference_only_not_primary_data",
             "scaling": {
                 "price": "f43 / 100",
                 "pe_ttm": "f162 / 100",
@@ -231,6 +274,13 @@ def refresh_valuation(
                 == "instrument_type_not_supported"
                 for item in records
             ),
+            "independent_check": {
+                status: sum(
+                    item.get("independent_check", {}).get("status") == status
+                    for item in records
+                )
+                for status in ("confirmed", "conflict", "insufficient", "unavailable")
+            },
         },
         "authority": dict(_AUTHORITY),
         "errors": errors,
@@ -242,6 +292,18 @@ def refresh_valuation(
             {
                 "code": "stock_only_history",
                 "message": "Historical PE/PB/cash-flow valuation percentiles are calculated only for STOCK instruments with sufficient positive observations.",
+            },
+            {
+                "code": (
+                    "tushare_reference_enabled"
+                    if use_reference
+                    else "tushare_reference_not_configured"
+                ),
+                "message": (
+                    "Tushare daily_basic reconciliation was attempted for eligible stock records."
+                    if use_reference
+                    else "Set AI_TRADE_TUSHARE_TOKEN to run the independent valuation reference check."
+                ),
             },
         ],
     }
@@ -765,6 +827,9 @@ def _validate_draft(value: Mapping[str, Any]) -> None:
         history = item.get("valuation_history")
         if history is not None:
             _validate_history_summary(history)
+        check = item.get("independent_check")
+        if check is not None:
+            _validate_reference_check(check)
 
 
 def _validate_history_summary(value: Any) -> None:
@@ -815,6 +880,150 @@ def _validate_history_summary(value: Any) -> None:
             or not 0 <= float(percentile) <= 100
         ):
             raise RuntimeError("valuation history metric percentile is invalid")
+
+
+def _compare_valuation_reference(
+    primary: Mapping[str, Any], reference: Mapping[str, Any]
+) -> dict[str, Any]:
+    history = primary.get("valuation_history")
+    metrics = history.get("metrics") if isinstance(history, dict) else {}
+    primary_values = {
+        "pe_ttm": primary.get("pe_ttm"),
+        "pb": primary.get("pb"),
+        "ps_ttm": (
+            metrics.get("ps_ttm", {}).get("current")
+            if isinstance(metrics, dict)
+            and isinstance(metrics.get("ps_ttm"), dict)
+            else None
+        ),
+    }
+    fields: list[dict[str, Any]] = []
+    for name in _REFERENCE_METRICS:
+        primary_value = primary_values.get(name)
+        reference_value = reference.get(name)
+        if primary_value is None or reference_value is None:
+            continue
+        primary_number = float(primary_value)
+        reference_number = float(reference_value)
+        allowed_difference = max(
+            _REFERENCE_TOLERANCE[name],
+            0.02 * max(abs(primary_number), abs(reference_number)),
+        )
+        difference = abs(primary_number - reference_number)
+        fields.append(
+            {
+                "field": name,
+                "primary": primary_number,
+                "reference": reference_number,
+                "absolute_difference": round(difference, 8),
+                "allowed_difference": round(allowed_difference, 8),
+                "status": "match" if difference <= allowed_difference else "conflict",
+            }
+        )
+    conflicts = sum(item["status"] == "conflict" for item in fields)
+    status = (
+        "conflict"
+        if conflicts
+        else "confirmed"
+        if len(fields) >= 2
+        else "insufficient"
+    )
+    return {
+        "provider": "tushare",
+        "status": status,
+        "reason": None if status != "insufficient" else "too_few_comparable_fields",
+        "trade_date": reference.get("trade_date"),
+        "comparable_field_count": len(fields),
+        "conflict_count": conflicts,
+        "fields": fields,
+        "response_sha256": reference.get("response_sha256"),
+        "responses": list(reference.get("responses") or []),
+    }
+
+
+def _unavailable_reference_check(reason: str, message: str | None = None) -> dict[str, Any]:
+    return {
+        "provider": "tushare",
+        "status": "unavailable",
+        "reason": reason,
+        "message": message,
+        "trade_date": None,
+        "comparable_field_count": 0,
+        "conflict_count": 0,
+        "fields": [],
+        "response_sha256": None,
+        "responses": [],
+    }
+
+
+def _validate_reference_check(value: Any) -> None:
+    if not isinstance(value, dict) or value.get("provider") != "tushare":
+        raise RuntimeError("valuation independent check is invalid")
+    if value.get("status") not in {
+        "confirmed",
+        "conflict",
+        "insufficient",
+        "unavailable",
+    }:
+        raise RuntimeError("valuation independent check status is invalid")
+    fields = value.get("fields")
+    if not isinstance(fields, list) or len(fields) > len(_REFERENCE_METRICS):
+        raise RuntimeError("valuation independent check fields are invalid")
+    names: set[str] = set()
+    for item in fields:
+        if not isinstance(item, dict) or item.get("field") not in _REFERENCE_METRICS:
+            raise RuntimeError("valuation independent check field is invalid")
+        if item["field"] in names or item.get("status") not in {"match", "conflict"}:
+            raise RuntimeError("valuation independent check field is duplicated")
+        names.add(item["field"])
+        for key in ("primary", "reference", "absolute_difference", "allowed_difference"):
+            number = item.get(key)
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, (int, float))
+                or not math.isfinite(float(number))
+            ):
+                raise RuntimeError("valuation independent check number is invalid")
+        primary = float(item["primary"])
+        reference = float(item["reference"])
+        expected_difference = round(abs(primary - reference), 8)
+        raw_allowed = max(
+            _REFERENCE_TOLERANCE[item["field"]],
+            0.02 * max(abs(primary), abs(reference)),
+        )
+        expected_allowed = round(raw_allowed, 8)
+        expected_field_status = (
+            "match" if abs(primary - reference) <= raw_allowed else "conflict"
+        )
+        if (
+            item.get("absolute_difference") != expected_difference
+            or item.get("allowed_difference") != expected_allowed
+            or item.get("status") != expected_field_status
+        ):
+            raise RuntimeError("valuation independent field result is inconsistent")
+    if value.get("comparable_field_count") != len(fields) or value.get(
+        "conflict_count"
+    ) != sum(item.get("status") == "conflict" for item in fields):
+        raise RuntimeError("valuation independent check counts are invalid")
+    conflicts = sum(item.get("status") == "conflict" for item in fields)
+    expected_status = (
+        "conflict"
+        if conflicts
+        else "confirmed"
+        if len(fields) >= 2
+        else "insufficient"
+    )
+    if value.get("status") == "unavailable":
+        if fields or value.get("response_sha256") is not None:
+            raise RuntimeError("unavailable valuation check has evidence")
+    else:
+        if value.get("status") != expected_status:
+            raise RuntimeError("valuation independent check status is inconsistent")
+        if _FINGERPRINT.fullmatch(str(value.get("response_sha256") or "")) is None:
+            raise RuntimeError("valuation independent response fingerprint is invalid")
+    digest = value.get("response_sha256")
+    if digest is not None and _FINGERPRINT.fullmatch(str(digest)) is None:
+        raise RuntimeError("valuation independent response fingerprint is invalid")
 
 
 def _validate_record(value: Mapping[str, Any], *, expected_date: date, expected_revision: int) -> None:

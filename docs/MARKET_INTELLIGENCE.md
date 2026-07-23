@@ -1,6 +1,6 @@
 # Market Intelligence Evidence
 
-The market-intelligence layer in `v0.16.0` is a read-only research surface.
+The market-intelligence layer in `v0.17.0` is a read-only research surface.
 It contains nine separately stored evidence datasets. Each dataset has its own
 source, cutoff, response fingerprint, coverage declaration, immutable revision
 chain, and explicit authority boundary. No dataset creates a strategy signal,
@@ -14,10 +14,10 @@ changes accounting, or authorizes an order.
 | `sector_breadth` | Eastmoney board pages plus SH/SZ/BJ benchmark quotes | One completed trading date | Provider-defined, potentially overlapping boards and market-width counts; see `MARKET_BREADTH.md`. |
 | `capital_flow` | Eastmoney provider-defined order-size buckets | One completed quote date | Signed CNY amounts and percentages are retained; board rows must not be summed as whole-market flow. |
 | `intraday` | Eastmoney `trends2` | One completed date and selected interval | Historical minute evidence with retained `f52-f55` OHLC mapping; not a real-time or Tick feed. |
-| `valuation` | Eastmoney quote and `RPT_VALUEANALYSIS_DET` | Current quote plus bounded history | Current fields are available for configured instruments. Historical PE/PB/cash-flow/sales percentiles are stock-only and require at least 120 valid observations. |
-| `fundamentals` | Eastmoney `RPT_LICO_FN_CPD` | Completed-session cutoff | Stock-only disclosed financial periods. Both notice and update dates must be no later than the cutoff. |
-| `official_disclosures` | SSE and CNINFO | Bounded completed-date window | Official metadata and PDF links only. Provider and security coverage gaps remain explicit; PDF bodies are not archived. |
-| `news` | Eastmoney news and individual announcement aggregation | One completed cutoff | Third-party evidence kept separate from official disclosures. `lexicon-v1` is not a sentiment model. |
+| `valuation` | Eastmoney primary; optional Tushare `daily_basic` check | Current quote plus bounded history | Historical PE/PB/cash-flow/sales percentiles are stock-only and require at least 120 valid observations. Exact-session Tushare fields are reference-only and never fill primary data. |
+| `fundamentals` | Eastmoney primary; optional Tushare financial check | Completed-session cutoff | Stock-only disclosed financial periods. Notice/update cutoffs and common-period field reconciliation are explicit; Tushare never fills primary fields. |
+| `official_disclosures` | SSE and CNINFO | Bounded completed-date window | Official metadata, deterministic event categories, PDF links, and optional response hashes. PDF bodies are not archived. |
+| `news` | Eastmoney plus optional Tushare editorial feeds | One completed cutoff | Transport/editorial identity, title clustering, calibrated time, heat, and item revisions remain third-party evidence. Sentiment coverage is unavailable. |
 | `order_book` | Eastmoney public quote | One observed snapshot | Level-1 five-level bids/asks, lot/share units, spread, and bounded depth imbalance; not Tick, full depth, or Level-2. |
 
 The default closing date for daily datasets comes from the latest locally
@@ -47,6 +47,10 @@ Instrument evidence also uses separate bounded refreshes:
 .\.venv\Scripts\python.exe -m ai_trade.cli order-book-refresh --symbol 510300
 ```
 
+`disclosures-refresh --skip-document-hash` retains official metadata and event
+classification without downloading PDF responses. With hashing enabled, each
+accepted PDF is bounded and only its SHA-256 and byte count are stored.
+
 The Market Intelligence page exposes matching fixed background actions. A
 failed or cancelled action leaves the previous complete revision untouched.
 The UI distinguishes a running refresh, provider failure, valid empty filter,
@@ -61,8 +65,11 @@ provider returns multiple versions for one period. EPS, revenue, parent net
 profit, weighted ROE, revenue and profit growth, book value per share,
 operating cash flow per share, and gross margin remain nullable provider
 fields. ETFs are reported as unsupported instead of receiving inferred company
-metrics. This evidence is not yet consumed by the AI assistant's fundamental
-role, so that role remains `UNAVAILABLE`.
+metrics. When the Tushare token is configured, the newest common report period
+is compared field by field against `fina_indicator` and consolidated `income`.
+The comparison cannot fill or replace an Eastmoney value. The AI assistant
+reads only the exact-date immutable record and abstains on sparse, directional,
+or independent-source conflicts.
 
 Historical valuation percentiles are calculated only for configured stocks.
 The store retains the source field, observation count, first and last date,
@@ -70,7 +77,9 @@ and provider response fingerprint for `PE_TTM`, `PE_LAR`, `PB_MRQ`,
 `PCF_OCF_TTM`, and `PS_TTM`. Only positive finite completed-session values are
 eligible. A percentile remains null when the current value is invalid or fewer
 than 120 observations exist. ETF history is explicitly unsupported, and price
-history is never substituted for valuation history.
+history is never substituted for valuation history. Optional Tushare
+`daily_basic` checks compare PE/PB/PS on the exact completed session and remain
+reference-only.
 
 Official-disclosure routing is deliberately narrow:
 
@@ -81,10 +90,20 @@ Official-disclosure routing is deliberately narrow:
 | Shenzhen ETF present in the CNINFO fund master | CNINFO designated platform |
 | Shanghai ETF, Beijing market, or missing CNINFO master entry | Explicit coverage gap |
 
-Only official metadata and allowlisted PDF URLs are archived. The system does
-not download, sign, or WORM-store PDF bodies, and it does not infer sentiment
-from disclosure titles. Eastmoney news and announcement aggregation remains a
-separate third-party dataset with its own provenance.
+Official metadata and allowlisted PDF URLs are archived. A deterministic title
+rule records only event categories for lockup expiration, shareholder
+increase/decrease/change, and share pledge; it makes no directional or
+sentiment judgment. The refresh may download a bounded official PDF response
+to record its SHA-256 and byte count, but it does not retain the body. That hash
+is not an archive, signature, remote attestation, or WORM record.
+
+Third-party news remains separate from official disclosure evidence. Exact
+normalized-title clusters retain transport Provider and editorial-source
+identity, Asia/Shanghai time calibration, content hashes, and item revision
+lineage. Heat uses publication-time decay and the number of distinct transport
+Providers. Multiple editorial feeds delivered through Tushare are not multiple
+independent transport confirmations. Heat and `lexicon-v1` annotations do not
+change `sentiment_coverage=UNAVAILABLE`.
 
 The order-book store validates one observed public quote per instrument. It
 retains five bid and ask ranks, CNY prices, provider volumes in lots, normalized

@@ -142,6 +142,7 @@ class CliTests(unittest.TestCase):
                     "symbols": ["000001"],
                     "lookback_days": 14,
                     "limit_per_symbol": 20,
+                    "hash_documents": True,
                 },
             ),
             (
@@ -186,6 +187,37 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(status, 1)
         self.assertEqual(json.loads(output.getvalue()), unavailable)
+
+    def test_disclosure_refresh_can_skip_document_hashing(self):
+        result = {"available": True, "records": []}
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=object()) as load,
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.data.disclosures.refresh_disclosures",
+                return_value=result,
+            ) as refresh,
+            redirect_stdout(output),
+        ):
+            status = main(
+                [
+                    "disclosures-refresh",
+                    "--symbol",
+                    "600000",
+                    "--skip-document-hash",
+                ]
+            )
+
+        self.assertEqual(status, 0)
+        load.assert_called_once()
+        refresh.assert_called_once_with(
+            load.return_value,
+            symbols=["600000"],
+            lookback_days=30,
+            limit_per_symbol=50,
+            hash_documents=False,
+        )
 
     def test_market_intelligence_refresh_uses_explicit_iso_date(self):
         parsed = build_parser().parse_args(

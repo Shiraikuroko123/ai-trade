@@ -1,6 +1,6 @@
 ---
 name: AI Trade
-version: "0.16.0"
+version: "0.17.0"
 description: A calm, auditable workstation for systematic investment decisions.
 colors:
   closing-bell-honey: "oklch(0.76 0.15 78)"
@@ -95,7 +95,7 @@ This is an operational product, not a marketing surface. Information arrives in 
 
 **Key Characteristics:**
 
-- The release baseline is the `v0.16.0` local workstation, including the professional read-only market view, auditable universe screen, independent Yahoo/Tushare reference routes, exact-date fundamental/valuation assistant evidence, compact model-call governance status, and separately identified official, third-party, and Level-1 depth evidence.
+- The release baseline is the `v0.17.0` local workstation, including the professional read-only market view, auditable universe screen, independent Yahoo/Tushare reference routes, exact-date fundamental/valuation assistant evidence, compact model-call governance status, and separately identified official, third-party, and Level-1 depth evidence.
 - Evidence appears before action.
 - Honey-amber is reserved for current authority and primary commands.
 - Tables, charts, ledgers, and gate checks share one compact vocabulary.

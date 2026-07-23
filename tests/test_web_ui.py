@@ -73,8 +73,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.16.0-ai-governance", self.html)
-        self.assertIn("app.js?v=0.16.0-ai-governance", self.html)
+        self.assertIn("app.css?v=0.17.0-evidence-governance", self.html)
+        self.assertIn("app.js?v=0.17.0-evidence-governance", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -385,6 +385,8 @@ class WebUiContractTests(unittest.TestCase):
             1
         ].split("}", 1)[0]
         self.assertIn("max-width: 100%", intelligence_dataset_css)
+        self.assertIn("scroll-margin-top: 6.5rem", intelligence_dataset_css)
+        self.assertIn("scroll-margin-top: 10rem", self.css)
         self.assertIn("min-width: 0", intelligence_dataset_css)
         self.assertNotIn("coverage.reported_count", self.javascript)
         self.assertNotIn("summary.total_buy_amount", self.javascript)

@@ -11,6 +11,7 @@ from unittest.mock import patch
 from ai_trade.data.fundamentals import (
     FundamentalQuery,
     FundamentalStore,
+    _validate_reference_check,
     refresh_fundamentals,
 )
 from ai_trade.models import Instrument
@@ -146,6 +147,68 @@ class FundamentalTests(unittest.TestCase):
         )
         self.assertFalse(result["available"])
         self.assertEqual(result["errors"][0]["code"], "fundamentals_not_refreshed")
+
+    def test_tushare_reference_is_field_level_and_reference_only(self):
+        reference = {
+            "periods": [
+                {
+                    "report_date": "2026-03-31",
+                    "basic_eps": 2.2,
+                    "revenue": 1000.0,
+                    "parent_net_profit": 200.0,
+                    "weighted_roe_pct": 10.0,
+                    "book_value_per_share": 12.0,
+                    "operating_cash_flow_per_share": 3.0,
+                    "gross_margin_pct": 40.0,
+                }
+            ],
+            "responses": [],
+            "response_sha256": "c" * 64,
+        }
+        with (
+            patch("ai_trade.data.fundamentals.token_configured", return_value=True),
+            patch(
+                "ai_trade.data.fundamentals.fetch_fundamental_reference",
+                return_value=reference,
+            ),
+            patch(
+                "ai_trade.data.fundamentals._open_request",
+                return_value=_Response(_payload()),
+            ),
+        ):
+            result = refresh_fundamentals(
+                self.config,
+                symbols=["600000"],
+                as_of=datetime(2026, 7, 20, 8, 0, tzinfo=timezone.utc),
+            )
+        check = result["records"][0]["independent_check"]
+        self.assertEqual(check["status"], "confirmed")
+        self.assertEqual(check["comparable_field_count"], 7)
+        self.assertEqual(result["source"]["provider"], "eastmoney")
+        self.assertEqual(result["source"]["independent_provider"], "tushare")
+
+    def test_reference_status_must_match_field_conflicts(self):
+        check = {
+            "provider": "tushare",
+            "status": "confirmed",
+            "reason": None,
+            "comparable_field_count": 1,
+            "conflict_count": 1,
+            "fields": [
+                {
+                    "field": "basic_eps",
+                    "primary": 1.0,
+                    "reference": 2.0,
+                    "absolute_difference": 1.0,
+                    "allowed_difference": 0.04,
+                    "status": "conflict",
+                }
+            ],
+            "response_sha256": "c" * 64,
+            "responses": [],
+        }
+        with self.assertRaisesRegex(RuntimeError, "status is inconsistent"):
+            _validate_reference_check(check)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,6 @@ An activated strategy-lab candidate is not assumed to remain valid indefinitely.
 
 ## Charts And Indicators
 
-The `v0.16.0` market workstation computes MA, EMA, BOLL, MACD, KDJ, RSI, and Wilder ATR from the same validated completed OHLCV snapshot used for review. Daily bars may be aggregated deterministically into calendar weeks or months. The separate market-intelligence view can read bounded historical minute evidence and observed public Level-1 five-level snapshots. Neither is a real-time, Tick, full-depth, or Level-2 feed, and neither is consumed by the strategy.
+The `v0.17.0` market workstation computes MA, EMA, BOLL, MACD, KDJ, RSI, and Wilder ATR from the same validated completed OHLCV snapshot used for review. Daily bars may be aggregated deterministically into calendar weeks or months. The separate market-intelligence view can read bounded historical minute evidence and observed public Level-1 five-level snapshots. Neither is a real-time, Tick, full-depth, or Level-2 feed, and neither is consumed by the strategy.
 
 Chart overlays, oscillator selections, zoom, crosshair inspection, and paper trade markers are descriptive observations. They do not enter the default strategy unless a separately defined parameter or rule is implemented, validated against the same baseline snapshot, approved by a human, and then observed in an isolated paper profile. An indicator crossing is not itself evidence of causality, robustness, or live readiness.

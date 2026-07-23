@@ -8,7 +8,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from ai_trade.data.valuation import ValuationQuery, ValuationStore, refresh_valuation
+from ai_trade.data.valuation import (
+    ValuationQuery,
+    ValuationStore,
+    _validate_reference_check,
+    refresh_valuation,
+)
 from ai_trade.models import Instrument
 
 
@@ -228,6 +233,63 @@ class ValuationTests(unittest.TestCase):
         self.assertEqual(
             result["records"][0]["valuation_history"]["status"], "unavailable"
         )
+
+    def test_tushare_daily_basic_is_an_independent_reference_only(self):
+        reference = {
+            "trade_date": "2026-07-17",
+            "pe_ttm": 5.0,
+            "pb": 1.25,
+            "ps_ttm": 134.0,
+            "responses": [],
+            "response_sha256": "c" * 64,
+        }
+
+        def open_request(request, _timeout, _proxy):
+            if "RPT_VALUEANALYSIS_DET" in request.full_url:
+                return _Response(_history_payload("600000"))
+            return _Response(_payload("600000"))
+
+        with (
+            patch("ai_trade.data.valuation.token_configured", return_value=True),
+            patch(
+                "ai_trade.data.valuation.fetch_valuation_reference",
+                return_value=reference,
+            ),
+            patch("ai_trade.data.valuation._open_request", side_effect=open_request),
+        ):
+            result = refresh_valuation(
+                self.config,
+                symbols=["600000"],
+                as_of=datetime(2026, 7, 20, 8, 0, tzinfo=timezone.utc),
+            )
+        check = result["records"][0]["independent_check"]
+        self.assertEqual(check["status"], "confirmed")
+        self.assertEqual(check["comparable_field_count"], 3)
+        self.assertEqual(result["source"]["provider"], "eastmoney")
+
+    def test_reference_status_must_match_field_conflicts(self):
+        check = {
+            "provider": "tushare",
+            "status": "confirmed",
+            "reason": None,
+            "trade_date": "2026-07-17",
+            "comparable_field_count": 1,
+            "conflict_count": 1,
+            "fields": [
+                {
+                    "field": "pe_ttm",
+                    "primary": 8.0,
+                    "reference": 12.0,
+                    "absolute_difference": 4.0,
+                    "allowed_difference": 0.24,
+                    "status": "conflict",
+                }
+            ],
+            "response_sha256": "c" * 64,
+            "responses": [],
+        }
+        with self.assertRaisesRegex(RuntimeError, "status is inconsistent"):
+            _validate_reference_check(check)
 
 
 if __name__ == "__main__":

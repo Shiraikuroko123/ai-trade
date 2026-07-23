@@ -1,6 +1,34 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.16.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.17.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+
+## 0.17.0 - 2026-07-23
+
+- Added optional Tushare Pro field-level reconciliation for stock fundamentals
+  and exact-session PE/PB/PS valuation. Eastmoney remains the primary
+  normalized record; the reference route never fills a missing field or
+  replaces primary evidence, and any recorded conflict forces the assistant's
+  fundamental perspective to abstain.
+- Added deterministic official-disclosure title classification for lockup
+  expiration, shareholder increase/decrease/change, and share pledge events.
+  Bounded official PDF responses can now be SHA-256 hashed with byte counts;
+  document bodies are not stored, and the hash is not an archive, signature,
+  remote attestation, or WORM record.
+- Extended third-party news evidence with normalized-title clustering,
+  Asia/Shanghai publication-time calibration, transparent freshness and
+  independent-transport breadth heat, content fingerprints, and item-level
+  revision lineage. Multiple editorial feeds delivered through one Tushare
+  transport are not counted as multiple independent providers.
+- Preserved `sentiment_coverage=UNAVAILABLE`: heat and low-confidence
+  `lexicon-v1` annotations remain auditable research metadata, not a sentiment
+  model, strategy signal, order, position decision, or authority change.
+- Added responsive audit columns and status summaries for independent checks,
+  official events, PDF response hashes, news clustering, source identity,
+  timing, heat, and revisions; added a CLI switch to skip PDF hashing when only
+  official metadata is required.
+- Added adapter-level response-contract tests, legacy news-chain upgrade
+  coverage, distribution requirements for the new Tushare reference module,
+  and release documentation for every new evidence boundary.
 
 ## 0.16.0 - 2026-07-23
 

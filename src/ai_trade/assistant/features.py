@@ -223,6 +223,8 @@ def build_research_perspectives(
         "valuation.percentile.pb",
         "valuation.percentile.cash_flow",
         "valuation.percentile.ps_ttm",
+        "fundamental.independent_check",
+        "valuation.independent_check",
     )
 
     return [
@@ -801,11 +803,20 @@ def _fundamental_features(research_evidence: dict[str, Any] | None) -> dict[str,
     fundamental_available = bool(fundamental_record)
     valuation_available = bool(valuation_record)
     available = fundamental_available or valuation_available
+    fundamental_check = _independent_check(fundamental_record)
+    valuation_check = _independent_check(valuation_record)
+    independent_conflict = any(
+        item.get("status") == "conflict"
+        for item in (fundamental_check, valuation_check)
+    )
     positive, adverse = _fundamental_direction_counts(metrics, percentiles)
     directional_count = positive + adverse
     if not available:
         stance = "NOT_AVAILABLE"
         abstention_reason = "matching_snapshot_unavailable"
+    elif independent_conflict:
+        stance = "MIXED"
+        abstention_reason = "independent_source_conflict"
     elif directional_count < 2:
         stance = "MIXED"
         abstention_reason = "insufficient_directional_evidence"
@@ -831,6 +842,9 @@ def _fundamental_features(research_evidence: dict[str, Any] | None) -> dict[str,
         "adverse_evidence_count": adverse,
         **metrics,
         "valuation_percentiles": percentiles,
+        "fundamental_independent_check": fundamental_check,
+        "valuation_independent_check": valuation_check,
+        "independent_source_conflict": independent_conflict,
         "fundamental_provenance": (
             _evidence_provenance(fundamental_snapshot)
             if fundamental_available
@@ -977,6 +991,27 @@ def _fundamental_evidence_rows(
         fundamental.get("pb"),
         "当前第三方估值快照；单独数值不判断高低。",
     )
+    for evidence_id, label, key in (
+        (
+            "fundamental.independent_check",
+            "Tushare 基本面校验状态",
+            "fundamental_independent_check",
+        ),
+        (
+            "valuation.independent_check",
+            "Tushare 估值校验状态",
+            "valuation_independent_check",
+        ),
+    ):
+        check = fundamental.get(key)
+        if isinstance(check, dict) and check.get("status"):
+            append(
+                evidence_id,
+                label,
+                check.get("status"),
+                "只记录独立参考源的字段级对账结果；冲突时强制弃权，不覆盖主数据。",
+                "warning" if check.get("status") == "conflict" else "neutral",
+            )
     percentiles = fundamental.get("valuation_percentiles")
     if not isinstance(percentiles, dict):
         percentiles = {}
@@ -1012,6 +1047,20 @@ def _fundamental_provenance(
             dict(valuation_value) if isinstance(valuation_value, dict) else None
         ),
     }
+
+
+def _independent_check(record: dict[str, Any]) -> dict[str, Any]:
+    value = record.get("independent_check")
+    if not isinstance(value, dict):
+        return {
+            "provider": "tushare",
+            "status": "unavailable",
+            "reason": "not_recorded",
+            "comparable_field_count": 0,
+            "conflict_count": 0,
+            "fields": [],
+        }
+    return dict(value)
 
 
 def _fundamental_summary(fundamental: dict[str, Any]) -> str:

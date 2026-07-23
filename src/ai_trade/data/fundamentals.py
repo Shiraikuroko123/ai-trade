@@ -18,6 +18,11 @@ from ..json_utils import loads_unique_json
 from ..models import Instrument
 from .eastmoney import REQUEST_HEADERS, _open_request, _proxy_mode, completed_session_cutoff
 from .evidence_io import DateRevisionSpec, ImmutableDateRevisionStore
+from .tushare_reference import (
+    TushareReferenceError,
+    fetch_fundamental_reference,
+    token_configured,
+)
 
 
 SCHEMA_VERSION = 1
@@ -31,6 +36,24 @@ MAX_QUERY_LIMIT = 500
 CHINA_TIMEZONE = timezone(timedelta(hours=8))
 _SYMBOL = re.compile(r"\d{6}\Z")
 _AUTHORITY = {"research_only": True, "execution_authorized": False}
+_REFERENCE_FIELDS = (
+    "basic_eps",
+    "revenue",
+    "parent_net_profit",
+    "weighted_roe_pct",
+    "book_value_per_share",
+    "operating_cash_flow_per_share",
+    "gross_margin_pct",
+)
+_REFERENCE_TOLERANCES = {
+    "basic_eps": (0.02, 0.02),
+    "revenue": (1.0, 0.005),
+    "parent_net_profit": (1.0, 0.005),
+    "weighted_roe_pct": (0.2, 0.02),
+    "book_value_per_share": (0.05, 0.02),
+    "operating_cash_flow_per_share": (0.05, 0.03),
+    "gross_margin_pct": (0.2, 0.02),
+}
 _SOURCE_FIELDS = (
     "SECURITY_CODE",
     "SECURITY_NAME_ABBR",
@@ -86,6 +109,7 @@ def refresh_fundamentals(
     records: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     responses: list[dict[str, Any]] = []
+    use_reference = token_configured()
     for symbol in selected:
         if not isinstance(symbol, str) or _SYMBOL.fullmatch(symbol) is None:
             raise ValueError("symbol must be a six-digit security code")
@@ -116,6 +140,31 @@ def refresh_fundamentals(
                 raise FundamentalProviderError(
                     "no disclosed periods were available by the completed-session cutoff"
                 )
+            independent_check = _unavailable_reference_check(
+                "token_not_configured"
+                if not use_reference
+                else "reference_not_attempted"
+            )
+            if use_reference:
+                try:
+                    reference = fetch_fundamental_reference(
+                        config,
+                        instrument,
+                        cutoff=cutoff,
+                        limit=periods_per_symbol,
+                    )
+                    independent_check = _compare_reference(periods, reference)
+                except (OSError, TushareReferenceError, TypeError, ValueError) as exc:
+                    independent_check = _unavailable_reference_check(
+                        "reference_provider_error", str(exc)[:300]
+                    )
+                    errors.append(
+                        {
+                            "symbol": symbol,
+                            "code": "fundamental_reference_provider_error",
+                            "message": str(exc)[:300],
+                        }
+                    )
             records.append(
                 {
                     "symbol": symbol,
@@ -125,6 +174,7 @@ def refresh_fundamentals(
                     "latest_report_date": periods[0]["report_date"],
                     "latest_notice_date": periods[0]["notice_date"],
                     "periods": periods,
+                    "independent_check": independent_check,
                     "response_sha256": digest,
                     "response_bytes": response_bytes,
                 }
@@ -164,6 +214,8 @@ def refresh_fundamentals(
             "response_count": len(responses),
             "certification": "third_party_not_exchange_certified",
             "point_in_time_filter": "NOTICE_DATE and UPDATE_DATE <= trade_date",
+            "independent_provider": "tushare" if use_reference else None,
+            "independent_check_role": "reference_only_not_primary_data",
         },
         "records": records,
         "summary": {
@@ -174,12 +226,31 @@ def refresh_fundamentals(
             ),
             "error_count": len(errors),
             "period_count": sum(len(item["periods"]) for item in records),
+            "independent_check": {
+                status: sum(
+                    item.get("independent_check", {}).get("status") == status
+                    for item in records
+                )
+                for status in ("confirmed", "conflict", "insufficient", "unavailable")
+            },
         },
         "errors": errors,
         "warnings": [
             {
-                "code": "single_third_party_source",
-                "message": "Financial fields are third-party normalized disclosures and have no independent source reconciliation.",
+                "code": "primary_third_party_source",
+                "message": "Eastmoney remains the primary normalized dataset; an optional Tushare check is reference-only and never fills missing primary fields.",
+            },
+            {
+                "code": (
+                    "tushare_reference_enabled"
+                    if use_reference
+                    else "tushare_reference_not_configured"
+                ),
+                "message": (
+                    "Tushare field-level reconciliation was attempted for eligible stock records."
+                    if use_reference
+                    else "Set AI_TRADE_TUSHARE_TOKEN to run the independent financial reference check."
+                ),
             },
             {
                 "code": "stock_only",
@@ -376,6 +447,9 @@ def _validate_payload(value: Mapping[str, Any]) -> None:
                     or not math.isfinite(float(number))
                 ):
                     raise RuntimeError(f"fundamental field {field} is invalid")
+        check = item.get("independent_check")
+        if check is not None:
+            _validate_reference_check(check)
     source = value.get("source")
     if not isinstance(source, dict) or source.get("report_name") != REPORT_NAME:
         raise RuntimeError("fundamental source metadata is invalid")
@@ -411,6 +485,169 @@ def _validate_query(query: FundamentalQuery) -> None:
         raise ValueError("symbol must be a six-digit security code")
     if isinstance(query.limit, bool) or not 1 <= query.limit <= MAX_QUERY_LIMIT:
         raise ValueError(f"limit must be between 1 and {MAX_QUERY_LIMIT}")
+
+
+def _compare_reference(
+    primary_periods: Sequence[Mapping[str, Any]], reference: Mapping[str, Any]
+) -> dict[str, Any]:
+    reference_periods = {
+        str(item.get("report_date")): item
+        for item in reference.get("periods", [])
+        if isinstance(item, dict)
+    }
+    primary_by_period = {
+        str(item.get("report_date")): item
+        for item in primary_periods
+        if isinstance(item, Mapping)
+    }
+    common = sorted(set(primary_by_period) & set(reference_periods), reverse=True)
+    response_sha256 = str(reference.get("response_sha256") or "")
+    if not common:
+        return {
+            "provider": "tushare",
+            "status": "insufficient",
+            "reason": "no_common_report_period",
+            "matched_report_date": None,
+            "comparable_field_count": 0,
+            "conflict_count": 0,
+            "fields": [],
+            "response_sha256": response_sha256,
+            "responses": list(reference.get("responses") or []),
+        }
+    matched = common[0]
+    primary = primary_by_period[matched]
+    secondary = reference_periods[matched]
+    fields: list[dict[str, Any]] = []
+    for name in _REFERENCE_FIELDS:
+        primary_value = primary.get(name)
+        reference_value = secondary.get(name)
+        if primary_value is None or reference_value is None:
+            continue
+        primary_number = float(primary_value)
+        reference_number = float(reference_value)
+        absolute_tolerance, relative_tolerance = _REFERENCE_TOLERANCES[name]
+        absolute_difference = abs(primary_number - reference_number)
+        allowed_difference = max(
+            absolute_tolerance,
+            relative_tolerance * max(abs(primary_number), abs(reference_number)),
+        )
+        fields.append(
+            {
+                "field": name,
+                "primary": primary_number,
+                "reference": reference_number,
+                "absolute_difference": round(absolute_difference, 8),
+                "allowed_difference": round(allowed_difference, 8),
+                "status": (
+                    "match" if absolute_difference <= allowed_difference else "conflict"
+                ),
+            }
+        )
+    conflicts = sum(item["status"] == "conflict" for item in fields)
+    status = (
+        "conflict"
+        if conflicts
+        else "confirmed"
+        if len(fields) >= 2
+        else "insufficient"
+    )
+    return {
+        "provider": "tushare",
+        "status": status,
+        "reason": None if status != "insufficient" else "too_few_comparable_fields",
+        "matched_report_date": matched,
+        "comparable_field_count": len(fields),
+        "conflict_count": conflicts,
+        "fields": fields,
+        "response_sha256": response_sha256,
+        "responses": list(reference.get("responses") or []),
+    }
+
+
+def _unavailable_reference_check(reason: str, message: str | None = None) -> dict[str, Any]:
+    return {
+        "provider": "tushare",
+        "status": "unavailable",
+        "reason": reason,
+        "message": message,
+        "matched_report_date": None,
+        "comparable_field_count": 0,
+        "conflict_count": 0,
+        "fields": [],
+        "response_sha256": None,
+        "responses": [],
+    }
+
+
+def _validate_reference_check(value: Any) -> None:
+    if not isinstance(value, dict) or value.get("provider") != "tushare":
+        raise RuntimeError("fundamental independent check is invalid")
+    if value.get("status") not in {
+        "confirmed",
+        "conflict",
+        "insufficient",
+        "unavailable",
+    }:
+        raise RuntimeError("fundamental independent check status is invalid")
+    fields = value.get("fields")
+    if not isinstance(fields, list) or len(fields) > len(_REFERENCE_FIELDS):
+        raise RuntimeError("fundamental independent check fields are invalid")
+    names: set[str] = set()
+    for item in fields:
+        if not isinstance(item, dict) or item.get("field") not in _REFERENCE_FIELDS:
+            raise RuntimeError("fundamental independent check field is invalid")
+        if item["field"] in names or item.get("status") not in {"match", "conflict"}:
+            raise RuntimeError("fundamental independent check field is duplicated")
+        names.add(item["field"])
+        for key in ("primary", "reference", "absolute_difference", "allowed_difference"):
+            number = item.get(key)
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, (int, float))
+                or not math.isfinite(float(number))
+            ):
+                raise RuntimeError("fundamental independent check number is invalid")
+        primary = float(item["primary"])
+        reference = float(item["reference"])
+        absolute_tolerance, relative_tolerance = _REFERENCE_TOLERANCES[item["field"]]
+        expected_difference = round(abs(primary - reference), 8)
+        raw_allowed = max(
+            absolute_tolerance,
+            relative_tolerance * max(abs(primary), abs(reference)),
+        )
+        expected_allowed = round(raw_allowed, 8)
+        expected_field_status = (
+            "match" if abs(primary - reference) <= raw_allowed else "conflict"
+        )
+        if (
+            item.get("absolute_difference") != expected_difference
+            or item.get("allowed_difference") != expected_allowed
+            or item.get("status") != expected_field_status
+        ):
+            raise RuntimeError("fundamental independent field result is inconsistent")
+    if value.get("comparable_field_count") != len(fields) or value.get(
+        "conflict_count"
+    ) != sum(item.get("status") == "conflict" for item in fields):
+        raise RuntimeError("fundamental independent check counts are invalid")
+    conflicts = sum(item.get("status") == "conflict" for item in fields)
+    expected_status = (
+        "conflict"
+        if conflicts
+        else "confirmed"
+        if len(fields) >= 2
+        else "insufficient"
+    )
+    if value.get("status") == "unavailable":
+        if fields or value.get("response_sha256") is not None:
+            raise RuntimeError("unavailable fundamental check has evidence")
+    else:
+        if value.get("status") != expected_status:
+            raise RuntimeError("fundamental independent check status is inconsistent")
+        if re.fullmatch(r"[0-9a-f]{64}", str(value.get("response_sha256") or "")) is None:
+            raise RuntimeError("fundamental independent response fingerprint is invalid")
+    digest = value.get("response_sha256")
+    if digest is not None and re.fullmatch(r"[0-9a-f]{64}", str(digest)) is None:
+        raise RuntimeError("fundamental independent response fingerprint is invalid")
 
 
 def _date_field(value: object, label: str) -> date:

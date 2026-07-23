@@ -153,7 +153,7 @@ execution data.
 
 ## Assistant consumption boundary
 
-The `v0.16.0` assistant does not register another provider and never fetches
+The `v0.17.0` assistant does not register another provider and never fetches
 network data during analysis. For a configured `STOCK`, it queries the existing
 fundamental and valuation stores using the exact final completed K-line date.
 Only `current` or `partial` evidence is eligible; a `provisional` valuation is
@@ -164,11 +164,23 @@ Eligible financial fields, PE/PB values, and PE/PB/cash-flow/PS empirical
 percentiles are copied into the analysis evidence ledger with stable evidence
 IDs and their immutable record fingerprints are bound into the assistant
 snapshot. Missing, sparse, or conflicting evidence produces an explicit
-abstention. It is never filled from model prose and never changes execution
-authority.
+abstention. A recorded conflict from either optional Tushare field-level check
+also forces the fundamental perspective to abstain. It is never filled from
+model prose and never changes execution authority.
 
-Both stores currently normalize Eastmoney data. Consuming them together does
-not make them independent sources and must not be presented as cross-source
-confirmation. Tushare remains independent only for the bounded daily-bar
-reference route described above; no Tushare fundamental/valuation comparison
-is implemented in this release.
+Both stores keep Eastmoney as the primary normalized data. Consuming them
+together does not make them independent sources and must not be presented as
+cross-source confirmation. When `AI_TRADE_TUSHARE_TOKEN` is configured, the
+fundamental refresh compares the newest common disclosed report period against
+Tushare `fina_indicator` and consolidated `income` fields, while valuation
+compares the exact completed session against `daily_basic`. These checks are
+reference-only: they preserve their own response fingerprints, never fill a
+missing primary value, never replace a primary record, and do not create a
+strategy signal or execution authority.
+
+The news store may also request the Tushare `sina`, `wallstreetcn`, and
+`10jqka` editorial feeds. Those names identify editorial sources delivered
+through one Tushare transport Provider; they are not three independent
+transport confirmations. News heat uses freshness plus the count of distinct
+transport Providers, retains `sentiment_coverage=UNAVAILABLE`, and cannot be
+used as an independent daily-bar or fundamental cross-check.

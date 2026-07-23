@@ -2270,7 +2270,7 @@ progress {
 .intelligence-dataset {
   max-width: 100%;
   min-width: 0;
-  scroll-margin-top: 1rem;
+  scroll-margin-top: 6.5rem;
 }
 
 .intelligence-dataset:focus-visible {
@@ -2358,18 +2358,18 @@ progress {
 }
 
 .valuation-table {
-  min-width: 1580px;
-  width: max(100%, 1680px);
+  min-width: 1760px;
+  width: max(100%, 1860px);
 }
 
 .fundamentals-table {
-  min-width: 1540px;
-  width: max(100%, 1640px);
+  min-width: 1740px;
+  width: max(100%, 1840px);
 }
 
 .disclosures-table {
-  min-width: 1180px;
-  width: max(100%, 1280px);
+  min-width: 1620px;
+  width: max(100%, 1720px);
 }
 
 .disclosures-table td:nth-child(2) {
@@ -2393,8 +2393,8 @@ progress {
 }
 
 .news-table {
-  min-width: 1180px;
-  width: max(100%, 1280px);
+  min-width: 1680px;
+  width: max(100%, 1780px);
 }
 
 .news-table td:nth-child(2) {
@@ -4947,6 +4947,10 @@ progress {
 }
 
 @media (max-width: 560px) {
+  .intelligence-dataset {
+    scroll-margin-top: 10rem;
+  }
+
   .cross-source-audit .screen-quality-heading {
     align-items: stretch;
     flex-direction: column;

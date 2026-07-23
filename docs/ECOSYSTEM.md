@@ -19,6 +19,21 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [Freqtrade](https://github.com/freqtrade/freqtrade) | Operational lifecycle, monitoring and strategy deployment | Owner-scoped scheduled research scans and alert review are implemented; automated strategy deployment and crypto execution are out of scope |
 | [KLineChart](https://github.com/klinecharts/KLineChart) | Browser K-line rendering and interaction | Pinned local 10.0.0 renderer for read-only completed-session charts; AI Trade owns data, aggregation, indicators, provenance, and trading boundaries |
 
+## Upstream Release Gate
+
+The `v0.17.0` gate was rechecked on 2026-07-23 before implementation. Project
+`main` and the latest public release were both at `v0.16.0`; no newer local
+project commit had to be integrated first.
+
+| Upstream | Checked release/commit state | License and portability decision |
+|---|---|---|
+| `simonlin1212/TradingAgents-astock` | `v0.2.21` | Apache-2.0. Windowing and OpenAI-compatible provider ideas were already represented; free-text Chinese ratings do not replace strict local enums. |
+| `TauricResearch/TradingAgents` | `v0.3.1` | Apache-2.0. Retry-budget and run-identity ideas informed the already shipped call-governance boundary; future-data and UTC cutoffs remain independently enforced here. |
+| `virattt/ai-hedge-fund` | `v2.0.0` | MIT. Protocol and caching ideas are portable only through immutable local call/cache evidence, not overwrite-style JSON state or a copied trading cycle. |
+| `KylinMountain/TradingAgents-AShare` | `v0.8.1` | PolyForm Noncommercial. Design may be studied, but source is not copied into a potentially commercial distribution. |
+| `zhaoboy9692/Q-Limit` | No release; latest functional change remained Docker-related | GPL-3.0. Debate UX may be studied; frontend credential relay, free-text decisions, and weak audit patterns are not adopted. |
+| `a-stock-az` / `dbbbbm/kimi-stock-agent` | Functional activity remained at 2026-01 / 2026-05 | No clear license. Requirements and workflow may be observed; source is not copied. |
+
 ## Hosted Platforms Worth Comparing
 
 - [QuantConnect](https://www.quantconnect.com/) combines hosted research, backtesting, datasets, optimization, and brokerage deployment around LEAN.
@@ -61,7 +76,7 @@ authoritative paper and broker ledgers.
 | Reference capability | Status | AI Trade boundary |
 |---|---|---|
 | Technical, risk, and strategy-gate role separation | Complete for deterministic closing evidence | Each perspective cites the same validated completed-bar evidence; it is a review matrix, not three autonomous agents. |
-| Fundamental role | Exact-date stock integration complete | The assistant reads existing local point-in-time fundamentals and valuation evidence for the final K-line date, cites record/evidence fingerprints, excludes provisional valuation, and explicitly abstains when fewer than two directional signals exist or supportive/adverse evidence conflicts. ETFs remain unsupported. |
+| Fundamental role | Exact-date stock integration complete | The assistant reads existing local point-in-time fundamentals and valuation evidence for the final K-line date, cites record/evidence fingerprints, excludes provisional valuation, and explicitly abstains when evidence is sparse, supportive/adverse evidence conflicts, or an optional Tushare field check conflicts. ETFs remain unsupported. |
 | Sentiment role | Coverage contract only | No complete multi-source sentiment methodology exists. Official disclosures, third-party news annotations, Dragon-Tiger rows, board breadth, capital flow, and Level-1 depth do not silently make sentiment available. |
 | Perspective conflict and coverage-gap audit | Complete within the assistant record | `deterministic-perspective-audit-v1` separates real stance conflicts from missing coverage, records evidence references and manual resolution requirements, and is reconstructed during internal validation. |
 | Model conclusion authority guard | Complete for the optional single configured model | A model may preserve or tighten the deterministic research conclusion. An attempted relaxation is blocked and recorded; it cannot change strategy, accounting, positions, orders, or permissions. |
@@ -75,12 +90,12 @@ authoritative paper and broker ledgers.
 | Dragon-Tiger List | Complete within one public-source trust boundary | The full Eastmoney daily report is page/count/date/schema validated and stored as immutable local revisions. It is not exchange-certified and remains `research_only`. |
 | Sector rankings and breadth | Complete within one public-source trust boundary | All Eastmoney `m:90+t:2` board pages and SH/SZ/BJ benchmark breadth responses are count/date/schema/identity validated and stored as immutable local revisions. The provider-defined board universe is not presented as a licensed pure-industry taxonomy, has no independent cross-source check, and remains `research_only`. |
 | Board capital flow | Complete within one public-source trust boundary | Every Eastmoney `m:90+t:2` page is count/date/schema/identity validated and stored as immutable local revisions with CNY-yuan units and explicit missing-value coverage. The board scope can overlap, order-size buckets remain provider methodology, and there is no exchange certification or independent cross-source check. |
-| Point-in-time company fundamentals | Partial, stock-only evidence and assistant consumption implemented | EPS, revenue, parent net profit, ROE, growth, book value, operating cash flow per share, and gross margin retain only periods whose notice and update dates pass the completed cutoff. The assistant consumes only an exact-date local revision and abstains on sparse/conflicting signals. The source remains one third-party normalized dataset and ETFs are unsupported. |
-| Official disclosures | Partial market coverage | SSE stock and CNINFO-recognized Shenzhen stock/ETF metadata and PDF links use a separate immutable store. Shanghai ETF, Beijing market, missing-master, provider, PDF-body archival, signature, and WORM gaps remain explicit. |
-| Third-party news and announcements | Partial | Eastmoney news and individual announcement aggregation retain publication time, original URL, response fingerprints, immutable revisions, and explicit source failures. They are visibly separate from official disclosures; no multi-source correction model or complete hot-list/sentiment engine exists. |
-| Valuation temperature | Partial, stock history implemented | Current quote fields remain available for configured instruments. Stock-only PE/PB/cash-flow/sales empirical percentiles require at least 120 positive finite observations and retain sample provenance; ETFs and insufficient histories stay unavailable, and price history is never substituted. |
+| Point-in-time company fundamentals | Partial, stock-only evidence and assistant consumption implemented | Eastmoney fields retain point-in-time notice/update cutoffs. Optional Tushare common-period field checks are fingerprinted and reference-only; they never fill primary data, and conflicts force assistant abstention. ETFs are unsupported. |
+| Official disclosures | Partial market coverage | SSE/CNINFO metadata, deterministic A-share event categories, PDF links, and optional bounded PDF response hashes use a separate immutable store. PDF bodies are not retained; hashes are not signatures, archives, or WORM evidence. Shanghai ETF, Beijing, and missing-master gaps remain explicit. |
+| Third-party news and announcements | Partial, auditable aggregation implemented | Eastmoney and optional Tushare editorial rows retain transport/editorial identity, title clustering, calibrated time, response/content hashes, heat inputs, and revision lineage. Same-transport feeds are not independent confirmation; no complete hot-list/sentiment model exists. |
+| Valuation temperature | Partial, stock history and reference checks implemented | Eastmoney stock PE/PB/cash-flow/sales percentiles require at least 120 positive finite observations. Optional exact-session Tushare PE/PB/PS checks never fill or replace primary values; ETFs and insufficient histories stay unavailable. |
 | Level-1 five-level order book | Partial, observed snapshots implemented | Public five-level bids/asks, lots, normalized shares, spread, observation time, and bounded imbalance are immutable research evidence. It is not Tick, full depth, Level-2, exchange-certified, replayable, real-time monitoring, or execution data. |
-| Market sentiment | Not implemented | Dragon-Tiger List records remain event evidence and do not make assistant `sentiment_coverage` available. |
+| Market sentiment | Not implemented | News heat, lexicon annotations, official events, and Dragon-Tiger rows remain research evidence and do not make assistant `sentiment_coverage` available. |
 | External push notification delivery | Partial | Webhook is available behind `AI_TRADE_WEBHOOK_*` environment variables with HTTPS/loopback restrictions, HMAC signatures, idempotency, retries, and immutable delivery evidence. Email, Toast, mobile push, and multi-tenant routing remain out of scope. |
 
 ## Deployment Status
@@ -111,8 +126,8 @@ operator thought at that time, not a signal, order, or promotion fact.
 12. Monitoring alerts are owner-scoped research prompts. Partial and failed scans remain explicit attempts, and no alert or review action changes strategy, paper accounting, broker permissions, or order authority.
 13. Market breadth and board rankings are third-party closing evidence. Their provider-defined classification and counts are disclosed, and they cannot create a signal, alter a strategy, or authorize an order.
 14. Board capital flow is provider-reported closing evidence. Signed amounts and direction words are retained without treating overlapping board sums as whole-market flow; the dataset cannot create a signal, alter a strategy, or authorize an order.
-15. Point-in-time fundamentals require both disclosure and update dates to pass the completed cutoff and remain stock-only. Assistant analysis consumes only an already stored revision on the exact completed K-line date, cites its fingerprint, and abstains on insufficient or conflicting evidence.
-16. Official disclosures and third-party news are separate evidence boundaries. A linked PDF is not an archived, signed, or WORM-preserved document body, and neither dataset creates sentiment coverage.
+15. Point-in-time fundamentals require both disclosure and update dates to pass the completed cutoff and remain stock-only. Optional Tushare fundamental/valuation checks are field-level reference evidence only; they never fill primary values, and a conflict forces assistant abstention.
+16. Official disclosures and third-party news are separate evidence boundaries. A PDF response hash is not an archived, signed, or WORM-preserved body. News heat counts distinct transport Providers rather than same-transport editorial feeds, and neither dataset creates sentiment coverage.
 17. Public five-level depth is an observed Level-1 snapshot. It cannot be replayed as orders, used as licensed Level-2 data, or authorize execution.
 18. Optional model calls pass immutable audit, bounded retry/concurrency, per-call and UTC-day budget, and user-isolated cache controls. These controls govern wording enhancement only and cannot authorize execution.
 

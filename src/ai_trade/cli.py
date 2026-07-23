@@ -146,6 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     disclosures.add_argument("--lookback-days", type=int, default=30)
     disclosures.add_argument("--limit", type=int, default=50, dest="limit_per_symbol")
+    disclosures.add_argument(
+        "--skip-document-hash",
+        action="store_true",
+        help="Keep official metadata but skip bounded PDF response hashing",
+    )
 
     order_book = subparsers.add_parser(
         "order-book-refresh",
@@ -641,6 +646,7 @@ def main(argv: list[str] | None = None) -> int:
                 symbols=args.symbols,
                 lookback_days=args.lookback_days,
                 limit_per_symbol=args.limit_per_symbol,
+                hash_documents=not args.skip_document_hash,
             )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0 if result.get("available") is True else 1

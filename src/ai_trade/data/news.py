@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import time as time_module
 from typing import Any, Mapping, Sequence
+import unicodedata
 import urllib.parse
 import urllib.request
 from uuid import uuid4
@@ -26,6 +27,8 @@ from ..json_utils import load_unique_json, loads_unique_json
 from ..models import Instrument
 from .eastmoney import REQUEST_HEADERS, _open_request, _proxy_mode, completed_session_cutoff
 from .evidence_io import atomic_create_json, evidence_store_lock
+from .tushare import ENDPOINT as TUSHARE_ENDPOINT
+from .tushare_reference import fetch_news_reference, token_configured
 
 
 SCHEMA_VERSION = 1
@@ -33,6 +36,7 @@ DATASET = "news"
 NEWS_ENDPOINT = "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_{page_size}_{page}.html"
 ANNOUNCEMENT_ENDPOINT = "https://np-anotice-stock.eastmoney.com/api/security/ann"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_REFERENCE_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_RECORDS = 2_000
 MAX_PAGE_SIZE = 100
 MAX_REVISIONS_PER_DATE = 100
@@ -47,6 +51,11 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 _ITEM_ID = re.compile(r"[A-Za-z0-9_.:-]{1,100}\Z")
 _SYMBOL = re.compile(r"\d{6}\Z")
 _AUTHORITY = {"research_only": True, "execution_authorized": False}
+DEDUPLICATION_METHOD = "normalized-title-cluster-v1"
+TIME_CALIBRATION_METHOD = "provider-time-to-asia-shanghai-v1"
+HEAT_METHOD = "freshness-source-breadth-v1"
+ITEM_REVISION_METHOD = "source-identity-content-sha256-v1"
+TUSHARE_NEWS_SOURCES = ("sina", "wallstreetcn", "10jqka")
 _POSITIVE_TERMS = tuple(
     value
     for value in (
@@ -117,7 +126,7 @@ def refresh_news(
     snapshot_date = trade_date or cutoff
     if snapshot_date > cutoff:
         raise ValueError("news trade_date must not be after the completed-session cutoff")
-    records: dict[str, dict[str, Any]] = {}
+    records: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     source_responses: list[dict[str, Any]] = []
 
@@ -125,14 +134,15 @@ def refresh_news(
         payload, digest, response_bytes = _download_news(config, limit_per_source)
         source_responses.append(
             {
+                "provider": "eastmoney",
                 "kind": "news",
                 "symbol": None,
+                "editorial_source": "eastmoney_feed",
                 "response_sha256": digest,
                 "response_bytes": response_bytes,
             }
         )
-        for item in _parse_news_payload(payload, snapshot_date):
-            records[item["item_id"]] = item
+        records.extend(_parse_news_payload(payload, snapshot_date))
     except (NewsProviderError, OSError, ValueError) as exc:
         errors.append({"source": "news", "code": "news_provider_error", "message": str(exc)[:300]})
 
@@ -143,19 +153,60 @@ def refresh_news(
             )
             source_responses.append(
                 {
+                    "provider": "eastmoney",
                     "kind": "announcement",
                     "symbol": symbol,
+                    "editorial_source": "eastmoney_announcement",
                     "response_sha256": digest,
                     "response_bytes": response_bytes,
                 }
             )
-            for item in _parse_announcement_payload(payload, instruments[symbol], snapshot_date):
-                records[item["item_id"]] = item
+            records.extend(
+                _parse_announcement_payload(
+                    payload, instruments[symbol], snapshot_date
+                )
+            )
         except (NewsProviderError, OSError, ValueError) as exc:
             errors.append({"source": f"announcement:{symbol}", "code": "announcement_provider_error", "message": str(exc)[:300]})
 
+    use_tushare = token_configured()
+    if use_tushare:
+        reference_records, reference_responses, reference_errors = (
+            fetch_news_reference(
+                config,
+                snapshot_date=snapshot_date,
+                sources=TUSHARE_NEWS_SOURCES,
+                limit_per_source=limit_per_source,
+            )
+        )
+        errors.extend(reference_errors)
+        for response in reference_responses:
+            source_responses.append(
+                {
+                    **response,
+                    "kind": "news",
+                    "symbol": None,
+                }
+            )
+        for item in reference_records:
+            records.append(
+                _normalized_item(
+                    item["source_id"],
+                    "news",
+                    None,
+                    item["title"],
+                    item["summary"],
+                    _parse_timestamp(item["published_at"], "Tushare news time"),
+                    "https://tushare.pro/document/2?doc_id=143",
+                    item["editorial_source"],
+                    transport_provider="tushare",
+                    channels=str(item.get("channels") or ""),
+                )
+            )
+
+    clustered = _deduplicate_records(records, snapshot_date)
     ordered = sorted(
-        records.values(),
+        clustered,
         key=lambda item: (str(item.get("published_at", "")), str(item["item_id"])),
         reverse=True,
     )[:MAX_TOTAL_RECORDS]
@@ -170,21 +221,30 @@ def refresh_news(
         "trade_date": snapshot_date.isoformat(),
         "retrieved_at": _now(),
         "source": {
-            "provider": "eastmoney",
+            "provider": "multi_source_news",
+            "transport_providers": [
+                "eastmoney",
+                *(["tushare"] if use_tushare else []),
+            ],
             "news_endpoint": NEWS_ENDPOINT,
             "announcement_endpoint": ANNOUNCEMENT_ENDPOINT,
+            "tushare_endpoint": TUSHARE_ENDPOINT if use_tushare else None,
+            "tushare_editorial_sources": (
+                list(TUSHARE_NEWS_SOURCES) if use_tushare else []
+            ),
             "responses": sorted(
                 source_responses,
-                key=lambda item: (str(item["kind"]), str(item["symbol"] or "")),
+                key=_response_sort_key,
             ),
             "response_sha256": _fingerprint(
-                sorted(
-                    source_responses,
-                    key=lambda item: (str(item["kind"]), str(item["symbol"] or "")),
-                )
+                sorted(source_responses, key=_response_sort_key)
             ),
             "response_count": len(source_responses),
             "certification": "not_exchange_certified",
+            "deduplication_method": DEDUPLICATION_METHOD,
+            "time_calibration_method": TIME_CALIBRATION_METHOD,
+            "heat_method": HEAT_METHOD,
+            "item_revision_method": ITEM_REVISION_METHOD,
         },
         "records": ordered,
         "summary": _summary(ordered),
@@ -198,6 +258,18 @@ def refresh_news(
             {
                 "code": "lexicon_annotation_only",
                 "message": "sentiment_annotation uses transparent lexicon-v1 counts; it is not a market-sentiment model and does not change assistant coverage.",
+            },
+            {
+                "code": (
+                    "tushare_news_reference_enabled"
+                    if use_tushare
+                    else "tushare_news_reference_not_configured"
+                ),
+                "message": (
+                    "Configured Tushare editorial feeds were included through one additional transport boundary."
+                    if use_tushare
+                    else "Set AI_TRADE_TUSHARE_TOKEN to add bounded Tushare editorial feeds to cross-source clustering."
+                ),
             },
         ],
     }
@@ -257,6 +329,10 @@ class NewsStore:
         _validate_draft(record)
         target = date.fromisoformat(str(record["trade_date"]))
         chain = self._load_chain(target, missing_ok=True)
+        previous = chain[-1] if chain else None
+        record["records"] = _bind_item_revisions(record["records"], previous)
+        record["summary"] = _summary(record["records"])
+        _validate_draft(record)
         evidence = _fingerprint(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -274,7 +350,6 @@ class NewsStore:
             return result
         if len(chain) >= MAX_REVISIONS_PER_DATE:
             raise RuntimeError("news revision capacity reached")
-        previous = chain[-1] if chain else None
         record.update(
             {
                 "revision_id": f"news_{uuid4().hex}",
@@ -440,7 +515,25 @@ def _parse_news_payload(payload: Mapping[str, Any], snapshot_date: date) -> list
         if published.date() > snapshot_date:
             continue
         url = _source_url(row.get("url_unique") or row.get("url_w") or row.get("url_m"))
-        result.append(_normalized_item(item_id, "news", None, title, summary, published, url, "Eastmoney快讯"))
+        source_name = str(
+            row.get("mediaName")
+            or row.get("source")
+            or row.get("source_name")
+            or "Eastmoney feed"
+        ).strip()[:100]
+        result.append(
+            _normalized_item(
+                f"eastmoney:news:{item_id}",
+                "news",
+                None,
+                title,
+                summary,
+                published,
+                url,
+                source_name,
+                transport_provider="eastmoney",
+            )
+        )
     return result
 
 
@@ -478,14 +571,24 @@ def _parse_announcement_payload(
         url = _source_url(
             f"https://data.eastmoney.com/notices/detail/{instrument.symbol}/{item_id}.html"
         )
-        item = _normalized_item(item_id, "announcement", instrument.symbol, title, category, published, url, "Eastmoney公告")
+        item = _normalized_item(
+            f"eastmoney:announcement:{instrument.symbol}:{item_id}",
+            "announcement",
+            instrument.symbol,
+            title,
+            category,
+            published,
+            url,
+            "Eastmoney announcement",
+            transport_provider="eastmoney",
+        )
         item["category"] = category
         result.append(item)
     return result
 
 
 def _normalized_item(
-    item_id: str,
+    source_id: str,
     kind: str,
     symbol: str | None,
     title: str,
@@ -493,19 +596,197 @@ def _normalized_item(
     published: datetime,
     url: str,
     source_name: str,
+    *,
+    transport_provider: str,
+    channels: str = "",
 ) -> dict[str, Any]:
     annotation = _sentiment_annotation(f"{title} {summary}")
     return {
-        "item_id": item_id,
+        "item_id": "item_" + sha256(source_id.encode("utf-8")).hexdigest()[:32],
+        "source_id": source_id,
         "kind": kind,
         "symbol": symbol,
         "title": title,
         "summary": summary,
         "published_at": published.isoformat(),
+        "raw_published_at": published.isoformat(),
         "url": url,
         "source": source_name,
+        "editorial_source": source_name,
+        "transport_provider": transport_provider,
+        "channels": channels,
         "sentiment_annotation": annotation,
     }
+
+
+def _deduplicate_records(
+    records: Sequence[Mapping[str, Any]], snapshot_date: date
+) -> list[dict[str, Any]]:
+    clusters: dict[str, list[dict[str, Any]]] = {}
+    for source in records:
+        item = _clone(source)
+        if not isinstance(item, dict):
+            raise NewsProviderError("normalized news item is invalid")
+        title_key = _canonical_title(str(item.get("title") or ""))
+        if not title_key:
+            raise NewsProviderError("news title has no canonical content")
+        if item.get("kind") == "announcement":
+            cluster_key = f"announcement:{item.get('source_id')}"
+        else:
+            cluster_key = f"news:{title_key}"
+        clusters.setdefault(cluster_key, []).append(item)
+
+    result: list[dict[str, Any]] = []
+    reference_time = datetime.combine(
+        snapshot_date,
+        datetime.max.time().replace(microsecond=0),
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+    for cluster_key, members in clusters.items():
+        members.sort(
+            key=lambda item: (
+                0 if item.get("transport_provider") == "eastmoney" else 1,
+                str(item.get("source_id") or ""),
+            )
+        )
+        canonical = dict(members[0])
+        timestamps = [
+            _parse_timestamp(item.get("published_at"), "published_at")
+            for item in members
+        ]
+        earliest = min(timestamps)
+        latest = max(timestamps)
+        sources = sorted(
+            {
+                (
+                    str(item.get("transport_provider") or "unknown"),
+                    str(item.get("editorial_source") or item.get("source") or "unknown"),
+                )
+                for item in members
+            }
+        )
+        transport_providers = sorted({provider for provider, _ in sources})
+        source_ids = sorted({str(item.get("source_id") or "") for item in members})
+        canonical["item_id"] = (
+            "item_" + sha256(cluster_key.encode("utf-8")).hexdigest()[:32]
+        )
+        canonical["source_item_ids"] = source_ids
+        canonical["sources"] = [
+            {"transport_provider": provider, "editorial_source": editorial}
+            for provider, editorial in sources
+        ]
+        canonical["source_count"] = len(sources)
+        canonical["transport_provider_count"] = len(transport_providers)
+        canonical["duplicate_count"] = len(members) - 1
+        canonical["source"] = ", ".join(editorial for _, editorial in sources)
+        canonical["published_at"] = earliest.isoformat()
+        canonical["deduplication"] = {
+            "method": DEDUPLICATION_METHOD,
+            "cluster_key_sha256": sha256(cluster_key.encode("utf-8")).hexdigest(),
+            "member_count": len(members),
+            "exact_normalized_title": True,
+        }
+        spread_seconds = int((latest - earliest).total_seconds())
+        canonical["time_calibration"] = {
+            "method": TIME_CALIBRATION_METHOD,
+            "timezone": "Asia/Shanghai",
+            "earliest_published_at": earliest.isoformat(),
+            "latest_published_at": latest.isoformat(),
+            "source_spread_seconds": spread_seconds,
+            "status": "aligned" if spread_seconds <= 21_600 else "source_conflict",
+        }
+        age_hours = max(0.0, (reference_time - latest).total_seconds() / 3_600)
+        freshness = 0.5 ** (age_hours / 24.0)
+        source_breadth = min(1.0, len(transport_providers) / 3.0)
+        score = round(100.0 * (0.85 * freshness + 0.15 * source_breadth), 2)
+        canonical["heat"] = {
+            "method": HEAT_METHOD,
+            "score": score,
+            "components": {
+                "age_hours": round(age_hours, 4),
+                "freshness_decay": round(freshness, 8),
+                "source_breadth": round(source_breadth, 8),
+            },
+            "formula": "100 * (0.85 * 0.5^(age_hours/24) + 0.15 * min(transport_provider_count/3, 1))",
+            "uses_market_direction": False,
+            "sentiment_coverage": "UNAVAILABLE",
+        }
+        canonical["sentiment_annotation"] = _sentiment_annotation(
+            f"{canonical['title']} {canonical['summary']}"
+        )
+        canonical["item_revision"] = 1
+        canonical["revision_status"] = "original"
+        canonical["supersedes_content_sha256"] = None
+        canonical["content_sha256"] = _item_content_fingerprint(canonical)
+        result.append(canonical)
+    return result
+
+
+def _canonical_title(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(
+        character for character in normalized if character.isalnum()
+    )
+
+
+def _item_content_fingerprint(value: Mapping[str, Any]) -> str:
+    payload = {
+        key: item
+        for key, item in value.items()
+        if key
+        not in {
+            "content_sha256",
+            "item_revision",
+            "revision_status",
+            "supersedes_content_sha256",
+        }
+    }
+    return _fingerprint(payload)
+
+
+def _bind_item_revisions(
+    records: Sequence[Mapping[str, Any]], previous: Mapping[str, Any] | None
+) -> list[dict[str, Any]]:
+    previous_by_id = {
+        str(item.get("item_id")): item
+        for item in (previous.get("records", []) if isinstance(previous, Mapping) else [])
+        if isinstance(item, dict)
+    }
+    result: list[dict[str, Any]] = []
+    for source in records:
+        item = dict(source)
+        prior = previous_by_id.get(str(item.get("item_id")))
+        if prior is None:
+            item["item_revision"] = 1
+            item["revision_status"] = "original"
+            item["supersedes_content_sha256"] = None
+        elif not isinstance(prior.get("content_sha256"), str):
+            # Item-level lineage starts with the enriched v0.17 evidence contract.
+            item["item_revision"] = 1
+            item["revision_status"] = "original"
+            item["supersedes_content_sha256"] = None
+        elif prior.get("content_sha256") == item.get("content_sha256"):
+            item["item_revision"] = prior.get("item_revision", 1)
+            item["revision_status"] = prior.get("revision_status", "original")
+            item["supersedes_content_sha256"] = prior.get(
+                "supersedes_content_sha256"
+            )
+        else:
+            item["item_revision"] = int(prior.get("item_revision", 1)) + 1
+            item["revision_status"] = "revised"
+            item["supersedes_content_sha256"] = prior.get("content_sha256")
+        result.append(item)
+    return result
+
+
+def _response_sort_key(item: Mapping[str, Any]) -> tuple[str, ...]:
+    return (
+        str(item.get("provider") or "eastmoney"),
+        str(item.get("kind") or ""),
+        str(item.get("symbol") or ""),
+        str(item.get("editorial_source") or ""),
+        str(item.get("api_name") or ""),
+    )
 
 
 def _sentiment_annotation(text: str) -> dict[str, Any]:
@@ -545,13 +826,16 @@ def _validate_draft(value: Mapping[str, Any]) -> None:
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeError("news trade_date is invalid") from exc
     source = value.get("source")
-    if not isinstance(source, dict) or source.get("provider") != "eastmoney":
+    if not isinstance(source, dict) or source.get("provider") not in {
+        "eastmoney",
+        "multi_source_news",
+    }:
         raise RuntimeError("news source metadata is invalid")
     responses = source.get("responses")
-    if not isinstance(responses, list) or len(responses) > 51:
+    if not isinstance(responses, list) or len(responses) > 60:
         raise RuntimeError("news response metadata is invalid")
     normalized_responses: list[dict[str, Any]] = []
-    response_keys: set[tuple[str, str]] = set()
+    response_keys: set[tuple[str, ...]] = set()
     for item in responses:
         if not isinstance(item, dict):
             raise RuntimeError("news response metadata is invalid")
@@ -565,31 +849,32 @@ def _validate_draft(value: Mapping[str, Any]) -> None:
         if _FINGERPRINT.fullmatch(digest) is None:
             raise RuntimeError("news response fingerprint is invalid")
         response_bytes = item.get("response_bytes")
+        response_provider = str(item.get("provider") or "eastmoney")
+        maximum_bytes = (
+            MAX_REFERENCE_RESPONSE_BYTES
+            if response_provider == "tushare"
+            else MAX_RESPONSE_BYTES
+        )
         if (
             isinstance(response_bytes, bool)
             or not isinstance(response_bytes, int)
-            or not 0 <= response_bytes <= MAX_RESPONSE_BYTES
+            or not 0 <= response_bytes <= maximum_bytes
         ):
             raise RuntimeError("news response size is invalid")
-        key = (str(kind), str(symbol or ""))
+        key = _response_sort_key(item)
         if key in response_keys:
             raise RuntimeError("news response metadata is duplicated")
         response_keys.add(key)
-        normalized_responses.append(
-            {
-                "kind": kind,
-                "symbol": symbol,
-                "response_sha256": digest,
-                "response_bytes": response_bytes,
-            }
-        )
-    normalized_responses.sort(key=lambda item: (str(item["kind"]), str(item["symbol"] or "")))
+        normalized_responses.append(dict(item))
+    normalized_responses.sort(key=_response_sort_key)
     if source.get("response_count") != len(normalized_responses):
         raise RuntimeError("news response count is invalid")
     if source.get("response_sha256") != _fingerprint(normalized_responses):
         raise RuntimeError("news response aggregate fingerprint is invalid")
     for endpoint_key in ("news_endpoint", "announcement_endpoint"):
         _source_url(source.get(endpoint_key))
+    if source.get("tushare_endpoint") is not None:
+        _source_url(source.get("tushare_endpoint"))
     records = value.get("records")
     if not isinstance(records, list) or len(records) > MAX_TOTAL_RECORDS:
         raise RuntimeError("news records are invalid")
@@ -609,6 +894,10 @@ def _validate_draft(value: Mapping[str, Any]) -> None:
         _source_url(item.get("url"))
         if item.get("symbol") is not None and _SYMBOL.fullmatch(str(item["symbol"])) is None:
             raise RuntimeError("news item symbol is invalid")
+        if source.get("provider") == "multi_source_news":
+            _validate_enriched_item(
+                item, snapshot_date=date.fromisoformat(str(value["trade_date"]))
+            )
 
 
 def _validate_record(value: Mapping[str, Any], *, expected_date: date, expected_revision: int) -> None:
@@ -622,6 +911,155 @@ def _validate_record(value: Mapping[str, Any], *, expected_date: date, expected_
             raise RuntimeError(f"news {key} is invalid")
     if value.get("record_fingerprint") != _record_fingerprint(value):
         raise RuntimeError("news record fingerprint does not match content")
+
+
+def _validate_enriched_item(item: Mapping[str, Any], *, snapshot_date: date) -> None:
+    source_id = item.get("source_id")
+    if (
+        not isinstance(source_id, str)
+        or not 1 <= len(source_id) <= 200
+        or any(ord(character) < 32 for character in source_id)
+    ):
+        raise RuntimeError("news source identity is invalid")
+    source_ids = item.get("source_item_ids")
+    sources = item.get("sources")
+    if (
+        not isinstance(source_ids, list)
+        or not source_ids
+        or len(source_ids) > 100
+        or source_ids != sorted(set(source_ids))
+        or source_id not in source_ids
+        or not isinstance(sources, list)
+        or not sources
+        or len(sources) > 100
+    ):
+        raise RuntimeError("news source cluster is invalid")
+    normalized_sources: set[tuple[str, str]] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            raise RuntimeError("news clustered source is invalid")
+        provider = source.get("transport_provider")
+        editorial = source.get("editorial_source")
+        if provider not in {"eastmoney", "tushare"} or not isinstance(
+            editorial, str
+        ) or not editorial:
+            raise RuntimeError("news clustered source is invalid")
+        normalized_sources.add((provider, editorial))
+    if len(normalized_sources) != len(sources) or item.get("source_count") != len(
+        sources
+    ):
+        raise RuntimeError("news source count is invalid")
+    transport_provider_count = item.get("transport_provider_count")
+    if (
+        isinstance(transport_provider_count, bool)
+        or not isinstance(transport_provider_count, int)
+        or transport_provider_count
+        != len({provider for provider, _editorial in normalized_sources})
+    ):
+        raise RuntimeError("news transport provider count is invalid")
+    duplicate_count = item.get("duplicate_count")
+    if duplicate_count != len(source_ids) - 1:
+        raise RuntimeError("news duplicate count is invalid")
+    deduplication = item.get("deduplication")
+    cluster_key = (
+        f"announcement:{source_id}"
+        if item.get("kind") == "announcement"
+        else f"news:{_canonical_title(str(item.get('title') or ''))}"
+    )
+    if (
+        not isinstance(deduplication, dict)
+        or deduplication.get("method") != DEDUPLICATION_METHOD
+        or deduplication.get("member_count") != len(source_ids)
+        or deduplication.get("exact_normalized_title") is not True
+        or deduplication.get("cluster_key_sha256")
+        != sha256(cluster_key.encode("utf-8")).hexdigest()
+    ):
+        raise RuntimeError("news deduplication evidence is invalid")
+    if item.get("item_id") != (
+        "item_" + sha256(cluster_key.encode("utf-8")).hexdigest()[:32]
+    ):
+        raise RuntimeError("news cluster identity is invalid")
+    published = _parse_timestamp(item.get("published_at"), "published_at")
+    raw_published = _parse_timestamp(
+        item.get("raw_published_at"), "raw_published_at"
+    )
+    calibration = item.get("time_calibration")
+    if (
+        not isinstance(calibration, dict)
+        or calibration.get("method") != TIME_CALIBRATION_METHOD
+        or calibration.get("timezone") != "Asia/Shanghai"
+        or calibration.get("status") not in {"aligned", "source_conflict"}
+    ):
+        raise RuntimeError("news time calibration is invalid")
+    earliest = _parse_timestamp(
+        calibration.get("earliest_published_at"), "earliest_published_at"
+    )
+    latest = _parse_timestamp(
+        calibration.get("latest_published_at"), "latest_published_at"
+    )
+    spread = calibration.get("source_spread_seconds")
+    if (
+        published != earliest
+        or not earliest <= raw_published <= latest
+        or latest < earliest
+        or isinstance(spread, bool)
+        or not isinstance(spread, int)
+        or spread != int((latest - earliest).total_seconds())
+        or calibration.get("status")
+        != ("aligned" if spread <= 21_600 else "source_conflict")
+        or latest.date() > snapshot_date
+    ):
+        raise RuntimeError("news calibrated timestamp evidence is invalid")
+    heat = item.get("heat")
+    components = heat.get("components") if isinstance(heat, dict) else None
+    if (
+        not isinstance(heat, dict)
+        or heat.get("method") != HEAT_METHOD
+        or heat.get("uses_market_direction") is not False
+        or heat.get("sentiment_coverage") != "UNAVAILABLE"
+        or not isinstance(components, dict)
+    ):
+        raise RuntimeError("news heat evidence is invalid")
+    reference_time = datetime.combine(
+        snapshot_date,
+        datetime.max.time().replace(microsecond=0),
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+    expected_age = max(0.0, (reference_time - latest).total_seconds() / 3_600)
+    expected_freshness = 0.5 ** (expected_age / 24.0)
+    expected_breadth = min(1.0, transport_provider_count / 3.0)
+    expected_score = round(
+        100.0 * (0.85 * expected_freshness + 0.15 * expected_breadth), 2
+    )
+    if (
+        heat.get("formula")
+        != "100 * (0.85 * 0.5^(age_hours/24) + 0.15 * min(transport_provider_count/3, 1))"
+        or heat.get("score") != expected_score
+        or components.get("age_hours") != round(expected_age, 4)
+        or components.get("freshness_decay") != round(expected_freshness, 8)
+        or components.get("source_breadth") != round(expected_breadth, 8)
+    ):
+        raise RuntimeError("news heat calculation is invalid")
+    item_revision = item.get("item_revision")
+    revision_status = item.get("revision_status")
+    supersedes = item.get("supersedes_content_sha256")
+    if (
+        isinstance(item_revision, bool)
+        or not isinstance(item_revision, int)
+        or item_revision < 1
+        or revision_status not in {"original", "revised"}
+        or (item_revision == 1) is not (revision_status == "original")
+        or (item_revision == 1 and supersedes is not None)
+        or (
+            item_revision > 1
+            and _FINGERPRINT.fullmatch(str(supersedes or "")) is None
+        )
+    ):
+        raise RuntimeError("news item revision evidence is invalid")
+    if _FINGERPRINT.fullmatch(str(item.get("content_sha256") or "")) is None or item.get(
+        "content_sha256"
+    ) != _item_content_fingerprint(item):
+        raise RuntimeError("news item content fingerprint is invalid")
 
 
 def _text(value: Any, label: str, maximum: int) -> str:
@@ -662,7 +1100,12 @@ def _source_url(value: Any) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise NewsProviderError("source URL scheme is invalid")
     host = parsed.hostname.lower().rstrip(".")
-    if not (host == "eastmoney.com" or host.endswith(".eastmoney.com")):
+    if not (
+        host == "eastmoney.com"
+        or host.endswith(".eastmoney.com")
+        or host == "tushare.pro"
+        or host.endswith(".tushare.pro")
+    ):
         raise NewsProviderError("source URL host is not allowlisted")
     return value
 
@@ -696,6 +1139,28 @@ def _query_payload(query: NewsQuery) -> dict[str, Any]:
 def _summary(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return {
         "record_count": len(records),
+        "raw_record_count": sum(
+            int(item.get("duplicate_count", 0)) + 1 for item in records
+        ),
+        "duplicate_count": sum(int(item.get("duplicate_count", 0)) for item in records),
+        "multi_transport_cluster_count": sum(
+            int(item.get("transport_provider_count", 1)) > 1 for item in records
+        ),
+        "editorial_source_count": len(
+            {
+                source.get("editorial_source")
+                for item in records
+                for source in (
+                    item.get("sources", [])
+                    if isinstance(item.get("sources"), list)
+                    else []
+                )
+                if isinstance(source, dict) and source.get("editorial_source")
+            }
+        ),
+        "revised_item_count": sum(
+            item.get("revision_status") == "revised" for item in records
+        ),
         "news_count": sum(1 for item in records if item.get("kind") == "news"),
         "announcement_count": sum(1 for item in records if item.get("kind") == "announcement"),
         "symbol_count": len({item.get("symbol") for item in records if item.get("symbol")}),

@@ -153,6 +153,25 @@ complete revision. The provider-defined boards may overlap, so their amounts
 are never represented as whole-market flow. Order-size classification remains
 uncertified provider methodology without an independent cross-source check.
 
+`data/fundamentals.py` and `data/valuation.py` keep Eastmoney as the primary
+normalized evidence and may call `data/tushare_reference.py` only during an
+explicit refresh. Fundamental reconciliation uses the newest common disclosed
+period; valuation reconciliation uses the exact completed session. The optional
+Tushare fields and response fingerprints are embedded as reference-only checks:
+they cannot fill a missing primary value or replace a record. Reads and assistant
+analysis perform no provider I/O, and a stored conflict forces the fundamental
+perspective to abstain.
+
+`data/disclosures.py` retains official SSE/CNINFO metadata, deterministic
+title-rule event categories, and optional bounded PDF response hashes without
+storing document bodies. A hash is local response-integrity evidence, not an
+archive, signature, or WORM record. `data/news.py` remains a separate
+third-party boundary. It clusters exact normalized titles, separates transport
+Providers from editorial sources, calibrates timestamps to Asia/Shanghai, and
+tracks content revisions. Heat uses time decay and distinct transport count;
+multiple Tushare editorial feeds are not independent transport confirmation,
+and sentiment coverage remains unavailable.
+
 ## Research Monitoring Boundary
 
 ```text
@@ -378,7 +397,7 @@ research evidence.
 
 ### Persistent digest ledger
 
-This surface is included in the public `v0.16.0` wheel. It remains derivative
+This surface is included in the public `v0.17.0` wheel. It remains derivative
 research evidence and does not replace the authoritative paper ledger,
 reports, or journal.
 

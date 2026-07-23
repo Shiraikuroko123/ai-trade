@@ -29,6 +29,8 @@ class _Response:
         return None
 
     def read(self, _maximum):
+        if isinstance(self.value, bytes):
+            return self.value
         return json.dumps(self.value).encode("utf-8")
 
 
@@ -63,7 +65,7 @@ def _sse_payload():
                     "SECURITY_NAME": "Test Bank",
                     "ADDDATE": "2026-07-17 18:30:00",
                     "SSEDATE": "2026-07-18",
-                    "TITLE": "Test Bank official notice",
+                    "TITLE": "Test Bank 解除限售股份上市流通公告",
                     "BULLETIN_TYPE": "Other",
                     "URL": "/disclosure/listedinfo/announcement/test.pdf",
                 }
@@ -120,6 +122,10 @@ class DisclosureTests(unittest.TestCase):
         if "hisAnnouncement/query" in request.full_url:
             self.assertIn(b"159915%2Cjjjl0000041", request.data)
             return _Response(_cninfo_payload())
+        if request.full_url.startswith(
+            ("https://static.sse.com.cn/", "https://static.cninfo.com.cn/")
+        ):
+            return _Response(b"%PDF-1.7\nvalidated test document\n%%EOF")
         raise AssertionError(f"unexpected request: {request.full_url}")
 
     def test_refresh_separates_official_sources_and_reports_coverage_gaps(self):
@@ -142,6 +148,12 @@ class DisclosureTests(unittest.TestCase):
         self.assertEqual(gap["status"], "unavailable")
         self.assertEqual(gap["reason"], "official_market_coverage_unavailable")
         self.assertFalse(result["source"]["document_archived"])
+        self.assertEqual(result["source"]["document_hashing"], "complete")
+        self.assertEqual(result["summary"]["document_hash"]["hashed"], 2)
+        event = next(item for item in result["records"] if item["symbol"] == "600000")
+        self.assertIn("lockup_expiration", event["event_types"])
+        self.assertEqual(event["document_body"]["status"], "hashed")
+        self.assertEqual(len(event["document_body"]["sha256"]), 64)
         self.assertFalse(result["authority"]["execution_authorized"])
 
         visible = DisclosureStore(self.config).list(

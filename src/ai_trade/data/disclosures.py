@@ -31,8 +31,10 @@ CNINFO_QUERY_ENDPOINT = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
 CNINFO_MASTER_ROOT = "https://www.cninfo.com.cn/new/data"
 CNINFO_STATIC_ROOT = "https://static.cninfo.com.cn"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 MAX_SYMBOLS = 100
 MAX_RECORDS = 5_000
+MAX_HASHED_DOCUMENTS = 200
 MAX_QUERY_LIMIT = 500
 MAX_TEXT = 500
 CHINA_TIMEZONE = timezone(timedelta(hours=8))
@@ -40,6 +42,14 @@ _SYMBOL = re.compile(r"\d{6}\Z")
 _DISCLOSURE_ID = re.compile(r"(?:sse|cninfo)_[a-zA-Z0-9]{1,80}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 _AUTHORITY = {"research_only": True, "execution_authorized": False}
+EVENT_CLASSIFICATION_METHOD = "official-disclosure-title-rules-v1"
+_EVENT_RULES = {
+    "lockup_expiration": ("解除限售", "限售股解禁", "限售股份上市流通"),
+    "shareholder_increase": ("增持",),
+    "shareholder_decrease": ("减持",),
+    "shareholder_change": ("权益变动", "股东变动", "持股变动"),
+    "share_pledge": ("股份质押", "解除质押", "质押"),
+}
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,7 @@ def refresh_disclosures(
     as_of: datetime | None = None,
     lookback_days: int = 30,
     limit_per_symbol: int = 50,
+    hash_documents: bool = True,
 ) -> dict[str, Any]:
     if (
         isinstance(lookback_days, bool)
@@ -76,6 +87,8 @@ def refresh_disclosures(
         or not 1 <= limit_per_symbol <= 100
     ):
         raise ValueError("limit_per_symbol must be between 1 and 100")
+    if not isinstance(hash_documents, bool):
+        raise ValueError("hash_documents must be a boolean")
     instruments = {item.symbol: item for item in config.instruments}
     selected = list(symbols) if symbols is not None else list(instruments)
     if not selected or len(selected) > MAX_SYMBOLS or len(set(selected)) != len(selected):
@@ -157,6 +170,59 @@ def refresh_disclosures(
                 )
             records.extend(items)
             responses.append(evidence)
+            if hash_documents:
+                for item in items:
+                    if sum(
+                        response.get("kind") == "document" for response in responses
+                    ) >= MAX_HASHED_DOCUMENTS:
+                        item["document_body"] = _unavailable_document_body(
+                            "document_hash_capacity_reached"
+                        )
+                        errors.append(
+                            {
+                                "symbol": instrument.symbol,
+                                "disclosure_id": str(item["disclosure_id"]),
+                                "code": "official_document_hash_capacity_reached",
+                                "message": "The bounded document hash capacity was reached.",
+                            }
+                        )
+                        continue
+                    try:
+                        document = _download_document(config, item["document_url"])
+                        item["document_body"] = {
+                            "status": "hashed",
+                            "sha256": document[0],
+                            "bytes": document[1],
+                            "format": "PDF",
+                            "archived": False,
+                        }
+                        responses.append(
+                            _response_evidence(
+                                "document",
+                                provider,
+                                document[0],
+                                document[1],
+                                symbol=instrument.symbol,
+                                disclosure_id=str(item["disclosure_id"]),
+                            )
+                        )
+                    except (DisclosureProviderError, OSError, ValueError) as exc:
+                        item["document_body"] = _unavailable_document_body(
+                            "document_hash_provider_error", str(exc)[:300]
+                        )
+                        errors.append(
+                            {
+                                "symbol": instrument.symbol,
+                                "disclosure_id": str(item["disclosure_id"]),
+                                "code": "official_document_hash_provider_error",
+                                "message": str(exc)[:300],
+                            }
+                        )
+            else:
+                for item in items:
+                    item["document_body"] = _unavailable_document_body(
+                        "document_hash_not_requested"
+                    )
             coverage.append(
                 _coverage(
                     instrument,
@@ -225,6 +291,17 @@ def refresh_disclosures(
             "cninfo_master_root": CNINFO_MASTER_ROOT,
             "certification": "official_exchange_or_designated_disclosure_platform",
             "document_archived": False,
+            "document_hashing": (
+                "not_requested"
+                if not hash_documents
+                else "complete"
+                if records
+                and all(
+                    item.get("document_body", {}).get("status") == "hashed"
+                    for item in records
+                )
+                else "partial"
+            ),
             "responses": responses,
             "response_count": len(responses),
             "response_sha256": _fingerprint(responses),
@@ -235,8 +312,8 @@ def refresh_disclosures(
         "errors": errors,
         "warnings": [
             {
-                "code": "metadata_only",
-                "message": "Official metadata and document links are archived; PDF content is not downloaded or WORM-stored.",
+                "code": "document_hash_not_archive",
+                "message": "Official PDF response hashes and sizes are recorded when available, but document bodies are not archived, signed, or WORM-stored.",
             },
             {
                 "code": "no_sentiment_inference",
@@ -487,6 +564,7 @@ def _parse_sse(
                 "document_format": "PDF",
                 "source_provider": "sse",
                 "source_authority": "Shanghai Stock Exchange",
+                **_event_classification(_text(row.get("TITLE"), "title")),
             }
         )
     return result, total
@@ -552,6 +630,7 @@ def _parse_cninfo(
                 "document_format": str(row.get("adjunctType") or "PDF")[:20].upper(),
                 "source_provider": "cninfo",
                 "source_authority": "CNINFO designated disclosure platform",
+                **_event_classification(_text(title, "title")),
             }
         )
     return result, total
@@ -591,12 +670,14 @@ def _response_evidence(
     *,
     symbol: str | None = None,
     master_name: str | None = None,
+    disclosure_id: str | None = None,
 ) -> dict[str, Any]:
     return {
         "kind": kind,
         "provider": provider,
         "symbol": symbol,
         "master_name": master_name,
+        "disclosure_id": disclosure_id,
         "response_sha256": digest,
         "response_bytes": response_bytes,
     }
@@ -639,6 +720,10 @@ def _validate_payload(value: Mapping[str, Any]) -> None:
         _official_url(item.get("document_url"))
         if item.get("source_provider") not in {"sse", "cninfo"}:
             raise RuntimeError("official disclosure source is invalid")
+        _validate_event_classification(item)
+        body = item.get("document_body")
+        if body is not None:
+            _validate_document_body(body)
     coverage_symbols: set[str] = set()
     for item in coverage:
         if not isinstance(item, dict) or _SYMBOL.fullmatch(
@@ -671,7 +756,12 @@ def _validate_payload(value: Mapping[str, Any]) -> None:
         ) is None:
             raise RuntimeError("official disclosure response evidence is invalid")
         size = item.get("response_bytes")
-        if isinstance(size, bool) or not isinstance(size, int) or not 0 <= size <= MAX_RESPONSE_BYTES:
+        maximum = (
+            MAX_DOCUMENT_BYTES
+            if item.get("kind") == "document"
+            else MAX_RESPONSE_BYTES
+        )
+        if isinstance(size, bool) or not isinstance(size, int) or not 0 <= size <= maximum:
             raise RuntimeError("official disclosure response size is invalid")
     if value.get("authority") != _AUTHORITY:
         raise RuntimeError("official disclosure authority is invalid")
@@ -719,6 +809,23 @@ def _summary(
             item.get("status") in {"unavailable", "error"} for item in coverage
         ),
         "error_count": len(errors),
+        "official_event_count": sum(bool(item.get("event_types")) for item in records),
+        "official_event_types": {
+            event_type: sum(
+                event_type in item.get("event_types", []) for item in records
+            )
+            for event_type in _EVENT_RULES
+        },
+        "document_hash": {
+            "hashed": sum(
+                item.get("document_body", {}).get("status") == "hashed"
+                for item in records
+            ),
+            "unavailable": sum(
+                item.get("document_body", {}).get("status") == "unavailable"
+                for item in records
+            ),
+        },
     }
 
 
@@ -821,6 +928,116 @@ def _official_url(value: Any) -> str:
     }:
         raise DisclosureProviderError("official disclosure URL is not allowlisted")
     return value
+
+
+def _download_document(config: AppConfig, url: str) -> tuple[str, int]:
+    _official_url(url)
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/pdf",
+            "Referer": "https://www.cninfo.com.cn/",
+            "User-Agent": "Mozilla/5.0 ai-trade/0.17 research-only",
+        },
+        method="GET",
+    )
+    data_config = config.raw.get("data", {})
+    timeout = min(60, max(1, int(data_config.get("timeout_seconds", 20))))
+    attempts = min(3, max(1, int(data_config.get("max_attempts", 3))))
+    errors: list[str] = []
+    for attempt in range(attempts):
+        try:
+            with _open_request(request, timeout, _proxy_mode(config)) as response:
+                raw = response.read(MAX_DOCUMENT_BYTES + 1)
+            if len(raw) > MAX_DOCUMENT_BYTES:
+                raise DisclosureProviderError("official PDF response is too large")
+            if len(raw) < 8 or not raw.startswith(b"%PDF-"):
+                raise DisclosureProviderError("official document is not a PDF response")
+            return sha256(raw).hexdigest(), len(raw)
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+            if attempt + 1 < attempts:
+                time_module.sleep(min(2.0, 0.25 * (2**attempt)))
+    raise DisclosureProviderError(
+        "official PDF hash request failed: " + " | ".join(errors)
+    )
+
+
+def _event_classification(title: str) -> dict[str, Any]:
+    matches = [
+        {
+            "event_type": event_type,
+            "matched_terms": [term for term in terms if term in title],
+        }
+        for event_type, terms in _EVENT_RULES.items()
+        if any(term in title for term in terms)
+    ]
+    return {
+        "event_types": [item["event_type"] for item in matches],
+        "event_classification": {
+            "method": EVENT_CLASSIFICATION_METHOD,
+            "matches": matches,
+            "interpretation": "category_only_not_directional",
+        },
+    }
+
+
+def _validate_event_classification(item: Mapping[str, Any]) -> None:
+    event_types = item.get("event_types")
+    classification = item.get("event_classification")
+    if event_types is None and classification is None:
+        return
+    if (
+        not isinstance(event_types, list)
+        or len(event_types) != len(set(event_types))
+        or any(value not in _EVENT_RULES for value in event_types)
+        or not isinstance(classification, dict)
+        or classification.get("method") != EVENT_CLASSIFICATION_METHOD
+        or classification.get("interpretation") != "category_only_not_directional"
+    ):
+        raise RuntimeError("official disclosure event classification is invalid")
+    expected = _event_classification(str(item.get("title") or ""))
+    if event_types != expected["event_types"] or classification != expected[
+        "event_classification"
+    ]:
+        raise RuntimeError("official disclosure event classification is not reproducible")
+
+
+def _unavailable_document_body(
+    reason: str, message: str | None = None
+) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "sha256": None,
+        "bytes": 0,
+        "format": "PDF",
+        "archived": False,
+        "reason": reason,
+        "message": message,
+    }
+
+
+def _validate_document_body(value: Any) -> None:
+    if not isinstance(value, dict) or value.get("status") not in {
+        "hashed",
+        "unavailable",
+    }:
+        raise RuntimeError("official disclosure document body evidence is invalid")
+    if value.get("format") != "PDF" or value.get("archived") is not False:
+        raise RuntimeError("official disclosure document body boundary is invalid")
+    size = value.get("bytes")
+    if (
+        isinstance(size, bool)
+        or not isinstance(size, int)
+        or not 0 <= size <= MAX_DOCUMENT_BYTES
+    ):
+        raise RuntimeError("official disclosure document body size is invalid")
+    digest = value.get("sha256")
+    if value.get("status") == "hashed":
+        if _FINGERPRINT.fullmatch(str(digest or "")) is None or size < 8:
+            raise RuntimeError("official disclosure document hash is invalid")
+    elif digest is not None or size != 0:
+        raise RuntimeError("unavailable official document has body evidence")
 
 
 def _nonnegative_int(value: Any, label: str) -> int:

@@ -1,6 +1,6 @@
 # Persistent Research Digests
 
-> **Release status:** the `v0.16.0` wheel contains the research-digest surface,
+> **Release status:** the `v0.17.0` wheel contains the research-digest surface,
 > `archive-generate`, these HTTP routes, and the Windows archive-task scripts.
 > Digests remain derivative, owner-scoped research evidence rather than an
 > accounting or execution authority.

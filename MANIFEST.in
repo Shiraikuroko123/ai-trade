@@ -54,6 +54,7 @@ include src/ai_trade/data/intraday.py
 include src/ai_trade/data/news.py
 include src/ai_trade/data/order_book.py
 include src/ai_trade/data/tushare.py
+include src/ai_trade/data/tushare_reference.py
 include src/ai_trade/data/valuation.py
 include src/ai_trade/notification_delivery.py
 include src/ai_trade/research_archive.py

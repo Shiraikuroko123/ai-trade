@@ -1,6 +1,6 @@
 # AI K-line Assistant
 
-AI Trade `v0.16.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
+AI Trade `v0.17.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
 
 ## Contract
 
@@ -36,8 +36,11 @@ stored for the exact final K-line date. It performs no network fetch during an
 analysis, accepts only `current` or `partial` records, and excludes
 `provisional` valuation so pre-close observations cannot leak into a completed
 bar review. ETFs remain explicitly unsupported. Fewer than two directional
-signals, or a conflict between supportive and adverse signals, produces a
-`MIXED` abstention rather than an inferred conclusion. Sentiment remains
+signals, a conflict between supportive and adverse signals, or a field-level
+conflict with an already stored Tushare reference check produces a `MIXED`
+abstention rather than an inferred conclusion. The reference check never fills
+or replaces Eastmoney primary fields. Each available check is cited as
+`fundamental.independent_check` or `valuation.independent_check`. Sentiment remains
 `UNAVAILABLE`: official disclosures, third-party news, Dragon-Tiger List,
 breadth, capital flow, and Level-1 depth do not form a validated sentiment
 methodology.

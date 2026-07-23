@@ -465,6 +465,46 @@ class AssistantEngineTests(unittest.TestCase):
                 ]
             )
 
+    def test_independent_source_conflict_forces_fundamental_abstention(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _config(Path(temporary))
+            market = _StockMarket(_bars(220), symbol="600000")
+            data_date = market.latest_date().isoformat()
+            fundamentals = _fundamental_snapshot(data_date)
+            fundamentals["records"][0]["independent_check"] = {
+                "provider": "tushare",
+                "status": "conflict",
+                "reason": None,
+                "comparable_field_count": 2,
+                "conflict_count": 1,
+                "fields": [
+                    {
+                        "field": "weighted_roe_pct",
+                        "status": "conflict",
+                    }
+                ],
+            }
+            with (
+                patch(
+                    "ai_trade.assistant.engine.FundamentalStore.list",
+                    return_value=fundamentals,
+                ),
+                patch(
+                    "ai_trade.assistant.engine.ValuationStore.list",
+                    return_value={},
+                ),
+            ):
+                result = AssistantEngine(config).analyze(market, "600000")
+            features = result["features"]["fundamental"]
+            self.assertEqual(
+                features["abstention_reason"], "independent_source_conflict"
+            )
+            self.assertEqual(features["stance"], "MIXED")
+            evidence_ids = {
+                item["evidence_id"] for item in result["diagnosis"]["evidence"]
+            }
+            self.assertIn("fundamental.independent_check", evidence_ids)
+
 
 class ProviderPolicyTests(unittest.TestCase):
     def test_response_limit_is_fixed_and_not_environment_configurable(self):
