@@ -296,9 +296,20 @@ Assistant conclusions are a closed enum. `REVIEW_CANDIDATE` requests human resea
 
 Every new assistant result also contains `deterministic-perspective-audit-v1`. The audit compares technical, risk, exact-date stock fundamental/valuation, and strategy-gate stances, records unavailable sentiment or unsupported/sparse fundamentals as coverage or abstention rather than invented confidence, and records a blocked model relaxation as a separate authority-guard conflict. The validator reconstructs the audit from the saved perspectives and assessment, then checks that the deterministic, proposed, and effective conclusions obey the same strictness ordering used by the model boundary. This is a deterministic evidence check, not multi-model execution, voting, or model-derived authorization.
 
-Before model I/O, `ModelCallGovernance` performs per-user single-call and UTC-day Token/cost checks under a cross-process lock and acquires a bounded process semaphore. Each logical call, cache hit, denial, and failed/successful HTTP attempt is committed as immutable hash-bound evidence under `state/assistant_calls/`; normalized validated public enhancements use a separate immutable per-user cache under `state/assistant_model_cache/`. Audit storage failure or tampering fails closed for later model work. Raw prompts, raw provider responses, hidden reasoning, endpoint URLs, and credentials are not stored.
+`auditable-bull-bear-judge-v1` is built after that deterministic audit. Bull and
+bear records are limited to evidence-cited arguments, counterevidence, and
+abstention; the judge is limited to agreements, role-specific argument
+conflicts, and unresolved questions. Each model role is a separate governed
+logical call and cache identity. A normal role failure retains a deterministic
+local record and does not prevent sibling roles from running. The judge can use
+any validated mixture of model and local advocate records, but the final
+validator requires `conclusion_mutation_allowed=false`, preserves the effective
+assessment conclusion, and rejects unknown or cross-role references. It has no
+order, position, pricing, risk-budget, voting, or authorization contract.
 
-Per-user assistant results, call audits, and model cache records are stored under `state/assistant/`, `state/assistant_calls/`, and `state/assistant_model_cache/`. The repository-wide `state/*` ignore rule excludes them from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history and governance evidence are therefore local operational state rather than a portable report or cloud backup.
+Before model I/O, `ModelCallGovernance` performs per-user single-call and UTC-day Token/cost checks under a cross-process lock and acquires a bounded process semaphore. Each logical call, cache hit, denial, and failed/successful HTTP attempt is committed as immutable hash-bound evidence under `state/assistant_calls/`; normalized validated public enhancements use a separate immutable per-user cache under `state/assistant_model_cache/`. Request and cache identity bind the role, model, endpoint hash, evidence, input, and prompt-template version, so wording, bull, bear, and judge responses cannot be reused across roles. Audit storage failure or tampering fails closed for later model work. Raw prompts, raw provider responses, hidden reasoning, endpoint URLs, and credentials are not stored.
+
+Per-user assistant results, call audits, and model cache records are stored under `state/assistant/`, `state/assistant_calls/`, and `state/assistant_model_cache/`. New assistant results are no-replace files with a recomputable `record_sha256`; fingerprinted records that fail verification are excluded from history and comparison, while legacy schema-v1 records without the field remain readable. This local unkeyed hash is integrity evidence, not a signature or WORM control. The repository-wide `state/*` ignore rule excludes all three stores from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history and governance evidence are therefore local operational state rather than a portable report or cloud backup.
 
 ## Append-only Research Journal Boundary
 
@@ -397,7 +408,7 @@ research evidence.
 
 ### Persistent digest ledger
 
-This surface is included in the public `v0.17.0` wheel. It remains derivative
+This surface is included in the public `v0.18.0` wheel. It remains derivative
 research evidence and does not replace the authoritative paper ledger,
 reports, or journal.
 

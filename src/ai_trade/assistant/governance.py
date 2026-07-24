@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from ..data.evidence_io import atomic_create_json, evidence_store_lock
@@ -29,6 +29,13 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 _CALL_FILE = re.compile(r"call_[0-9a-f]{32}\.json\Z")
 _SEMAPHORE_LOCK = threading.Lock()
 _SEMAPHORES: dict[tuple[str, int], threading.BoundedSemaphore] = {}
+_CALL_ROLES = {
+    "research_assistant_wording",
+    "research_debate_bull",
+    "research_debate_bear",
+    "research_debate_judge",
+}
+MAX_REQUEST_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -168,21 +175,70 @@ class ModelCallGovernance:
         assessment: dict[str, Any],
         provider: Any,
     ) -> tuple[dict[str, Any], dict[str, int], dict[str, Any]]:
+        return self.run_structured(
+            user_id=user_id,
+            role="research_assistant_wording",
+            template_version=self.template_version,
+            request_payload={
+                "symbol": symbol,
+                "data_date": data_date,
+                "diagnosis": diagnosis,
+                "assessment": assessment,
+            },
+            evidence=diagnosis.get("evidence"),
+            provider_call=lambda max_retries, audit_hook: provider.enhance(
+                symbol=symbol,
+                data_date=data_date,
+                diagnosis=diagnosis,
+                assessment=assessment,
+                max_retries=max_retries,
+                audit_hook=audit_hook,
+            ),
+            result_validator=_valid_enhancement_shape,
+        )
+
+    def run_structured(
+        self,
+        *,
+        user_id: str,
+        role: str,
+        template_version: str,
+        request_payload: dict[str, Any],
+        evidence: Any,
+        provider_call: Callable[
+            [int, Callable[[dict[str, Any]], None]],
+            tuple[dict[str, Any], dict[str, int]],
+        ],
+        result_validator: Callable[[Any], bool],
+    ) -> tuple[dict[str, Any], dict[str, int], dict[str, Any]]:
         if self._storage_failed:
             raise AssistantProviderError("model_audit_unavailable")
+        if role not in _CALL_ROLES:
+            raise ValueError("model call role is invalid")
+        if (
+            not isinstance(template_version, str)
+            or not 1 <= len(template_version) <= 100
+            or any(ord(character) < 32 for character in template_version)
+        ):
+            raise ValueError("model call template version is invalid")
+        if not isinstance(request_payload, dict) or not callable(provider_call):
+            raise TypeError("model structured request is invalid")
+        if not callable(result_validator):
+            raise TypeError("model structured validator is invalid")
         user_hash = _user_hash(user_id)
         try:
             with evidence_store_lock(
                 self.audit_root / user_hash,
                 "Assistant model budget",
             ):
-                return self._enhance_user_locked(
+                return self._call_user_locked(
                     user_hash=user_hash,
-                    symbol=symbol,
-                    data_date=data_date,
-                    diagnosis=diagnosis,
-                    assessment=assessment,
-                    provider=provider,
+                    role=role,
+                    template_version=template_version,
+                    request_payload=request_payload,
+                    evidence=evidence,
+                    provider_call=provider_call,
+                    result_validator=result_validator,
                 )
         except AssistantProviderError:
             raise
@@ -190,28 +246,32 @@ class ModelCallGovernance:
             self._storage_failed = True
             raise AssistantProviderError("model_audit_unavailable") from exc
 
-    def _enhance_user_locked(
+    def _call_user_locked(
         self,
         *,
         user_hash: str,
-        symbol: str,
-        data_date: str,
-        diagnosis: dict[str, Any],
-        assessment: dict[str, Any],
-        provider: Any,
+        role: str,
+        template_version: str,
+        request_payload: dict[str, Any],
+        evidence: Any,
+        provider_call: Callable[
+            [int, Callable[[dict[str, Any]], None]],
+            tuple[dict[str, Any], dict[str, int]],
+        ],
+        result_validator: Callable[[Any], bool],
     ) -> tuple[dict[str, Any], dict[str, int], dict[str, Any]]:
-        request_payload = {
-            "symbol": symbol,
-            "data_date": data_date,
-            "diagnosis": diagnosis,
-            "assessment": assessment,
+        governed_request = {
+            "role": role,
+            "input": request_payload,
             "model": self.model,
             "endpoint_sha256": self.endpoint_sha256,
-            "template_version": self.template_version,
+            "template_version": template_version,
         }
-        request_bytes = _canonical_bytes(request_payload)
+        request_bytes = _canonical_bytes(governed_request)
+        if len(request_bytes) > MAX_REQUEST_BYTES:
+            raise AssistantProviderError("model_request_too_large")
         request_sha256 = hashlib.sha256(request_bytes).hexdigest()
-        evidence_sha256 = _sha256_json(diagnosis.get("evidence"))
+        evidence_sha256 = _sha256_json(evidence)
         cache_key = request_sha256
         estimated_prompt_tokens = max(1, math.ceil(len(request_bytes) / 4) + 500)
         per_attempt_reserved_tokens = (
@@ -228,13 +288,21 @@ class ModelCallGovernance:
         budget_date_utc = _today()
 
         try:
-            cached = self._load_cache(user_hash, cache_key)
+            cached = self._load_cache(
+                user_hash,
+                cache_key,
+                role=role,
+                template_version=template_version,
+                result_validator=result_validator,
+            )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             try:
                 budget = self._budget_snapshot(user_hash, budget_date_utc)
                 record = self._record(
                     call_id=call_id,
                     user_hash=user_hash,
+                    role=role,
+                    template_version=template_version,
                     started_at=started_at,
                     status="failed",
                     request_sha256=request_sha256,
@@ -271,6 +339,8 @@ class ModelCallGovernance:
             record = self._record(
                 call_id=call_id,
                 user_hash=user_hash,
+                role=role,
+                template_version=template_version,
                 started_at=started_at,
                 status="cache_hit",
                 request_sha256=request_sha256,
@@ -303,6 +373,8 @@ class ModelCallGovernance:
             record = self._record(
                 call_id=call_id,
                 user_hash=user_hash,
+                role=role,
+                template_version=template_version,
                 started_at=started_at,
                 status="denied",
                 request_sha256=request_sha256,
@@ -326,6 +398,8 @@ class ModelCallGovernance:
             record = self._record(
                 call_id=call_id,
                 user_hash=user_hash,
+                role=role,
+                template_version=template_version,
                 started_at=started_at,
                 status="denied",
                 request_sha256=request_sha256,
@@ -351,14 +425,12 @@ class ModelCallGovernance:
                 raise AssistantProviderError("model_attempt_audit_invalid") from exc
 
         try:
-            enhancement, usage = provider.enhance(
-                symbol=symbol,
-                data_date=data_date,
-                diagnosis=diagnosis,
-                assessment=assessment,
-                max_retries=self.settings.max_retries,
-                audit_hook=audit_hook,
+            enhancement, usage = provider_call(
+                self.settings.max_retries,
+                audit_hook,
             )
+            if not result_validator(enhancement):
+                raise AssistantProviderError("invalid_model_response")
             usage = _normalize_usage(usage)
             if not attempts:
                 attempts.append(
@@ -390,6 +462,8 @@ class ModelCallGovernance:
             record = self._record(
                 call_id=call_id,
                 user_hash=user_hash,
+                role=role,
+                template_version=template_version,
                 started_at=started_at,
                 status="success",
                 request_sha256=request_sha256,
@@ -406,6 +480,9 @@ class ModelCallGovernance:
             self._store_cache(
                 user_hash,
                 cache_key,
+                role=role,
+                template_version=template_version,
+                result_validator=result_validator,
                 request_sha256=request_sha256,
                 evidence_sha256=evidence_sha256,
                 response_sha256=response_sha256,
@@ -432,6 +509,8 @@ class ModelCallGovernance:
             record = self._record(
                 call_id=call_id,
                 user_hash=user_hash,
+                role=role,
+                template_version=template_version,
                 started_at=started_at,
                 status="failed",
                 request_sha256=request_sha256,
@@ -616,6 +695,8 @@ class ModelCallGovernance:
         *,
         call_id: str,
         user_hash: str,
+        role: str,
+        template_version: str,
         started_at: str,
         status: str,
         request_sha256: str,
@@ -637,10 +718,10 @@ class ModelCallGovernance:
             "completed_at": _now(),
             "user_scope_sha256": user_hash,
             "provider": "openai-compatible",
-            "role": "research_assistant_wording",
+            "role": role,
             "model": self.model,
             "endpoint_sha256": self.endpoint_sha256,
-            "template_version": self.template_version,
+            "template_version": template_version,
             "request_sha256": request_sha256,
             "evidence_sha256": evidence_sha256,
             "response_sha256": response_sha256,
@@ -698,6 +779,9 @@ class ModelCallGovernance:
         return {
             "schema_version": SCHEMA_VERSION,
             "call_id": record["call_id"],
+            "role": record["role"],
+            "model": record["model"],
+            "template_version": record["template_version"],
             "status": record["status"],
             "error_code": record["error_code"],
             "cache_hit": record["cache"]["hit"],
@@ -729,7 +813,15 @@ class ModelCallGovernance:
             },
         }
 
-    def _load_cache(self, user_hash: str, cache_key: str) -> dict[str, Any] | None:
+    def _load_cache(
+        self,
+        user_hash: str,
+        cache_key: str,
+        *,
+        role: str,
+        template_version: str,
+        result_validator: Callable[[Any], bool],
+    ) -> dict[str, Any] | None:
         path = self._cache_path(user_hash, cache_key)
         if not path.exists() and not path.is_symlink():
             return None
@@ -741,9 +833,10 @@ class ModelCallGovernance:
         if (
             value.get("cache_key") != cache_key
             or value.get("request_sha256") != cache_key
+            or value.get("role") != role
             or value.get("model") != self.model
             or value.get("endpoint_sha256") != self.endpoint_sha256
-            or value.get("template_version") != self.template_version
+            or value.get("template_version") != template_version
         ):
             raise RuntimeError("Assistant model cache identity is invalid")
         if _FINGERPRINT.fullmatch(str(value.get("evidence_sha256", ""))) is None:
@@ -752,11 +845,16 @@ class ModelCallGovernance:
             raise RuntimeError("Assistant model cache fingerprint is invalid")
         enhancement = value.get("enhancement")
         usage = _normalize_usage(value.get("usage"))
-        if not _valid_enhancement_shape(enhancement):
+        if not result_validator(enhancement):
             raise RuntimeError("Assistant model cache enhancement is invalid")
         if value.get("response_sha256") != _sha256_json(enhancement):
             raise RuntimeError("Assistant model cache response hash is invalid")
-        self._validate_cache_source(user_hash, value)
+        self._validate_cache_source(
+            user_hash,
+            value,
+            role=role,
+            template_version=template_version,
+        )
         return {
             "enhancement": enhancement,
             "usage": usage,
@@ -768,6 +866,9 @@ class ModelCallGovernance:
         user_hash: str,
         cache_key: str,
         *,
+        role: str,
+        template_version: str,
+        result_validator: Callable[[Any], bool],
         request_sha256: str,
         evidence_sha256: str,
         response_sha256: str,
@@ -782,9 +883,10 @@ class ModelCallGovernance:
             "schema_version": SCHEMA_VERSION,
             "cache_key": cache_key,
             "created_at": _now(),
+            "role": role,
             "model": self.model,
             "endpoint_sha256": self.endpoint_sha256,
-            "template_version": self.template_version,
+            "template_version": template_version,
             "request_sha256": request_sha256,
             "evidence_sha256": evidence_sha256,
             "response_sha256": response_sha256,
@@ -814,7 +916,13 @@ class ModelCallGovernance:
                     maximum_bytes=MAX_CACHE_RECORD_BYTES,
                 )
             except FileExistsError:
-                if self._load_cache(user_hash, cache_key) is None:
+                if self._load_cache(
+                    user_hash,
+                    cache_key,
+                    role=role,
+                    template_version=template_version,
+                    result_validator=result_validator,
+                ) is None:
                     raise RuntimeError("Existing model cache record is invalid")
         except (OSError, RuntimeError, ValueError) as exc:
             raise AssistantProviderError("model_cache_unavailable") from exc
@@ -823,7 +931,12 @@ class ModelCallGovernance:
         return self.cache_root / user_hash / cache_key[:2] / f"{cache_key}.json"
 
     def _validate_cache_source(
-        self, user_hash: str, cache_record: dict[str, Any]
+        self,
+        user_hash: str,
+        cache_record: dict[str, Any],
+        *,
+        role: str,
+        template_version: str,
     ) -> None:
         call_id = str(cache_record.get("source_call_id") or "")
         date_utc = str(cache_record.get("source_audit_date_utc") or "")
@@ -848,9 +961,10 @@ class ModelCallGovernance:
             or source.get("request_sha256") != cache_record.get("request_sha256")
             or source.get("evidence_sha256") != cache_record.get("evidence_sha256")
             or source.get("response_sha256") != cache_record.get("response_sha256")
+            or source.get("role") != role
             or source.get("model") != self.model
             or source.get("endpoint_sha256") != self.endpoint_sha256
-            or source.get("template_version") != self.template_version
+            or source.get("template_version") != template_version
         ):
             raise RuntimeError("Assistant model cache source audit is invalid")
         actual_content_hash = hashlib.sha256(

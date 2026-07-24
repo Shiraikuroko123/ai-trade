@@ -21,6 +21,8 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_RESPONSE_BYTES = 512 * 1024
 MAX_COMPLETION_TOKENS = 1400
 PROMPT_TEMPLATE_VERSION = "assistant-enhancement-v2"
+DEBATE_PROMPT_TEMPLATE_VERSION = "assistant-debate-v1"
+DEBATE_ADVOCATE_ROLES = {"bull", "bear"}
 _RETRYABLE_ERRORS = {
     "model_rate_limited",
     "model_server_error",
@@ -115,6 +117,160 @@ class OpenAICompatibleProvider:
             '"evidence_ids":[string],"invalidation":[string],'
             '"scenarios":[{"name":string,"trigger":string,"implication":string}]}}.'
         )
+        return self._structured_call(
+            instruction=instruction,
+            public_input=public_input,
+            validator=lambda value: _validate_enhancement(value, allowed_ids),
+            max_retries=max_retries,
+            audit_hook=audit_hook,
+        )
+
+    def debate_advocate(
+        self,
+        *,
+        role: str,
+        symbol: str,
+        data_date: str,
+        diagnosis: dict[str, Any],
+        assessment: dict[str, Any],
+        perspectives: list[dict[str, Any]],
+        max_retries: int = 0,
+        audit_hook: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, int]]:
+        if role not in DEBATE_ADVOCATE_ROLES:
+            raise ValueError("debate advocate role is invalid")
+        evidence = diagnosis.get("evidence")
+        if not isinstance(evidence, list):
+            raise ValueError("debate evidence is invalid")
+        allowed_ids = {
+            str(item["evidence_id"])
+            for item in evidence
+            if isinstance(item, dict) and isinstance(item.get("evidence_id"), str)
+        }
+        emphasis = (
+            "Construct the strongest evidence-supported case for continued research review."
+            if role == "bull"
+            else "Construct the strongest evidence-supported adverse or cautionary case."
+        )
+        instruction = (
+            "Return one JSON object only. You are one bounded research advocate, not a "
+            "trader or decision maker. "
+            + emphasis
+            + " Also state material counterevidence against your assigned case. Use only "
+            "supplied evidence IDs. Never output a conclusion, vote, confidence, probability, "
+            "order, position, quantity, price target, stop, risk budget, or hidden reasoning. "
+            "Required exact shape: "
+            '{"summary":string,"arguments":[{"claim":string,"evidence_ids":[string]}],'
+            '"counterevidence":[{"claim":string,"evidence_ids":[string]}],'
+            '"abstained":boolean,"abstention_reason":string|null}.'
+        )
+        public_input = {
+            "role": role,
+            "symbol": symbol,
+            "data_date": data_date,
+            "authority": "research_only",
+            "execution_authorized": False,
+            "diagnosis": {
+                key: diagnosis.get(key)
+                for key in (
+                    "trend",
+                    "regime",
+                    "volatility",
+                    "score",
+                    "gate",
+                    "evidence",
+                )
+            },
+            "local_assessment": assessment,
+            "perspectives": perspectives,
+        }
+        return self._structured_call(
+            instruction=instruction,
+            public_input=public_input,
+            validator=lambda value: _validate_advocate(value, allowed_ids),
+            max_retries=max_retries,
+            audit_hook=audit_hook,
+        )
+
+    def debate_judge(
+        self,
+        *,
+        symbol: str,
+        data_date: str,
+        evidence: list[dict[str, Any]],
+        bull: dict[str, Any],
+        bear: dict[str, Any],
+        conflict_audit: dict[str, Any],
+        max_retries: int = 0,
+        audit_hook: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, int]]:
+        allowed_ids = {
+            str(item["evidence_id"])
+            for item in evidence
+            if isinstance(item, dict) and isinstance(item.get("evidence_id"), str)
+        }
+        bull_argument_ids = {
+            str(item.get("argument_id"))
+            for key in ("arguments", "counterevidence")
+            for item in bull.get(key, [])
+            if isinstance(item, dict) and isinstance(item.get("argument_id"), str)
+        }
+        bear_argument_ids = {
+            str(item.get("argument_id"))
+            for key in ("arguments", "counterevidence")
+            for item in bear.get(key, [])
+            if isinstance(item, dict) and isinstance(item.get("argument_id"), str)
+        }
+        instruction = (
+            "Return one JSON object only. Organize the supplied validated bull and bear "
+            "research records into agreements, conflicts, and unresolved questions. Use only "
+            "supplied evidence IDs and argument IDs. You are not allowed to select or change a "
+            "research conclusion, vote, rank a side, estimate confidence, or output any order, "
+            "position, quantity, price target, stop, risk budget, or hidden reasoning. Required "
+            "exact shape: "
+            '{"summary":string,"agreements":[{"topic":string,"evidence_ids":[string]}],'
+            '"conflicts":[{"topic":string,"bull_argument_ids":[string],'
+            '"bear_argument_ids":[string],"evidence_ids":[string]}],'
+            '"unresolved_questions":[{"question":string,"evidence_ids":[string]}]}.'
+        )
+        public_input = {
+            "symbol": symbol,
+            "data_date": data_date,
+            "authority": "research_only",
+            "execution_authorized": False,
+            "evidence": evidence,
+            "bull": bull,
+            "bear": bear,
+            "deterministic_conflict_audit": conflict_audit,
+        }
+        return self._structured_call(
+            instruction=instruction,
+            public_input=public_input,
+            validator=lambda value: _validate_judge(
+                value,
+                allowed_ids,
+                bull_argument_ids,
+                bear_argument_ids,
+            ),
+            max_retries=max_retries,
+            audit_hook=audit_hook,
+        )
+
+    def _structured_call(
+        self,
+        *,
+        instruction: str,
+        public_input: dict[str, Any],
+        validator: Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]],
+        max_retries: int,
+        audit_hook: Callable[[dict[str, Any]], None] | None,
+    ) -> tuple[dict[str, Any], dict[str, int]]:
+        if (
+            isinstance(max_retries, bool)
+            or not isinstance(max_retries, int)
+            or not 0 <= max_retries <= 3
+        ):
+            raise ValueError("max_retries must be an integer between 0 and 3")
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         validation_errors: list[str] = []
         request_attempt = 0
@@ -123,7 +279,11 @@ class OpenAICompatibleProvider:
                 {"role": "system", "content": instruction},
                 {
                     "role": "user",
-                    "content": json.dumps(public_input, ensure_ascii=False, separators=(",", ":")),
+                    "content": json.dumps(
+                        public_input,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                 },
             ]
             if validation_round:
@@ -172,9 +332,7 @@ class OpenAICompatibleProvider:
                     raise
                 for name in usage:
                     usage[name] += call_usage[name]
-                normalized, validation_errors = _validate_enhancement(
-                    value, allowed_ids
-                )
+                normalized, validation_errors = validator(value)
                 response_sha256 = hashlib.sha256(raw.encode("utf-8")).hexdigest()
                 if not validation_errors:
                     _emit_audit(
@@ -354,6 +512,7 @@ def _validate_enhancement(
     value: dict[str, Any], allowed_ids: set[str]
 ) -> tuple[dict[str, Any], list[str]]:
     errors: list[str] = []
+    _exact_keys(value, {"diagnosis", "assessment"}, "response", errors)
     diagnosis = value.get("diagnosis")
     assessment = value.get("assessment")
     if not isinstance(diagnosis, dict):
@@ -362,6 +521,21 @@ def _validate_enhancement(
     if not isinstance(assessment, dict):
         errors.append("assessment must be an object")
         assessment = {}
+    _exact_keys(diagnosis, {"summary", "evidence_ids"}, "diagnosis", errors)
+    _exact_keys(
+        assessment,
+        {
+            "conclusion",
+            "summary",
+            "risk_level",
+            "risk_budget_pct",
+            "evidence_ids",
+            "invalidation",
+            "scenarios",
+        },
+        "assessment",
+        errors,
+    )
 
     diagnosis_summary = _bounded_text(diagnosis.get("summary"), 2000, "diagnosis.summary", errors)
     diagnosis_refs = _evidence_ids(
@@ -407,6 +581,301 @@ def _validate_enhancement(
         },
         errors,
     )
+
+
+def _validate_advocate(
+    value: dict[str, Any], allowed_ids: set[str]
+) -> tuple[dict[str, Any], list[str]]:
+    errors: list[str] = []
+    expected = {
+        "summary",
+        "arguments",
+        "counterevidence",
+        "abstained",
+        "abstention_reason",
+    }
+    _exact_keys(value, expected, "advocate", errors)
+    summary = _bounded_text(value.get("summary"), 2_000, "advocate.summary", errors)
+    abstained = value.get("abstained")
+    if not isinstance(abstained, bool):
+        errors.append("advocate.abstained is invalid")
+        abstained = True
+    arguments = _claim_rows(
+        value.get("arguments"),
+        allowed_ids,
+        "advocate.arguments",
+        errors,
+        allow_empty=abstained,
+    )
+    counterevidence = _claim_rows(
+        value.get("counterevidence"),
+        allowed_ids,
+        "advocate.counterevidence",
+        errors,
+        allow_empty=False,
+    )
+    reason = value.get("abstention_reason")
+    if abstained:
+        reason = _bounded_text(
+            reason, 500, "advocate.abstention_reason", errors
+        )
+    elif reason is not None:
+        errors.append("advocate.abstention_reason must be null when not abstained")
+        reason = None
+    return (
+        {
+            "summary": summary,
+            "arguments": arguments,
+            "counterevidence": counterevidence,
+            "abstained": abstained,
+            "abstention_reason": reason,
+        },
+        errors,
+    )
+
+
+def _validate_judge(
+    value: dict[str, Any],
+    allowed_ids: set[str],
+    allowed_bull_argument_ids: set[str],
+    allowed_bear_argument_ids: set[str],
+) -> tuple[dict[str, Any], list[str]]:
+    errors: list[str] = []
+    _exact_keys(
+        value,
+        {"summary", "agreements", "conflicts", "unresolved_questions"},
+        "judge",
+        errors,
+    )
+    summary = _bounded_text(value.get("summary"), 2_000, "judge.summary", errors)
+    agreements = _topic_rows(
+        value.get("agreements"),
+        allowed_ids,
+        "judge.agreements",
+        errors,
+        maximum=6,
+    )
+    conflicts = _judge_conflicts(
+        value.get("conflicts"),
+        allowed_ids,
+        allowed_bull_argument_ids,
+        allowed_bear_argument_ids,
+        errors,
+    )
+    questions = _question_rows(
+        value.get("unresolved_questions"),
+        allowed_ids,
+        errors,
+    )
+    if not agreements and not conflicts and not questions:
+        errors.append("judge must retain at least one agreement, conflict, or question")
+    return (
+        {
+            "summary": summary,
+            "agreements": agreements,
+            "conflicts": conflicts,
+            "unresolved_questions": questions,
+        },
+        errors,
+    )
+
+
+def _claim_rows(
+    value: Any,
+    allowed_ids: set[str],
+    name: str,
+    errors: list[str],
+    *,
+    allow_empty: bool,
+) -> list[dict[str, Any]]:
+    minimum = 0 if allow_empty else 1
+    if not isinstance(value, list) or not minimum <= len(value) <= 4:
+        errors.append(f"{name} is invalid")
+        return []
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            errors.append(f"{name}[{index}] is invalid")
+            continue
+        _exact_keys(item, {"claim", "evidence_ids"}, f"{name}[{index}]", errors)
+        result.append(
+            {
+                "claim": _bounded_text(
+                    item.get("claim"), 1_000, f"{name}[{index}].claim", errors
+                ),
+                "evidence_ids": _evidence_ids(
+                    item.get("evidence_ids"),
+                    allowed_ids,
+                    f"{name}[{index}].evidence_ids",
+                    errors,
+                ),
+            }
+        )
+    return result
+
+
+def _topic_rows(
+    value: Any,
+    allowed_ids: set[str],
+    name: str,
+    errors: list[str],
+    *,
+    maximum: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > maximum:
+        errors.append(f"{name} is invalid")
+        return []
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            errors.append(f"{name}[{index}] is invalid")
+            continue
+        _exact_keys(item, {"topic", "evidence_ids"}, f"{name}[{index}]", errors)
+        result.append(
+            {
+                "topic": _bounded_text(
+                    item.get("topic"), 1_000, f"{name}[{index}].topic", errors
+                ),
+                "evidence_ids": _evidence_ids(
+                    item.get("evidence_ids"),
+                    allowed_ids,
+                    f"{name}[{index}].evidence_ids",
+                    errors,
+                ),
+            }
+        )
+    return result
+
+
+def _judge_conflicts(
+    value: Any,
+    allowed_ids: set[str],
+    allowed_bull_argument_ids: set[str],
+    allowed_bear_argument_ids: set[str],
+    errors: list[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > 8:
+        errors.append("judge.conflicts is invalid")
+        return []
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        name = f"judge.conflicts[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{name} is invalid")
+            continue
+        _exact_keys(
+            item,
+            {"topic", "bull_argument_ids", "bear_argument_ids", "evidence_ids"},
+            name,
+            errors,
+        )
+        result.append(
+            {
+                "topic": _bounded_text(
+                    item.get("topic"), 1_000, f"{name}.topic", errors
+                ),
+                "bull_argument_ids": _bounded_identifiers(
+                    item.get("bull_argument_ids"),
+                    allowed_bull_argument_ids,
+                    f"{name}.bull_argument_ids",
+                    errors,
+                ),
+                "bear_argument_ids": _bounded_identifiers(
+                    item.get("bear_argument_ids"),
+                    allowed_bear_argument_ids,
+                    f"{name}.bear_argument_ids",
+                    errors,
+                ),
+                "evidence_ids": _evidence_ids(
+                    item.get("evidence_ids"),
+                    allowed_ids,
+                    f"{name}.evidence_ids",
+                    errors,
+                ),
+            }
+        )
+    return result
+
+
+def _question_rows(
+    value: Any, allowed_ids: set[str], errors: list[str]
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > 8:
+        errors.append("judge.unresolved_questions is invalid")
+        return []
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        name = f"judge.unresolved_questions[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{name} is invalid")
+            continue
+        _exact_keys(item, {"question", "evidence_ids"}, name, errors)
+        result.append(
+            {
+                "question": _bounded_text(
+                    item.get("question"), 1_000, f"{name}.question", errors
+                ),
+                "evidence_ids": _evidence_ids(
+                    item.get("evidence_ids"),
+                    allowed_ids,
+                    f"{name}.evidence_ids",
+                    errors,
+                ),
+            }
+        )
+    return result
+
+
+def _bounded_identifiers(
+    value: Any,
+    allowed: set[str],
+    name: str,
+    errors: list[str],
+) -> list[str]:
+    if not isinstance(value, list) or not 1 <= len(value) <= min(8, len(allowed)):
+        errors.append(f"{name} is invalid")
+        return []
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or item not in allowed or item in result:
+            errors.append(f"{name} contains an unknown or duplicate identifier")
+            continue
+        result.append(item)
+    return result
+
+
+def _exact_keys(
+    value: Any,
+    expected: set[str],
+    name: str,
+    errors: list[str],
+) -> None:
+    if isinstance(value, dict) and set(value) != expected:
+        errors.append(f"{name} fields are invalid")
+
+
+def valid_advocate_shape(value: Any, allowed_ids: set[str]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    _, errors = _validate_advocate(value, allowed_ids)
+    return not errors
+
+
+def valid_judge_shape(
+    value: Any,
+    allowed_ids: set[str],
+    allowed_bull_argument_ids: set[str],
+    allowed_bear_argument_ids: set[str],
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    _, errors = _validate_judge(
+        value,
+        allowed_ids,
+        allowed_bull_argument_ids,
+        allowed_bear_argument_ids,
+    )
+    return not errors
 
 
 def _bounded_text(value: Any, maximum: int, name: str, errors: list[str]) -> str:
@@ -455,6 +924,12 @@ def _scenarios(value: Any, errors: list[str]) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             errors.append("assessment.scenarios contains a non-object")
             continue
+        _exact_keys(
+            item,
+            {"name", "trigger", "implication"},
+            "assessment.scenarios item",
+            errors,
+        )
         normalized = {}
         for name in ("name", "trigger", "implication"):
             normalized[name] = _bounded_text(

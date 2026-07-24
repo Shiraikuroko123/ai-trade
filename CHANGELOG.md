@@ -1,6 +1,32 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.17.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.18.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+
+## 0.18.0 - 2026-07-24
+
+- Added `auditable-bull-bear-judge-v1`: bull, bear, and judge run as three
+  independently governed research roles with strict JSON contracts, stable
+  argument IDs, evidence-only citations, isolated failures, and deterministic
+  local fallback. Local mode performs no model I/O.
+- Restricted advocates to bounded arguments and counterevidence. The judge can
+  only organize agreements, conflicts, and unresolved questions; separate
+  validation rejects unknown or cross-role argument references and gives the
+  judge no conclusion, vote, confidence, order, position, target-price, stop,
+  risk-budget, or permission fields.
+- Extended the model-call governance request identity and immutable cache with
+  role and prompt-template version. Each debate role receives an independent
+  budget, concurrency, retry, cache, usage, cost, latency, and public failure
+  audit; a failed role does not erase successful sibling roles.
+- Added a responsive multi-role ledger to the AI workstation with source,
+  status, arguments, counterevidence, evidence IDs, Token/cost summaries,
+  failure codes, and an explicit research-only authority band.
+- Added recomputable `record_sha256` integrity checks to new assistant history
+  records and immutable no-replace publication. Tampered fingerprinted records
+  are excluded from history and comparison; legacy schema-v1 records without a
+  fingerprint remain readable.
+- Rechecked the upstream release gate through 2026-07-24. The new
+  `ai-hedge-fund v2.0.1` historical `run_cycle` workflow does not change this
+  release's research-only role protocol and was not copied into the runtime.
 
 ## 0.17.0 - 2026-07-23
 

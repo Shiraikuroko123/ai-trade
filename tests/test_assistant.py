@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from ai_trade.assistant import AssistantEngine
+from ai_trade.assistant.debate import DEBATE_METHOD
 from ai_trade.assistant.engine import _validate_result
 from ai_trade.assistant.features import (
     ALLOWED_CONCLUSIONS,
@@ -18,12 +19,15 @@ from ai_trade.assistant.features import (
     build_perspective_conflict_audit,
 )
 from ai_trade.assistant.store import MAX_ANALYSIS_RECORD_BYTES, AssistantRecordStore
+from ai_trade.assistant.governance import GovernanceSettings
 from ai_trade.assistant.provider import (
     AssistantProviderError,
     DEFAULT_MAX_RESPONSE_BYTES,
     ProviderSettings,
     _completion_endpoint,
+    _validate_advocate,
     _validate_enhancement,
+    _validate_judge,
 )
 from ai_trade.models import Bar, Instrument
 
@@ -118,6 +122,19 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertEqual(audit["coverage_gap_count"], 2)
             self.assertEqual(audit["authority"], "research_only")
             self.assertFalse(audit["execution_authorized"])
+            debate = result["debate"]
+            self.assertEqual(debate["method"], DEBATE_METHOD)
+            self.assertEqual(debate["status"], "LOCAL_ONLY")
+            self.assertFalse(debate["execution_authorized"])
+            self.assertFalse(debate["conclusion_mutation_allowed"])
+            self.assertEqual(
+                debate["effective_conclusion"], result["assessment"]["conclusion"]
+            )
+            self.assertEqual(debate["summary"]["usage"]["total_tokens"], 0)
+            self.assertIsNone(debate["summary"]["estimated_cost_usd"])
+            self.assertTrue(
+                all(role["status"] == "LOCAL" for role in debate["roles"].values())
+            )
 
             records = list((Path(temporary) / "state" / "assistant").rglob("*.json"))
             self.assertEqual(len(records), 1)
@@ -127,7 +144,9 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertNotIn('"raw_response":', disk.lower())
             self.assertNotIn("api_key", disk.lower())
             self.assertNotIn("reasoning_content", disk.lower())
-            self.assertEqual(json.loads(disk)["analysis_id"], result["analysis_id"])
+            stored = json.loads(disk)
+            self.assertEqual(stored["analysis_id"], result["analysis_id"])
+            self.assertEqual(len(stored["record_sha256"]), 64)
 
     def test_history_skips_ambiguous_or_oversized_records(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -169,6 +188,28 @@ class AssistantEngineTests(unittest.TestCase):
             ]
             self.assertEqual(len(user_directories), 2)
             self.assertNotIn("alice", {path.name for path in user_directories})
+
+    def test_history_rejects_tampered_new_record_and_reads_legacy_v1(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            engine = AssistantEngine(_config(root))
+            result = engine.analyze(_Market(_bars(220)), "510300", user_id="alice")
+            path = next(engine._store._user_directory("alice").glob("*.json"))
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            stored["assessment"]["summary"] = "tampered"
+            path.write_text(json.dumps(stored), encoding="utf-8")
+            self.assertEqual(engine.history("alice"), [])
+
+            legacy_id = "b" * 32
+            legacy = {
+                "schema_version": 1,
+                "analysis_id": legacy_id,
+                "created_at": "2026-07-23T00:00:00Z",
+                "symbol": result["symbol"],
+            }
+            legacy_path = path.parent / f"{legacy_id}.json"
+            legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
+            self.assertEqual(engine.history("alice")[0]["analysis_id"], legacy_id)
 
     def test_input_validation_and_model_configuration_gate(self):
         with (
@@ -256,6 +297,111 @@ class AssistantEngineTests(unittest.TestCase):
                 )["stance"],
                 "CAUTION",
             )
+
+    def test_model_debate_roles_are_independently_audited_and_cached(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            engine = AssistantEngine(_config(root))
+            engine._settings = SimpleNamespace(model="test-model")
+            engine._provider = _DebateProvider()
+            market = _Market(_bars(220, daily_return=0.002))
+
+            first = engine.analyze(market, "510300", mode="model", user_id="alice")
+            second = engine.analyze(market, "510300", mode="model", user_id="alice")
+
+            self.assertEqual(first["debate"]["status"], "COMPLETE")
+            self.assertEqual(first["debate"]["summary"]["model_applied_count"], 3)
+            self.assertEqual(first["validation"]["usage"]["total_tokens"], 120)
+            self.assertTrue(
+                all(
+                    item["status"] == "MODEL_CACHE_HIT"
+                    for item in second["debate"]["roles"].values()
+                )
+            )
+            self.assertEqual(second["validation"]["usage"]["total_tokens"], 0)
+            roles = {
+                json.loads(path.read_text(encoding="utf-8"))["role"]
+                for path in (root / "state" / "assistant_calls").rglob("call_*.json")
+            }
+            self.assertEqual(
+                roles,
+                {
+                    "research_assistant_wording",
+                    "research_debate_bull",
+                    "research_debate_bear",
+                    "research_debate_judge",
+                },
+            )
+            cache_roles = {
+                json.loads(path.read_text(encoding="utf-8"))["role"]
+                for path in (root / "state" / "assistant_model_cache").rglob("*.json")
+            }
+            self.assertEqual(cache_roles, roles)
+
+    def test_one_failed_advocate_falls_back_while_other_roles_continue(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            engine = AssistantEngine(_config(Path(temporary)))
+            engine._settings = SimpleNamespace(model="test-model")
+            engine._provider = _BearFailingDebateProvider()
+
+            result = engine.analyze(
+                _Market(_bars(220, daily_return=0.002)),
+                "510300",
+                mode="model",
+            )
+
+            debate = result["debate"]
+            self.assertEqual(debate["status"], "PARTIAL")
+            self.assertEqual(debate["roles"]["bull"]["status"], "MODEL_APPLIED")
+            self.assertEqual(debate["roles"]["bear"]["status"], "FALLBACK_LOCAL")
+            self.assertEqual(
+                debate["roles"]["bear"]["error_code"], "model_transport_error"
+            )
+            self.assertEqual(debate["roles"]["judge"]["status"], "MODEL_APPLIED")
+            self.assertTrue(result["validation"]["valid"])
+
+    def test_debate_budget_denials_are_visible_per_role(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            engine = AssistantEngine(_config(Path(temporary)))
+            engine._settings = SimpleNamespace(model="test-model")
+            engine._provider = _DebateProvider()
+            engine._governance_settings = GovernanceSettings(
+                max_retries=0,
+                max_tokens_per_call=1,
+                daily_token_budget=100_000,
+            )
+            engine._governance = None
+
+            result = engine.analyze(_Market(_bars(220)), "510300", mode="model")
+
+            for role in result["debate"]["roles"].values():
+                self.assertEqual(role["status"], "FALLBACK_LOCAL")
+                self.assertEqual(
+                    role["error_code"], "model_call_token_budget_exceeded"
+                )
+                self.assertEqual(role["call"]["status"], "denied")
+
+    def test_tampered_debate_cannot_change_authority_or_argument_references(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            engine = AssistantEngine(_config(Path(temporary)))
+            result = engine.analyze(_Market(_bars(220)), "510300")
+            result["debate"]["conclusion_mutation_allowed"] = True
+            result["debate"]["mode"] = "model"
+            result["debate"]["deterministic_conclusion"] = "tampered"
+            result["debate"]["roles"]["judge"]["conflicts"] = [
+                {
+                    "topic": "tampered",
+                    "bull_argument_ids": ["bear_argument_1"],
+                    "bear_argument_ids": ["bull_argument_1"],
+                    "evidence_ids": result["assessment"]["evidence_ids"][:1],
+                }
+            ]
+
+            errors = _validate_result(result)
+
+            self.assertTrue(any("authority boundary" in error for error in errors))
+            self.assertTrue(any("deterministic conclusion" in error for error in errors))
+            self.assertTrue(any("invalid bull argument" in error for error in errors))
 
     def test_perspective_audit_detects_direct_technical_risk_disagreement(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -573,6 +719,45 @@ class ProviderPolicyTests(unittest.TestCase):
         self.assertNotIn("ai_trade.broker", sources)
         self.assertNotIn("from ..broker", sources)
 
+    def test_debate_provider_shapes_reject_extra_fields_and_unknown_references(self):
+        advocate = {
+            "summary": "summary",
+            "arguments": [{"claim": "claim", "evidence_ids": ["price.close"]}],
+            "counterevidence": [
+                {"claim": "counter", "evidence_ids": ["price.close"]}
+            ],
+            "abstained": False,
+            "abstention_reason": None,
+            "order": "BUY",
+        }
+        _, advocate_errors = _validate_advocate(advocate, {"price.close"})
+        self.assertTrue(advocate_errors)
+
+        judge = {
+            "summary": "summary",
+            "agreements": [],
+            "conflicts": [
+                {
+                    "topic": "topic",
+                    "bull_argument_ids": ["bear_argument_1"],
+                    "bear_argument_ids": ["bull_argument_1"],
+                    "evidence_ids": ["unknown"],
+                }
+            ],
+            "unresolved_questions": [],
+            "conclusion": "REVIEW_CANDIDATE",
+        }
+        _, judge_errors = _validate_judge(
+            judge,
+            {"price.close"},
+            {"bull_argument_1"},
+            {"bear_argument_1"},
+        )
+        self.assertTrue(judge_errors)
+        self.assertTrue(any("fields" in error for error in judge_errors))
+        self.assertTrue(any("bull_argument_ids" in error for error in judge_errors))
+        self.assertTrue(any("unknown" in error for error in judge_errors))
+
 
 class _PermissiveProvider:
     def enhance(self, **kwargs):
@@ -604,6 +789,51 @@ class _PermissiveProvider:
 class _FailingProvider:
     def enhance(self, **kwargs):
         raise AssistantProviderError("model_transport_error")
+
+
+class _DebateProvider(_PermissiveProvider):
+    def debate_advocate(self, **kwargs):
+        refs = [item["evidence_id"] for item in kwargs["diagnosis"]["evidence"][:2]]
+        return (
+            {
+                "summary": f"{kwargs['role']} summary",
+                "arguments": [{"claim": "primary", "evidence_ids": refs[:1]}],
+                "counterevidence": [
+                    {"claim": "counter", "evidence_ids": refs[-1:]}
+                ],
+                "abstained": False,
+                "abstention_reason": None,
+            },
+            {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+
+    def debate_judge(self, **kwargs):
+        bull_id = kwargs["bull"]["arguments"][0]["argument_id"]
+        bear_id = kwargs["bear"]["arguments"][0]["argument_id"]
+        evidence_id = kwargs["evidence"][0]["evidence_id"]
+        return (
+            {
+                "summary": "judge summary",
+                "agreements": [],
+                "conflicts": [
+                    {
+                        "topic": "research conflict",
+                        "bull_argument_ids": [bull_id],
+                        "bear_argument_ids": [bear_id],
+                        "evidence_ids": [evidence_id],
+                    }
+                ],
+                "unresolved_questions": [],
+            },
+            {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+
+
+class _BearFailingDebateProvider(_DebateProvider):
+    def debate_advocate(self, **kwargs):
+        if kwargs["role"] == "bear":
+            raise AssistantProviderError("model_transport_error")
+        return super().debate_advocate(**kwargs)
 
 
 def _config(root: Path):

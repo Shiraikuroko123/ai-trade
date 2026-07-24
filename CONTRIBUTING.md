@@ -1,6 +1,6 @@
 # Contributing
 
-AI Trade `v0.17.0` is the current public release baseline. The project prioritizes timing correctness, reproducibility, provenance, and loss controls over higher backtest returns or a larger feature count.
+AI Trade `v0.18.0` is the current public release baseline. The project prioritizes timing correctness, reproducibility, provenance, and loss controls over higher backtest returns or a larger feature count.
 
 ## Development Setup
 
@@ -30,7 +30,7 @@ python -m compileall -q src tests
 python -m unittest discover -s tests -v
 ruff check src tests scripts adapters/qmt/src
 node --check src/ai_trade/web/assets/app.js
-python -m build --outdir dist/release-0.17.0
+python -m build --outdir dist/release-0.18.0
 python -m build adapters/qmt --outdir qmt-dist
-python scripts/verify_distribution.py dist/release-0.17.0
+python scripts/verify_distribution.py dist/release-0.18.0
 ```

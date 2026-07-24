@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .debate import build_auditable_debate, validate_debate
 from .features import (
     ALLOWED_CONCLUSIONS,
     PERSPECTIVE_AUDIT_METHOD,
@@ -91,6 +92,13 @@ class AssistantEngine:
                 "available": True,
                 "method": PERSPECTIVE_AUDIT_METHOD,
                 "multi_model_voting": False,
+                "execution_authorized": False,
+            },
+            "auditable_debate": {
+                "available": True,
+                "roles": ["bull", "bear", "judge"],
+                "independently_governed": True,
+                "conclusion_mutation_allowed": False,
                 "execution_authorized": False,
             },
         }
@@ -187,6 +195,25 @@ class AssistantEngine:
             local["assessment"],
             model_review=model_review,
         )
+        debate = build_auditable_debate(
+            mode=selected_mode,
+            user_id=user_id,
+            symbol=selected_symbol,
+            data_date=bars[-1].date.isoformat(),
+            diagnosis=local["diagnosis"],
+            assessment=local["assessment"],
+            perspectives=local["perspectives"],
+            conflict_audit=local["conflict_audit"],
+            deterministic_conclusion=deterministic_conclusion,
+            provider=self._provider,
+            governance=self._governance,
+        )
+        usage = _add_usage(usage, debate["summary"]["usage"])
+        if debate["status"] == "PARTIAL":
+            warnings.append(
+                "One or more debate roles used deterministic local fallback; "
+                "the role ledger retains each public failure code."
+            )
 
         result: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
@@ -206,6 +233,7 @@ class AssistantEngine:
             "assessment": local["assessment"],
             "perspectives": local["perspectives"],
             "conflict_audit": local["conflict_audit"],
+            "debate": debate,
             "decision_path": local["decision_path"],
             "chart": local["chart"],
             "comparison": _comparison(previous, local, bars[-1].date.isoformat()),
@@ -592,6 +620,23 @@ def _validate_result(result: dict[str, Any]) -> list[str]:
         result.get("mode"),
         errors,
     )
+    errors.extend(
+        validate_debate(
+            result.get("debate"),
+            allowed_evidence_ids={
+                value for value in allowed if isinstance(value, str)
+            },
+            mode=result.get("mode"),
+            deterministic_conclusion=(
+                conflict_audit.get("model_review", {}).get(
+                    "deterministic_conclusion"
+                )
+                if isinstance(conflict_audit, dict)
+                else None
+            ),
+            effective_conclusion=assessment.get("conclusion"),
+        )
+    )
     if not isinstance(path, list) or not path:
         errors.append("decision path is missing")
     else:
@@ -717,6 +762,16 @@ def _difference(current: Any, previous: Any) -> float | None:
         return None
     difference = float(current) - float(previous)
     return round(difference, 8) if math.isfinite(difference) else None
+
+
+def _add_usage(*values: dict[str, Any]) -> dict[str, int]:
+    result = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for value in values:
+        for key in result:
+            amount = value.get(key) if isinstance(value, dict) else None
+            if isinstance(amount, int) and not isinstance(amount, bool) and amount >= 0:
+                result[key] += amount
+    return result
 
 
 def _iso_value(value: Any) -> str | None:

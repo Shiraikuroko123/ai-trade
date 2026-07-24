@@ -73,8 +73,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=0.17.0-evidence-governance", self.html)
-        self.assertIn("app.js?v=0.17.0-evidence-governance", self.html)
+        self.assertIn("app.css?v=0.18.0-auditable-debate", self.html)
+        self.assertIn("app.js?v=0.18.0-auditable-debate", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -165,7 +165,7 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn(".monitoring-watchlist-table table", self.css)
         self.assertIn("min-width: 920px", self.css)
         self.assertIn(".monitoring-rule-table table", self.css)
-        self.assertIn("min-width: 980px", self.css)
+        self.assertIn("min-width: 1120px", self.css)
         mobile_start = self.css.index("@media (max-width: 820px)")
         narrow_start = self.css.index("@media (max-width: 560px)")
         reduced_motion_start = self.css.index("@media (prefers-reduced-motion: reduce)")
@@ -202,6 +202,28 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("fundamental.weighted_roe_pct", self.javascript)
         self.assertIn("valuation.percentile.", self.javascript)
         self.assertIn("assistant-call-grid", self.css)
+
+    def test_auditable_debate_is_role_scoped_read_only_and_responsive(self):
+        self.assertIn("function assistantDebateAvailable", self.javascript)
+        self.assertIn("function assistantAdvocateMarkup", self.javascript)
+        self.assertIn("function assistantJudgeMarkup", self.javascript)
+        self.assertIn('debate.authority === "research_only"', self.javascript)
+        self.assertIn("debate.execution_authorized === false", self.javascript)
+        self.assertIn("debate.conclusion_mutation_allowed === false", self.javascript)
+        self.assertIn("多空裁判账本", self.javascript)
+        self.assertIn("仅整理冲突 · 无结论与订单权限", self.javascript)
+        self.assertIn("论点", self.javascript)
+        self.assertIn("反证", self.javascript)
+        self.assertIn("未决问题", self.javascript)
+        self.assertIn("assistant-debate-grid", self.css)
+        mobile_start = self.css.index("@media (max-width: 820px)")
+        narrow_start = self.css.index("@media (max-width: 560px)")
+        reduced_motion_start = self.css.index("@media (prefers-reduced-motion: reduce)")
+        self.assertIn(".assistant-debate-grid", self.css[mobile_start:narrow_start])
+        self.assertIn(
+            ".assistant-debate-authority",
+            self.css[narrow_start:reduced_motion_start],
+        )
 
     def test_perspective_conflict_audit_is_textual_auditable_and_responsive(self):
         self.assertIn("function assistantConflictAuditMarkup", self.javascript)

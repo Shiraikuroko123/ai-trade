@@ -1,6 +1,6 @@
 # AI K-line Assistant
 
-AI Trade `v0.17.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
+AI Trade `v0.18.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
 
 ## Contract
 
@@ -87,6 +87,34 @@ the analysis instead of inferring a result retroactively.
 
 Enforcement outside the model must keep `authority="research_only"` and reject any result that tries to create an order intent, target position, quantity, entry price, stop, take-profit instruction, portfolio mutation, paper-promotion fact, sandbox reconciliation, live authorization, or changed kill-switch state. A timeout, stale snapshot, malformed response, unknown conclusion, or provider failure fails closed.
 
+## Auditable Bull, Bear, and Judge Ledger
+
+Every new analysis also contains `auditable-bull-bear-judge-v1`. This is a
+structured research ledger, not agent voting or a trading cycle. The bull and
+bear records can contain only a bounded summary, evidence-cited arguments,
+evidence-cited counterevidence, and an explicit abstention state. Stable
+identifiers such as `bull_argument_1` and `bear_counter_1` let the judge refer
+to validated role records without copying free-form hidden reasoning.
+
+The judge can contain only `agreements`, `conflicts`, and
+`unresolved_questions`. Conflict rows must cite known bull IDs, known bear IDs,
+and known evidence IDs in their respective fields. Cross-role IDs, unknown
+evidence, additional conclusion/order/position fields, and empty untraceable
+claims fail validation. The ledger fixes `conclusion_mutation_allowed=false`,
+`execution_authorized=false`, and requires its effective conclusion to equal
+the separately validated assistant assessment.
+
+In `local` mode all three roles are deterministic and report zero model Token
+usage and no model cost. In `model` mode bull, bear, and judge are three
+separate governed calls. Each receives its own role-bound request fingerprint,
+budget decision, concurrency check, retry record, user-isolated cache identity,
+usage, cost estimate, and immutable audit summary. A normal provider or schema
+failure in one advocate falls back only that role; the other advocate still
+runs, and the judge receives the validated model or local record from each
+side. Audit-store integrity failure still closes all later model work in the
+process, because continuing without an audit would violate the governance
+boundary.
+
 ## Windows Model Configuration
 
 Model-enhanced mode reads these environment variables. The Windows helper sets
@@ -137,9 +165,16 @@ Open the printed loopback URL, choose **AI 分析** in the left navigation, sele
 
 Model-enhanced mode discloses bounded indicators and evidence derived from the selected completed K-line window to the configured provider. Review its retention, training, residency, and account policies before enabling the mode. Never include broker or fund passwords, tokens, private positions, personal identifiers, material non-public information, or third-party confidential text.
 
-Per-user results are stored under `state/assistant/`. Immutable call records are
+Per-user results are stored under `state/assistant/`. New result files contain
+a recomputable `record_sha256` and are published without replacing an existing
+analysis ID. A fingerprinted record that no longer matches its content is
+excluded from history and from the next-analysis comparison. Legacy
+`schema_version=1` records without this field remain readable. This local hash
+detects accidental or unsophisticated file changes; it is not a signature,
+remote attestation, WORM archive, or defense against a privileged actor who can
+rewrite both the content and hash. Immutable call records are
 stored under `state/assistant_calls/`, and normalized schema-validated public
-enhancement output is cached under `state/assistant_model_cache/`. User IDs are
+wording and role output is cached under `state/assistant_model_cache/`. User IDs are
 represented by SHA-256 directory keys. A cache hit gets a new call audit and is
 not charged again. Failed attempts without provider usage are conservatively
 accounted against estimated attempted capacity. Audit/cache corruption or

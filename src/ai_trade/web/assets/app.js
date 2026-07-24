@@ -3378,6 +3378,7 @@ const ASSISTANT_CONCLUSIONS = {
   REDUCE_RISK: "降低风险",
 };
 const ASSISTANT_AUDIT_METHOD = "deterministic-perspective-audit-v1";
+const ASSISTANT_DEBATE_METHOD = "auditable-bull-bear-judge-v1";
 
 function renderAssistant(data) {
   const status = data.status || {};
@@ -3468,7 +3469,7 @@ function assistantResultMarkup(result) {
   const score = finite(diagnosis.score);
 
   const warningMarkup = Array.isArray(validation.warnings) && validation.warnings.length
-    ? `<aside class="callout warning" role="status"><strong>模型增强未完成</strong><p>${escapeHtml(validation.warnings.map(assistantWarning).join("；"))}</p></aside>`
+    ? `<aside class="callout warning" role="status"><strong>模型调用未全部完成</strong><p>${escapeHtml(validation.warnings.map(assistantWarning).join("；"))}</p></aside>`
     : "";
 
   return `
@@ -3493,6 +3494,8 @@ function assistantResultMarkup(result) {
     </section>
 
     ${assistantModelCallPanel(result.mode, validation.model_call)}
+
+    ${assistantDebatePanel(result.debate)}
 
     ${assistantConflictAuditPanel(result.conflict_audit)}
 
@@ -3624,6 +3627,145 @@ function assistantPerspectiveKind(value, available) {
     REVIEW: "info",
     MIXED: "neutral",
   }[String(value || "").toUpperCase()] || "neutral";
+}
+
+function assistantDebatePanel(debate) {
+  const available = assistantDebateAvailable(debate);
+  const note = available
+    ? `${assistantDebateStatusLabel(debate.status)} · 模型完成 ${formatInteger(debate.summary.model_applied_count)}/3 · 本地回退 ${formatInteger(debate.summary.fallback_count)}`
+    : "账本不可用 · 需要重新运行分析";
+  return `<section class="panel assistant-debate-panel" aria-label="可审计多空裁判">
+    ${panelHeader("多空裁判账本", note)}
+    ${available ? assistantDebateMarkup(debate) : `<div class="empty-state compact-empty" role="status"><strong>多空裁判账本不可用</strong><p>这是旧版分析记录；重新运行后会生成相互隔离的多头、空头与裁判记录。</p></div>`}
+  </section>`;
+}
+
+function assistantDebateAvailable(debate) {
+  return Boolean(
+    debate && typeof debate === "object"
+      && debate.method === ASSISTANT_DEBATE_METHOD
+      && debate.authority === "research_only"
+      && debate.execution_authorized === false
+      && debate.conclusion_mutation_allowed === false
+      && ["LOCAL_ONLY", "COMPLETE", "PARTIAL"].includes(debate.status)
+      && debate.roles && typeof debate.roles === "object"
+      && debate.roles.bull && debate.roles.bear && debate.roles.judge
+      && debate.summary && typeof debate.summary === "object"
+  );
+}
+
+function assistantDebateMarkup(debate) {
+  const usage = debate.summary.usage || {};
+  const cost = finite(debate.summary.estimated_cost_usd);
+  return `
+    <div class="assistant-debate-authority" role="status" aria-label="多空裁判权限摘要">
+      <div><span>账本状态</span><strong>${escapeHtml(assistantDebateStatusLabel(debate.status))}</strong></div>
+      <div><span>有效研究结论</span><strong>${escapeHtml(assistantConclusionLabel(debate.effective_conclusion))}</strong></div>
+      <div><span>角色 Token</span><strong>${formatInteger(usage.total_tokens || 0)}</strong></div>
+      <div><span>权限</span><strong>仅整理冲突 · 无结论与订单权限</strong></div>
+    </div>
+    <div class="assistant-debate-grid">
+      ${assistantAdvocateMarkup(debate.roles.bull, "多头")}
+      ${assistantAdvocateMarkup(debate.roles.bear, "空头")}
+      ${assistantJudgeMarkup(debate.roles.judge)}
+    </div>
+    <div class="assistant-debate-footer">
+      <span>三次角色调用分别经过预算、并发、重试、缓存与不可变审计</span>
+      <strong>角色估算费用 ${cost === null ? "未配置价格" : `$${formatNumber(cost, 6)}`}</strong>
+    </div>`;
+}
+
+function assistantAdvocateMarkup(role, label) {
+  const state = assistantDebateRoleState(role);
+  return `<section class="assistant-debate-role" aria-label="${escapeHtml(label)}研究角色">
+    <div class="assistant-debate-role-head">
+      <div><h3>${escapeHtml(label)}</h3><span>${escapeHtml(role?.source === "model" ? "模型结构化记录" : "本地确定性记录")}</span></div>
+      ${statusChip(state.label, state.kind)}
+    </div>
+    <p class="assistant-debate-summary">${escapeHtml(role?.summary || "当前没有角色摘要。")}</p>
+    ${role?.abstained ? `<p class="assistant-debate-abstention">已弃权 · ${escapeHtml(role.abstention_reason || "证据不足")}</p>` : ""}
+    ${assistantDebateClaimBlock("论点", role?.arguments)}
+    ${assistantDebateClaimBlock("反证", role?.counterevidence)}
+    ${assistantDebateCallLine(role)}
+  </section>`;
+}
+
+function assistantJudgeMarkup(role) {
+  const state = assistantDebateRoleState(role);
+  return `<section class="assistant-debate-role assistant-judge-role" aria-label="裁判研究角色">
+    <div class="assistant-debate-role-head">
+      <div><h3>裁判</h3><span>${escapeHtml(role?.source === "model" ? "模型结构化记录" : "本地确定性记录")}</span></div>
+      ${statusChip(state.label, state.kind)}
+    </div>
+    <p class="assistant-debate-summary">${escapeHtml(role?.summary || "当前没有裁判摘要。")}</p>
+    ${assistantJudgeBlock("一致点", role?.agreements, "topic")}
+    ${assistantJudgeConflictBlock(role?.conflicts)}
+    ${assistantJudgeBlock("未决问题", role?.unresolved_questions, "question")}
+    ${assistantDebateCallLine(role)}
+  </section>`;
+}
+
+function assistantDebateClaimBlock(title, items) {
+  const values = Array.isArray(items) ? items : [];
+  return `<section class="assistant-debate-block"><h4>${escapeHtml(title)} <span>${formatInteger(values.length)}</span></h4>
+    ${values.length ? `<ul>${values.map((item) => `<li>
+      <code>${escapeHtml(item.argument_id || "—")}</code>
+      <p>${escapeHtml(item.claim || "未登记论点")}</p>
+      <span>证据 ${escapeHtml(Array.isArray(item.evidence_ids) ? item.evidence_ids.join(" · ") : "—")}</span>
+    </li>`).join("")}</ul>` : `<p class="assistant-debate-empty">无可引用内容</p>`}
+  </section>`;
+}
+
+function assistantJudgeBlock(title, items, textKey) {
+  const values = Array.isArray(items) ? items : [];
+  return `<section class="assistant-debate-block"><h4>${escapeHtml(title)} <span>${formatInteger(values.length)}</span></h4>
+    ${values.length ? `<ul>${values.map((item) => `<li>
+      <p>${escapeHtml(item?.[textKey] || "未登记内容")}</p>
+      <span>证据 ${escapeHtml(Array.isArray(item?.evidence_ids) ? item.evidence_ids.join(" · ") : "—")}</span>
+    </li>`).join("")}</ul>` : `<p class="assistant-debate-empty">当前没有登记项</p>`}
+  </section>`;
+}
+
+function assistantJudgeConflictBlock(items) {
+  const values = Array.isArray(items) ? items : [];
+  return `<section class="assistant-debate-block"><h4>冲突点 <span>${formatInteger(values.length)}</span></h4>
+    ${values.length ? `<ul>${values.map((item) => `<li>
+      <p>${escapeHtml(item.topic || "未登记冲突")}</p>
+      <code>多 ${escapeHtml(Array.isArray(item.bull_argument_ids) ? item.bull_argument_ids.join(" · ") : "—")} / 空 ${escapeHtml(Array.isArray(item.bear_argument_ids) ? item.bear_argument_ids.join(" · ") : "—")}</code>
+      <span>证据 ${escapeHtml(Array.isArray(item.evidence_ids) ? item.evidence_ids.join(" · ") : "—")}</span>
+    </li>`).join("")}</ul>` : `<p class="assistant-debate-empty">当前没有登记冲突</p>`}
+  </section>`;
+}
+
+function assistantDebateCallLine(role) {
+  const call = role?.call;
+  if (!call || typeof call !== "object") {
+    return `<div class="assistant-debate-call"><span>调用</span><strong>${role?.model_attempted ? "未生成审计摘要" : "未发送模型请求"}</strong>${role?.error_code ? `<code>${escapeHtml(role.error_code)}</code>` : ""}</div>`;
+  }
+  const usage = call.usage || {};
+  const cost = finite(call.estimated_cost_usd);
+  return `<div class="assistant-debate-call">
+    <span>调用</span>
+    <strong>${escapeHtml(assistantModelCallStatus(call.status, call.error_code).label)} · ${formatInteger(usage.total_tokens || 0)} Token</strong>
+    <code>${cost === null ? "费用未配置" : `$${formatNumber(cost, 6)}`} · ${escapeHtml(String(call.audit_record_sha256 || "—").slice(0, 12))}</code>
+  </div>`;
+}
+
+function assistantDebateRoleState(role) {
+  return {
+    LOCAL: { label: "本地", kind: "neutral" },
+    MODEL_APPLIED: { label: "模型完成", kind: "success" },
+    MODEL_CACHE_HIT: { label: "缓存复用", kind: "info" },
+    FALLBACK_LOCAL: { label: "本地回退", kind: "warning" },
+  }[role?.status] || { label: "未知", kind: "neutral" };
+}
+
+function assistantDebateStatusLabel(value) {
+  return {
+    LOCAL_ONLY: "本地完整",
+    COMPLETE: "三角色完成",
+    PARTIAL: "部分角色回退",
+  }[value] || "未知";
 }
 
 function assistantConflictAuditPanel(audit) {
@@ -3883,16 +4025,17 @@ function assistantHistoryMarkup(history, activeId) {
       ${panelHeader("分析历史", "按当前登录账户隔离保存在本机")}
       <div class="table-wrap assistant-history-table">
         <table class="data-table compact">
-          <thead><tr><th>生成时间</th><th>标的</th><th>数据日期</th><th>模式</th><th>结论</th><th>冲突审计</th><th>查看</th></tr></thead>
+          <thead><tr><th>生成时间</th><th>标的</th><th>数据日期</th><th>模式</th><th>结论</th><th>多空裁判</th><th>冲突审计</th><th>查看</th></tr></thead>
           <tbody>${history.length ? history.map((item) => `<tr${item.analysis_id === activeId ? ` class="active-history-row"` : ""}>
             <td>${formatDate(item.created_at, true)}</td>
             <td class="symbol-cell"><strong>${escapeHtml(item.symbol || "—")}</strong><span>${escapeHtml(item.name || instrumentName(item.symbol))}</span></td>
             <td class="mono">${escapeHtml(item.data_date || "—")}</td>
             <td>${escapeHtml(item.mode === "model" ? (item.validation?.model_enhanced ? "模型增强" : "模型回退") : "本地规则")}</td>
             <td>${statusChip(assistantConclusionLabel(item.assessment?.conclusion || item.conclusion), assistantConclusionKind(item.assessment?.conclusion || item.conclusion))}</td>
+            <td>${assistantDebateHistoryMarkup(item.debate)}</td>
             <td>${assistantAuditHistoryMarkup(item.conflict_audit)}</td>
             <td><button class="button secondary history-button" type="button" data-assistant-history="${escapeHtml(item.analysis_id)}" aria-label="查看${escapeHtml(item.symbol || "该标的")}的分析记录">查看</button></td>
-          </tr>`).join("") : emptyRow(7, "尚无分析记录")}</tbody>
+          </tr>`).join("") : emptyRow(8, "尚无分析记录")}</tbody>
         </table>
       </div>
     </section>`;
@@ -3905,6 +4048,14 @@ function assistantAuditHistoryMarkup(audit) {
   const label = `${assistantAuditStatusLabel(audit.status)} · 冲突 ${audit.conflicts.length} / 缺口 ${audit.coverage_gaps.length}`;
   const kind = audit.conflicts.length ? "warning" : audit.coverage_gaps.length ? "info" : "success";
   return statusChip(label, kind);
+}
+
+function assistantDebateHistoryMarkup(debate) {
+  if (!assistantDebateAvailable(debate)) {
+    return statusChip("未生成 · 重新分析", "neutral");
+  }
+  const kind = debate.status === "COMPLETE" ? "success" : debate.status === "PARTIAL" ? "warning" : "neutral";
+  return statusChip(assistantDebateStatusLabel(debate.status), kind);
 }
 
 function assistantConclusionLabel(value) {
@@ -3954,6 +4105,7 @@ function assistantBudget(value) {
 
 function assistantWarning(value) {
   const text = String(value || "");
+  if (text.includes("One or more debate roles")) return "一个或多个多空裁判角色已回退到确定性本地记录；各角色失败码仍保留在账本中。";
   if (text.includes("model_rate_limited")) return "模型服务触发限流，本次已明确回退到本地规则。";
   if (text.includes("model_response_too_large")) return "模型响应超过安全上限，本次已明确回退到本地规则。";
   if (text.includes("invalid_model_response")) return "模型返回内容未通过结构校验，本次已明确回退到本地规则。";

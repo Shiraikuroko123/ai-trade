@@ -153,7 +153,7 @@ execution data.
 
 ## Assistant consumption boundary
 
-The `v0.17.0` assistant does not register another provider and never fetches
+The `v0.18.0` assistant does not register another market-data provider and never fetches
 network data during analysis. For a configured `STOCK`, it queries the existing
 fundamental and valuation stores using the exact final completed K-line date.
 Only `current` or `partial` evidence is eligible; a `provisional` valuation is
@@ -167,6 +167,11 @@ snapshot. Missing, sparse, or conflicting evidence produces an explicit
 abstention. A recorded conflict from either optional Tushare field-level check
 also forces the fundamental perspective to abstain. It is never filled from
 model prose and never changes execution authority.
+
+The bull, bear, and judge records consume only this already validated assistant
+evidence. Their OpenAI-compatible endpoint is a wording/research service, not a
+market-data source or independent confirmation. Three role calls against one
+endpoint are three isolated audits, not three independent data providers.
 
 Both stores keep Eastmoney as the primary normalized data. Consuming them
 together does not make them independent sources and must not be presented as

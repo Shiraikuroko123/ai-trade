@@ -21,16 +21,17 @@ AI Trade does not attempt to merge several large repositories into one process. 
 
 ## Upstream Release Gate
 
-The `v0.17.0` gate was rechecked on 2026-07-23 before implementation. Project
-`main` and the latest public release were both at `v0.16.0`; no newer local
-project commit had to be integrated first.
+The `v0.18.0` gate was rechecked on 2026-07-24 before implementation. Project
+`main` and the latest public release were both at `v0.17.0`
+(`fa3806ca8ffa17a81d92920b8a73d487b7583693`); no newer project commit had to be
+integrated first.
 
 | Upstream | Checked release/commit state | License and portability decision |
 |---|---|---|
 | `simonlin1212/TradingAgents-astock` | `v0.2.21` | Apache-2.0. Windowing and OpenAI-compatible provider ideas were already represented; free-text Chinese ratings do not replace strict local enums. |
 | `TauricResearch/TradingAgents` | `v0.3.1` | Apache-2.0. Retry-budget and run-identity ideas informed the already shipped call-governance boundary; future-data and UTC cutoffs remain independently enforced here. |
-| `virattt/ai-hedge-fund` | `v2.0.0` | MIT. Protocol and caching ideas are portable only through immutable local call/cache evidence, not overwrite-style JSON state or a copied trading cycle. |
-| `KylinMountain/TradingAgents-AShare` | `v0.8.1` | PolyForm Noncommercial. Design may be studied, but source is not copied into a potentially commercial distribution. |
+| `virattt/ai-hedge-fund` | `v2.0.1` | MIT. The new historical `run_cycle` workflow and reduced backtest interface do not change AI Trade's research-only role contract and are not copied as a trading cycle. Protocol and caching ideas remain portable only through immutable local call/cache evidence, not overwrite-style JSON state. |
+| `KylinMountain/TradingAgents-AShare` | `v0.8.1`; GitHub license detection currently reports `NOASSERTION` | Repository terms were previously identified as PolyForm Noncommercial. Design may be studied, but source is not copied into a potentially commercial distribution unless the effective license is independently cleared. |
 | `zhaoboy9692/Q-Limit` | No release; latest functional change remained Docker-related | GPL-3.0. Debate UX may be studied; frontend credential relay, free-text decisions, and weak audit patterns are not adopted. |
 | `a-stock-az` / `dbbbbm/kimi-stock-agent` | Functional activity remained at 2026-01 / 2026-05 | No clear license. Requirements and workflow may be observed; source is not copied. |
 

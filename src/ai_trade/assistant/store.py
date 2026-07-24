@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import threading
 from pathlib import Path
 from typing import Any
 
+from ..data.evidence_io import atomic_create_json
 from ..json_utils import load_unique_json
 
 _ANALYSIS_ID = re.compile(r"[0-9a-f]{32}\Z")
@@ -26,36 +26,32 @@ class AssistantRecordStore:
         analysis_id = str(result.get("analysis_id", ""))
         if not _ANALYSIS_ID.fullmatch(analysis_id):
             raise ValueError("analysis_id must be a 32-character lowercase hex identifier")
+        if "record_sha256" in result:
+            raise ValueError("record_sha256 is assigned by the assistant record store")
+        stored = dict(result)
+        stored["record_sha256"] = _record_sha256(stored)
         content = json.dumps(
-            result,
-            ensure_ascii=False,
+            stored,
+            ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-        if len(content) > MAX_ANALYSIS_RECORD_BYTES:
+        if len(content) + 1 > MAX_ANALYSIS_RECORD_BYTES:
             raise ValueError("Assistant analysis record exceeds the 5 MiB storage limit")
 
         with self._lock:
             self.root.mkdir(parents=True, exist_ok=True)
             if self.root.is_symlink():
                 raise RuntimeError("Assistant storage root must not be a symbolic link")
-            directory.mkdir(exist_ok=True)
-            if directory.is_symlink():
-                raise RuntimeError("Assistant user storage must not be a symbolic link")
             target = directory / f"{analysis_id}.json"
-            temporary = directory / f".{analysis_id}.{os.getpid()}.tmp"
-            try:
-                with temporary.open("xb") as handle:
-                    handle.write(content)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temporary, target)
-            finally:
-                try:
-                    temporary.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            atomic_create_json(
+                self.root,
+                target,
+                stored,
+                label="assistant analysis",
+                maximum_bytes=MAX_ANALYSIS_RECORD_BYTES,
+            )
         return target
 
     def history(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -90,6 +86,12 @@ class AssistantRecordStore:
                     continue
                 if value.get("analysis_id") != path.stem:
                     continue
+                record_sha256 = value.get("record_sha256")
+                if record_sha256 is not None and (
+                    not isinstance(record_sha256, str)
+                    or record_sha256 != _record_sha256(value)
+                ):
+                    continue
                 records.append(value)
                 if len(records) >= limit:
                     break
@@ -112,3 +114,16 @@ def _validate_user_id(user_id: str) -> str:
     if not normalized or len(normalized.encode("utf-8")) > 256 or "\x00" in normalized:
         raise ValueError("user_id must contain between 1 and 256 UTF-8 bytes")
     return normalized
+
+
+def _record_sha256(value: dict[str, Any]) -> str:
+    content = {key: item for key, item in value.items() if key != "record_sha256"}
+    return hashlib.sha256(
+        json.dumps(
+            content,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()

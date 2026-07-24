@@ -82,6 +82,7 @@ class DistributionVerificationTests(unittest.TestCase):
     def test_assistant_release_surface_is_required_in_both_artifacts(self):
         for module in (
             "__init__.py",
+            "debate.py",
             "engine.py",
             "features.py",
             "governance.py",
