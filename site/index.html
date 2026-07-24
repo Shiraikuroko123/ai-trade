@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AI Trade：面向中国个人投资者的本地系统化研究、回测与模拟交易工作台。">
+  <meta name="theme-color" content="#ffffff">
+  <title>AI Trade · 可审计的系统化投资工作台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="AI Trade 首页">
+      <span class="brand-mark" aria-hidden="true">AT</span>
+      <span>AI Trade</span>
+    </a>
+    <nav aria-label="主要导航">
+      <a href="#evidence">证据链</a>
+      <a href="#boundaries">安全边界</a>
+      <a href="https://github.com/Shiraikuroko123/ai-trade">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="release">公开发行版 v1.0.0</p>
+        <h1 id="hero-title">AI Trade</h1>
+        <p class="hero-lede">把行情快照、策略验证、风险约束、模拟账户和研究证据放进同一个本地工作台。</p>
+        <p class="hero-detail">为收盘后的严谨复盘而设计。每一个结论都能回到数据日期、配置、模型版本与不可变审计记录。</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/Shiraikuroko123/ai-trade/releases/latest">获取最新版</a>
+          <a class="button button-secondary" href="https://github.com/Shiraikuroko123/ai-trade#readme">阅读文档</a>
+        </div>
+      </div>
+
+      <figure class="product-frame">
+        <img src="assets/workstation-overview.png" alt="AI Trade 收盘决策总览，展示模拟权益、回撤、目标权重、权限晋级和历史收益曲线" width="1440" height="1000">
+        <figcaption>同一份已完成行情快照，贯穿研究、组合、交易与风险视图。</figcaption>
+      </figure>
+    </section>
+
+    <section class="signal-strip" aria-label="产品特性">
+      <dl>
+        <div><dt>本地优先</dt><dd>数据与状态留在自己的工作区</dd></div>
+        <div><dt>时点有效</dt><dd>候选池与证据遵守历史可见性</dd></div>
+        <div><dt>权限分级</dt><dd>研究、模拟、沙箱、实盘严格隔离</dd></div>
+        <div><dt>可复核</dt><dd>报告、账本与调用证据可追溯</dd></div>
+      </dl>
+    </section>
+
+    <section class="section evidence" id="evidence" aria-labelledby="evidence-title">
+      <div class="section-heading">
+        <h2 id="evidence-title">一条从数据到决策的证据链</h2>
+        <p>系统不靠一句“AI 建议”替代过程，而是把每个中间状态留下来供人检查。</p>
+      </div>
+      <ol class="evidence-flow">
+        <li><span>行情</span><strong>完整快照</strong><p>主数据源、回退源与独立核对彼此标明。</p></li>
+        <li><span>研究</span><strong>多角色账本</strong><p>多头、空头与裁判记录相互隔离。</p></li>
+        <li><span>验证</span><strong>样本外对照</strong><p>成本、回撤、稳定性与基准一起呈现。</p></li>
+        <li><span>执行</span><strong>模拟成交</strong><p>按交易规则记账，不用理想价格回填。</p></li>
+        <li><span>复盘</span><strong>不可变归档</strong><p>日报、周报与研究日志保留修订链。</p></li>
+      </ol>
+    </section>
+
+    <section class="section capabilities" aria-labelledby="capabilities-title">
+      <div class="section-heading compact">
+        <h2 id="capabilities-title">为长期使用而不是一次演示</h2>
+      </div>
+      <div class="capability-list">
+        <article>
+          <h3>系统化研究</h3>
+          <p>ETF 动态标的池、趋势与相对强弱、组合约束、滚动样本外验证，以及可审计的 HTML、CSV、JSON 和 Markdown 报告。</p>
+        </article>
+        <article>
+          <h3>市场证据</h3>
+          <p>日周月 K 线、技术指标、股票基本面与估值分位、官方披露、新闻、龙虎榜、市场宽度、板块资金流和 Level-1 五档盘口。</p>
+        </article>
+        <article>
+          <h3>模拟与账本</h3>
+          <p>支持断档追赶的模拟账户、影子成交复盘、券商订单生命周期恢复，以及面向未来适配器的作用域与能力声明。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="boundary-band" id="boundaries" aria-labelledby="boundary-title">
+      <div>
+        <h2 id="boundary-title">真实交易默认关闭</h2>
+        <p>当前公开版用于研究和本地模拟，不提供投资建议、盈利承诺或可工作的真实券商适配器。历史收益不会自动提升任何交易权限。</p>
+      </div>
+      <a class="button button-dark" href="https://github.com/Shiraikuroko123/ai-trade/blob/main/SECURITY.md">查看安全策略</a>
+    </section>
+  </main>
+
+  <footer>
+    <span>AI Trade · MIT License</span>
+    <a href="https://github.com/Shiraikuroko123/ai-trade">源码与发布记录</a>
+  </footer>
+</body>
+</html>
