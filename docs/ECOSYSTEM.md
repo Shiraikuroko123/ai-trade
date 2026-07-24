@@ -21,7 +21,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 
 ## Upstream Release Gate
 
-The `v0.18.0` gate was rechecked on 2026-07-24 before implementation. Project
+The `v0.18.1` gate was rechecked on 2026-07-24 before implementation. Project
 `main` and the latest public release were both at `v0.17.0`
 (`fa3806ca8ffa17a81d92920b8a73d487b7583693`); no newer project commit had to be
 integrated first.

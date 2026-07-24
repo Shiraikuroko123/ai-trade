@@ -3493,7 +3493,7 @@ function assistantResultMarkup(result) {
       ${assistantPerspectivesMarkup(result.perspectives)}
     </section>
 
-    ${assistantModelCallPanel(result.mode, validation.model_call)}
+    ${assistantModelCallPanel(result.mode, validation.model_call, result.call_audit_binding)}
 
     ${assistantDebatePanel(result.debate)}
 
@@ -3938,12 +3938,14 @@ function assistantGovernanceLimits(governance) {
   return `<span>Token 上限：单次 ${formatInteger(perCall)} · 每日 ${formatInteger(daily)}</span>`;
 }
 
-function assistantModelCallPanel(mode, call) {
-  if (mode !== "model") return "";
+function assistantModelCallPanel(mode, call, binding) {
+  const bindingMarkup = assistantCallBindingMarkup(binding);
+  if (mode !== "model") return bindingMarkup;
   if (!call || typeof call !== "object") {
     return `<section class="panel assistant-call-panel" aria-label="模型调用审计">
       ${panelHeader("模型调用审计", "本次没有可用的调用审计摘要")}
       <div class="empty-state compact-empty" role="status"><strong>模型调用已关闭</strong><p>本地确定性结论仍然有效；审计存储或治理层不可用时不会继续发送模型请求。</p></div>
+      ${bindingMarkup}
     </section>`;
   }
   const budget = call.budget || {};
@@ -3971,7 +3973,22 @@ function assistantModelCallPanel(mode, call) {
       <div><dt>总耗时</dt><dd>${formatInteger(call.latency_ms || 0)} ms</dd></div>
       <div><dt>审计指纹</dt><dd><code>${escapeHtml(String(call.audit_record_sha256 || "—").slice(0, 16))}</code></dd></div>
     </dl>
+    ${bindingMarkup}
   </section>`;
+}
+
+function assistantCallBindingMarkup(binding) {
+  if (!binding || typeof binding !== "object") {
+    return `<div class="assistant-call-binding legacy"><span>历史证据绑定</span><strong>旧版记录 · 未生成</strong></div>`;
+  }
+  const verified = binding.status === "VERIFIED";
+  const noCalls = binding.status === "NO_CALLS";
+  const label = verified
+    ? `已核验 ${formatInteger(binding.call_count)} 条不可变调用记录`
+    : noCalls ? "未发送模型调用" : "证据绑定异常";
+  return `<div class="assistant-call-binding ${verified || noCalls ? "verified" : "invalid"}" role="status">
+    <span>历史证据绑定</span><strong>${escapeHtml(label)}</strong><code>${escapeHtml(String(binding.calls_sha256 || "—").slice(0, 16))}</code>
+  </div>`;
 }
 
 function assistantModelCallStatus(value, errorCode) {

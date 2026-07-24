@@ -249,6 +249,7 @@ class AssistantEngine:
         }
         if errors:
             raise RuntimeError("Assistant analysis failed internal validation")
+        result["call_audit_binding"] = self._store.call_audit_binding(user_id, result)
         self._store.save(user_id, result)
         return result
 

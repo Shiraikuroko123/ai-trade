@@ -135,6 +135,11 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertTrue(
                 all(role["status"] == "LOCAL" for role in debate["roles"].values())
             )
+            self.assertEqual(
+                result["call_audit_binding"]["status"], "NO_CALLS"
+            )
+            self.assertEqual(result["call_audit_binding"]["call_count"], 0)
+            self.assertEqual(len(result["call_audit_binding"]["calls_sha256"]), 64)
 
             records = list((Path(temporary) / "state" / "assistant").rglob("*.json"))
             self.assertEqual(len(records), 1)
@@ -312,6 +317,8 @@ class AssistantEngineTests(unittest.TestCase):
             self.assertEqual(first["debate"]["status"], "COMPLETE")
             self.assertEqual(first["debate"]["summary"]["model_applied_count"], 3)
             self.assertEqual(first["validation"]["usage"]["total_tokens"], 120)
+            self.assertEqual(first["call_audit_binding"]["status"], "VERIFIED")
+            self.assertEqual(first["call_audit_binding"]["call_count"], 4)
             self.assertTrue(
                 all(
                     item["status"] == "MODEL_CACHE_HIT"
@@ -319,6 +326,8 @@ class AssistantEngineTests(unittest.TestCase):
                 )
             )
             self.assertEqual(second["validation"]["usage"]["total_tokens"], 0)
+            self.assertEqual(second["call_audit_binding"]["status"], "VERIFIED")
+            self.assertEqual(second["call_audit_binding"]["call_count"], 4)
             roles = {
                 json.loads(path.read_text(encoding="utf-8"))["role"]
                 for path in (root / "state" / "assistant_calls").rglob("call_*.json")
@@ -337,6 +346,32 @@ class AssistantEngineTests(unittest.TestCase):
                 for path in (root / "state" / "assistant_model_cache").rglob("*.json")
             }
             self.assertEqual(cache_roles, roles)
+            with self.assertRaisesRegex(ValueError, "unavailable or invalid"):
+                engine._store.call_audit_binding("bob", first)
+
+            self.assertEqual(len(engine.history("alice")), 2)
+            missing_call = second["debate"]["roles"]["judge"]["call"]
+            missing_path = next(
+                (root / "state" / "assistant_calls").rglob(
+                    f"call_{missing_call['call_id']}.json"
+                )
+            )
+            missing_path.unlink()
+            self.assertEqual(
+                [item["analysis_id"] for item in engine.history("alice")],
+                [first["analysis_id"]],
+            )
+
+            tampered_call = first["validation"]["model_call"]
+            tampered_path = next(
+                (root / "state" / "assistant_calls").rglob(
+                    f"call_{tampered_call['call_id']}.json"
+                )
+            )
+            tampered = json.loads(tampered_path.read_text(encoding="utf-8"))
+            tampered["status"] = "failed"
+            tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
+            self.assertEqual(engine.history("alice"), [])
 
     def test_one_failed_advocate_falls_back_while_other_roles_continue(self):
         with tempfile.TemporaryDirectory() as temporary:

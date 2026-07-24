@@ -773,45 +773,8 @@ class ModelCallGovernance:
         except (OSError, RuntimeError, ValueError) as exc:
             self._storage_failed = True
             raise AssistantProviderError("model_audit_unavailable") from exc
-        digest = hashlib.sha256(content).hexdigest()
-        attempts = record["attempts"]
-        budget = record["budget"]
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "call_id": record["call_id"],
-            "role": record["role"],
-            "model": record["model"],
-            "template_version": record["template_version"],
-            "status": record["status"],
-            "error_code": record["error_code"],
-            "cache_hit": record["cache"]["hit"],
-            "audit_record_sha256": digest,
-            "attempt_count": len(attempts),
-            "retry_count": sum(int(item.get("retry", 0) > 0) for item in attempts),
-            "latency_ms": sum(int(item.get("elapsed_ms", 0)) for item in attempts),
-            "usage": record["usage"],
-            "cached_usage": record["cached_usage"],
-            "estimated_cost_usd": record["estimated_cost_usd"],
-            "budget": {
-                "decision": budget.get("decision"),
-                "date_utc": budget.get("date_utc"),
-                "daily_token_limit": budget.get("daily_token_limit"),
-                "tokens_used_before": budget.get("tokens_used_before"),
-                "accounted_tokens": budget.get("accounted_tokens", 0),
-                "tokens_used_after": budget.get(
-                    "tokens_used_after", budget.get("tokens_used_before")
-                ),
-                "cost_accounting_available": budget.get(
-                    "cost_accounting_available", False
-                ),
-                "daily_cost_limit_usd": budget.get("daily_cost_limit_usd"),
-                "cost_used_before_usd": budget.get("cost_used_before_usd"),
-                "accounted_cost_usd": budget.get("accounted_cost_usd"),
-                "cost_used_after_usd": budget.get(
-                    "cost_used_after_usd", budget.get("cost_used_before_usd")
-                ),
-            },
-        }
+        return _audit_summary(record)
+
 
     def _load_cache(
         self,
@@ -972,6 +935,115 @@ class ModelCallGovernance:
         ).hexdigest()
         if actual_content_hash != expected_content_hash:
             raise RuntimeError("Assistant model cache source audit hash is invalid")
+
+
+def verify_call_audit_summary(
+    project_root: Path,
+    user_id: str,
+    summary: Any,
+) -> bool:
+    """Match one public call summary to its immutable per-user audit record."""
+
+    if not isinstance(summary, dict) or set(summary) != _AUDIT_SUMMARY_FIELDS:
+        return False
+    call_id = summary.get("call_id")
+    record_sha256 = summary.get("audit_record_sha256")
+    budget = summary.get("budget")
+    date_utc = budget.get("date_utc") if isinstance(budget, dict) else None
+    if (
+        not isinstance(call_id, str)
+        or re.fullmatch(r"[0-9a-f]{32}", call_id) is None
+        or not isinstance(record_sha256, str)
+        or _FINGERPRINT.fullmatch(record_sha256) is None
+        or not isinstance(date_utc, str)
+        or not _valid_date_text(date_utc)
+    ):
+        return False
+    try:
+        user_hash = _user_hash(user_id)
+        audit_root = Path(project_root) / "state" / "assistant_calls"
+        user_root = audit_root / user_hash
+        date_root = user_root / date_utc
+        path = date_root / f"call_{call_id}.json"
+        for directory in (audit_root, user_root, date_root):
+            if directory.is_symlink() or not directory.is_dir():
+                return False
+        if path.is_symlink() or not path.is_file():
+            return False
+        value = load_unique_json(path, max_bytes=MAX_AUDIT_RECORD_BYTES)
+        if (
+            not isinstance(value, dict)
+            or value.get("schema_version") != SCHEMA_VERSION
+            or value.get("call_id") != call_id
+            or value.get("user_scope_sha256") != user_hash
+            or value.get("record_sha256") != _audit_record_fingerprint(value)
+        ):
+            return False
+        return _audit_summary(value) == summary
+    except (AttributeError, KeyError, OSError, UnicodeError, TypeError, ValueError):
+        return False
+
+
+_AUDIT_SUMMARY_FIELDS = {
+    "schema_version",
+    "call_id",
+    "role",
+    "model",
+    "template_version",
+    "status",
+    "error_code",
+    "cache_hit",
+    "audit_record_sha256",
+    "attempt_count",
+    "retry_count",
+    "latency_ms",
+    "usage",
+    "cached_usage",
+    "estimated_cost_usd",
+    "budget",
+}
+
+
+def _audit_summary(record: dict[str, Any]) -> dict[str, Any]:
+    digest = hashlib.sha256(_canonical_bytes(record) + b"\n").hexdigest()
+    attempts = record["attempts"]
+    budget = record["budget"]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "call_id": record["call_id"],
+        "role": record["role"],
+        "model": record["model"],
+        "template_version": record["template_version"],
+        "status": record["status"],
+        "error_code": record["error_code"],
+        "cache_hit": record["cache"]["hit"],
+        "audit_record_sha256": digest,
+        "attempt_count": len(attempts),
+        "retry_count": sum(int(item.get("retry", 0) > 0) for item in attempts),
+        "latency_ms": sum(int(item.get("elapsed_ms", 0)) for item in attempts),
+        "usage": record["usage"],
+        "cached_usage": record["cached_usage"],
+        "estimated_cost_usd": record["estimated_cost_usd"],
+        "budget": {
+            "decision": budget.get("decision"),
+            "date_utc": budget.get("date_utc"),
+            "daily_token_limit": budget.get("daily_token_limit"),
+            "tokens_used_before": budget.get("tokens_used_before"),
+            "accounted_tokens": budget.get("accounted_tokens", 0),
+            "tokens_used_after": budget.get(
+                "tokens_used_after", budget.get("tokens_used_before")
+            ),
+            "cost_accounting_available": budget.get(
+                "cost_accounting_available", False
+            ),
+            "daily_cost_limit_usd": budget.get("daily_cost_limit_usd"),
+            "cost_used_before_usd": budget.get("cost_used_before_usd"),
+            "accounted_cost_usd": budget.get("accounted_cost_usd"),
+            "cost_used_after_usd": budget.get(
+                "cost_used_after_usd", budget.get("cost_used_before_usd")
+            ),
+        },
+    }
 
 
 def _sanitize_attempt(value: dict[str, Any], fallback_attempt: int) -> dict[str, Any]:
@@ -1154,4 +1226,5 @@ def _nonnegative_int(value: Any, default: int) -> int:
 __all__ = [
     "GovernanceSettings",
     "ModelCallGovernance",
+    "verify_call_audit_summary",
 ]

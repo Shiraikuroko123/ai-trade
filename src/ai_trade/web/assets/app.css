@@ -1344,6 +1344,34 @@ progress {
   color: var(--teal-hover);
 }
 
+.assistant-call-binding {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px 14px;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-faint);
+}
+
+.assistant-call-binding strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.assistant-call-binding.verified strong {
+  color: var(--positive);
+}
+
+.assistant-call-binding.invalid strong {
+  color: var(--negative);
+}
+
+.assistant-call-binding code {
+  font-size: 0.75rem;
+}
+
 .assistant-debate-authority {
   border-bottom: 1px solid var(--rule);
   border-top: 1px solid var(--rule);
@@ -5609,6 +5637,7 @@ progress {
   .assistant-audit-status,
   .assistant-model-review,
   .assistant-call-grid,
+  .assistant-call-binding,
   .assistant-debate-authority {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -1,6 +1,6 @@
 # Market Intelligence Evidence
 
-The market-intelligence layer in `v0.18.0` is a read-only research surface.
+The market-intelligence layer in `v0.18.1` is a read-only research surface.
 It contains nine separately stored evidence datasets. Each dataset has its own
 source, cutoff, response fingerprint, coverage declaration, immutable revision
 chain, and explicit authority boundary. No dataset creates a strategy signal,

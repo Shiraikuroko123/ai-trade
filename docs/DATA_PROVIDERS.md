@@ -153,7 +153,7 @@ execution data.
 
 ## Assistant consumption boundary
 
-The `v0.18.0` assistant does not register another market-data provider and never fetches
+The `v0.18.1` assistant does not register another market-data provider and never fetches
 network data during analysis. For a configured `STOCK`, it queries the existing
 fundamental and valuation stores using the exact final completed K-line date.
 Only `current` or `partial` evidence is eligible; a `provisional` valuation is

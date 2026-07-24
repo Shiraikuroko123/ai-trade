@@ -1,6 +1,6 @@
 # Board Capital-Flow Evidence
 
-This document describes the `v0.18.0` `capital_flow` dataset.
+This document describes the `v0.18.1` `capital_flow` dataset.
 It is a closing research view of provider-reported order-size flow, not a
 real-time quote feed, exchange-certified statistic, whole-market flow total,
 strategy signal, or order source.

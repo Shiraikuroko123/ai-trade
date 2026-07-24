@@ -1,6 +1,21 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.18.0` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning while the project remains experimental. `v0.18.1` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+
+## 0.18.1 - 2026-07-24
+
+- Bound every new assistant result to all available wording, bull, bear, and
+  judge call summaries. Saving and history reads now cross-check each summary
+  against its immutable per-user call record, including role, template,
+  status, cache, usage, cost, budget, content fingerprint, and UTC date.
+- Exclude newly bound model records from history and next-analysis comparison
+  when a referenced call record is missing, altered, malformed, cross-user,
+  or replaced through a symbolic path. Legacy schema-v1 history without the
+  binding remains readable, and local mode records an explicit zero-call state.
+- Added a responsive workstation status for verified call bindings and legacy
+  history, plus deletion, tampering, cache-hit, local-mode, and compatibility
+  regression coverage. Research-only authority and all execution gates remain
+  unchanged.
 
 ## 0.18.0 - 2026-07-24
 

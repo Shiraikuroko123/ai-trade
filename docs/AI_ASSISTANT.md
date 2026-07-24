@@ -1,6 +1,6 @@
 # AI K-line Assistant
 
-AI Trade `v0.18.0` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
+AI Trade `v0.18.1` includes an optional K-line assistant for reviewing completed market bars. It is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return.
 
 ## Contract
 
@@ -182,6 +182,17 @@ publication failure disables later model calls in the process and falls back
 to the deterministic local result. Records contain hashes and public output
 only: no API key, endpoint URL, raw prompt, raw provider response, or hidden
 reasoning is saved.
+
+Starting with `v0.18.1`, every newly saved result also contains a
+`call_audit_binding`. Before publication and whenever history is read, each
+available wording, bull, bear, and judge summary is reconstructed from its
+immutable call file in the same hashed user scope. The role, template, status,
+cache state, usage, cost, budget, UTC date, record fingerprint, and complete
+file digest must match. A newly bound model record with missing or altered call
+evidence is excluded from history and cannot become the baseline for the next
+comparison. Local results retain an explicit `NO_CALLS` binding. Older
+schema-version-1 records without the binding remain readable and are labeled as
+legacy history in the workstation.
 
 The repository's `state/*` rule excludes all of these records from Git. The R2
 exporter reads only a market-cache allowlist and cannot include them, while

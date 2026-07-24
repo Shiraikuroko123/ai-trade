@@ -1,3 +1,3 @@
 """AI Trade: auditable systematic research and paper trading."""
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"

@@ -309,7 +309,7 @@ order, position, pricing, risk-budget, voting, or authorization contract.
 
 Before model I/O, `ModelCallGovernance` performs per-user single-call and UTC-day Token/cost checks under a cross-process lock and acquires a bounded process semaphore. Each logical call, cache hit, denial, and failed/successful HTTP attempt is committed as immutable hash-bound evidence under `state/assistant_calls/`; normalized validated public enhancements use a separate immutable per-user cache under `state/assistant_model_cache/`. Request and cache identity bind the role, model, endpoint hash, evidence, input, and prompt-template version, so wording, bull, bear, and judge responses cannot be reused across roles. Audit storage failure or tampering fails closed for later model work. Raw prompts, raw provider responses, hidden reasoning, endpoint URLs, and credentials are not stored.
 
-Per-user assistant results, call audits, and model cache records are stored under `state/assistant/`, `state/assistant_calls/`, and `state/assistant_model_cache/`. New assistant results are no-replace files with a recomputable `record_sha256`; fingerprinted records that fail verification are excluded from history and comparison, while legacy schema-v1 records without the field remain readable. This local unkeyed hash is integrity evidence, not a signature or WORM control. The repository-wide `state/*` ignore rule excludes all three stores from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history and governance evidence are therefore local operational state rather than a portable report or cloud backup.
+Per-user assistant results, call audits, and model cache records are stored under `state/assistant/`, `state/assistant_calls/`, and `state/assistant_model_cache/`. New assistant results are no-replace files with a recomputable `record_sha256` and a `call_audit_binding`. Before save and on every history read, each public wording/bull/bear/judge call summary is reconstructed from its immutable record under the same hashed user directory; user scope, call ID, UTC date, role, template, status, cache, usage, cost, budget, record fingerprint, and complete evidence digest must match. A missing or altered call excludes the newly bound analysis from history and next-analysis comparison. Fingerprinted records that fail their own verification are also excluded, while legacy schema-v1 records without the binding remain readable and are labeled as legacy. Assistant and call directory symlinks are rejected. These local unkeyed hashes are integrity evidence, not signatures or WORM controls. The repository-wide `state/*` ignore rule excludes all three stores from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history and governance evidence are therefore local operational state rather than a portable report or cloud backup.
 
 ## Append-only Research Journal Boundary
 
@@ -408,7 +408,7 @@ research evidence.
 
 ### Persistent digest ledger
 
-This surface is included in the public `v0.18.0` wheel. It remains derivative
+This surface is included in the public `v0.18.1` wheel. It remains derivative
 research evidence and does not replace the authoritative paper ledger,
 reports, or journal.
 
