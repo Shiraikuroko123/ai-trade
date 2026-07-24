@@ -181,11 +181,13 @@ evidence. Their OpenAI-compatible endpoint is a wording/research service, not a
 market-data source or independent confirmation. Three role calls against one
 endpoint are three isolated audits, not three independent data providers.
 
-Future `v2.0.0` hypothesis generation must preserve the same rule: a model may
-propose a transform or experiment, but it cannot invent observations, relabel
-one transport as multiple sources, or turn model agreement into data
-confirmation. Every experiment must bind to versioned point-in-time inputs and
-remain subject to explicit human promotion.
+The unreleased `v2.0.0` hypothesis lab preserves the same rule. Its first local
+generator binds pre-registered experiments to the complete market snapshot,
+per-symbol cache hashes, manifest hash, and security-master hash, and performs
+no provider or model call. A future model may propose a transform or experiment,
+but it cannot invent observations, relabel one transport as multiple sources,
+or turn model agreement into data confirmation. Every experiment remains bound
+to versioned point-in-time inputs and subject to explicit human promotion.
 
 Both stores keep Eastmoney as the primary normalized data. Consuming them
 together does not make them independent sources and must not be presented as

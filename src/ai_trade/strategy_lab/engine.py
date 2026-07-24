@@ -79,6 +79,25 @@ class StrategyLabEngine:
                 item["max"] = len(self.config.instruments)
         return schema
 
+    def local_proposal_blueprint(
+        self, owner: str, objective: str
+    ) -> dict[str, Any]:
+        """Return a validated research proposal without creating a candidate."""
+        baseline = self._active_baseline(owner)
+        proposed = self._local_proposal(baseline["snapshot"], objective)
+        candidate, effective = apply_changes(
+            self.config, baseline["snapshot"], proposed
+        )
+        return {
+            "objective": objective,
+            "parent_candidate_id": baseline["candidate_id"],
+            "parent_fingerprint": baseline["fingerprint"],
+            "config_context_fingerprint": self._config_context_fingerprint(),
+            "baseline": baseline["snapshot"],
+            "changes": effective,
+            "candidate_fingerprint": _fingerprint(candidate),
+        }
+
     def summary(self, owner: str) -> dict[str, Any]:
         baseline = self._active_baseline(owner)
         monitors = self._active_monitors(owner, baseline)
@@ -165,6 +184,72 @@ class StrategyLabEngine:
             reason=reason,
             actor=actor,
         )
+
+    def create_hypothesis_candidate(
+        self,
+        owner: str,
+        changes: Mapping[str, Any],
+        title: str,
+        hypothesis: str,
+        reason: str,
+        *,
+        hypothesis_id: str,
+        hypothesis_fingerprint: str,
+        design_fingerprint: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        """Materialize one pre-registered hypothesis after explicit human action."""
+        if not _is_hypothesis_id(hypothesis_id):
+            raise ValueError("Invalid hypothesis id")
+        if not _is_fingerprint(hypothesis_fingerprint):
+            raise ValueError("Invalid hypothesis record fingerprint")
+        if not _is_fingerprint(design_fingerprint):
+            raise ValueError("Invalid hypothesis design fingerprint")
+        event_actor = _text(actor, "actor", 200, required=True)
+        proposal = {
+            "provider": "hypothesis_lab",
+            "hypothesis_id": hypothesis_id,
+            "hypothesis_fingerprint": hypothesis_fingerprint,
+            "design_fingerprint": design_fingerprint,
+            "explicit_human_materialization": True,
+            "model_authority": False,
+        }
+        seed = (
+            f"{self.store.owner_id(owner)}|{hypothesis_id}|{hypothesis_fingerprint}"
+        ).encode("ascii")
+        candidate_id = f"cand_{hashlib.sha256(seed).hexdigest()[:32]}"
+        try:
+            return self._create_candidate(
+                owner=owner,
+                source="hypothesis_lab_human",
+                changes=changes,
+                title=title,
+                hypothesis=hypothesis,
+                reason=reason,
+                actor=event_actor,
+                proposal=proposal,
+                candidate_id=candidate_id,
+            )
+        except FileExistsError:
+            candidate = self._verified_candidate(owner, candidate_id)
+            if (
+                candidate.get("source") != "hypothesis_lab_human"
+                or candidate.get("proposal") != proposal
+                or candidate.get("changes")
+                != apply_changes(self.config, candidate["baseline"], changes)[1]
+            ):
+                raise StrategyLabConflictError(
+                    "Hypothesis candidate identity conflicts with stored content"
+                )
+            self._ensure_lifecycle_event(
+                owner,
+                candidate,
+                action="create",
+                actor=event_actor,
+                source="hypothesis_lab_human",
+                created_at=str(candidate["created_at"]),
+            )
+            return self._compose_candidate(owner, candidate)
 
     def propose_local_ai_candidate(
         self,
@@ -835,6 +920,7 @@ class StrategyLabEngine:
         reason: str,
         actor: str | None = None,
         proposal: dict[str, Any] | None = None,
+        candidate_id: str | None = None,
     ) -> dict[str, Any]:
         baseline = self._active_baseline(owner)
         candidate_snapshot, effective = apply_changes(
@@ -842,7 +928,7 @@ class StrategyLabEngine:
         )
         candidate = {
             "schema_version": SCHEMA_VERSION,
-            "candidate_id": f"cand_{uuid4().hex}",
+            "candidate_id": candidate_id or f"cand_{uuid4().hex}",
             "owner": self.store.owner_id(owner),
             "source": source,
             "title": _text(title, "title", 120, required=True),
@@ -1877,6 +1963,23 @@ def _is_candidate_id(value: Any) -> bool:
         and value.startswith("cand_")
         and len(value) == 37
         and all(character in "0123456789abcdef" for character in value[5:])
+    )
+
+
+def _is_hypothesis_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 36
+        and value.startswith("hyp_")
+        and all(character in "0123456789abcdef" for character in value[4:])
+    )
+
+
+def _is_fingerprint(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
     )
 
 

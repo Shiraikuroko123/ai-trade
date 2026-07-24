@@ -3,6 +3,24 @@
 AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 `v0.12.0` remains the first-public-release historical baseline.
 
+## Unreleased
+
+- Began the `v2.0.0` research line with a deterministic, low-compute
+  hypothesis lab. It binds every pre-registered hypothesis to the current
+  Strategy Lab baseline and immutable market-snapshot fingerprints, and
+  records mechanisms, scope, assumptions, quantitative predictions, exact
+  falsification criteria, competing explanations, confounds, and a fixed
+  Champion/Challenger experiment plan.
+- Added owner-isolated create-once hypothesis storage with strict schemas,
+  content fingerprints, bounded records, design deduplication, and a maximum
+  of three distinct hypotheses per snapshot family with Holm correction.
+- Added local `hypothesis-generate`, `hypothesis-list`, and `hypothesis-show`
+  commands plus an explicit `hypothesis-materialize --yes` human boundary.
+  Generation reads only an existing verified cache and performs no model or
+  provider call. Materialization can create only one fingerprint-bound Strategy
+  Lab `DRAFT`; it cannot validate, approve, activate, change broker
+  configuration, or submit an order.
+
 ## 1.0.0 - 2026-07-24
 
 - Promoted the completed personal workstation roadmap to the first stable

@@ -17,6 +17,7 @@ include docs/DATA_PROVIDERS.md
 include docs/CROSS_SOURCE_AUDIT.md
 include docs/DOCKER_DEPLOYMENT.md
 include docs/AI_ASSISTANT.md
+include docs/HYPOTHESIS_LAB.md
 include docs/BROKER_ADAPTERS.md
 include docs/CLOUD_STORAGE.md
 include docs/ECOSYSTEM.md
@@ -65,6 +66,10 @@ include src/ai_trade/research_epochs.py
 include src/ai_trade/research_digest_cloud.py
 include src/ai_trade/assistant/governance.py
 include src/ai_trade/assistant/debate.py
+include src/ai_trade/hypothesis_lab/__init__.py
+include src/ai_trade/hypothesis_lab/engine.py
+include src/ai_trade/hypothesis_lab/schema.py
+include src/ai_trade/hypothesis_lab/store.py
 include src/ai_trade/web/assets/app.css
 include src/ai_trade/web/assets/app.js
 include src/ai_trade/web/assets/auth.css

@@ -7,10 +7,12 @@ AI Trade does not attempt to merge several large repositories into one process. 
 `v1.0.0` is the complete personal research workstation and has no LLM runtime
 requirement. Existing model calls are optional, budgeted wording/research
 enhancements with deterministic fallback and permanent `research_only`
-authority. `v2.0.0` is reserved for large-model-assisted hypothesis discovery,
-reproducible experiment generation, and Champion/Challenger proposals. It must
-remain practical on ordinary personal hardware and cannot activate a strategy,
-change positions, or submit orders without explicit human review.
+authority. The unreleased `v2.0.0` line has started with deterministic,
+evidence-bound hypothesis pre-registration and reproducible experiment plans.
+Large-model-assisted discovery and Champion/Challenger materialization remain
+future work. The complete line must remain practical on ordinary personal
+hardware and cannot activate a strategy, change positions, or submit orders
+without explicit human review.
 
 | System | Strongest reference value | AI Trade adoption |
 |---|---|---|
@@ -44,6 +46,14 @@ integrated first.
 | `KylinMountain/TradingAgents-AShare` | `v0.8.1` / `fef942f`; GitHub license detection reports `NOASSERTION` | Repository terms were previously identified as PolyForm Noncommercial. Design may be studied, but source is not copied into a potentially commercial distribution unless the effective license is independently cleared. |
 | `zhaoboy9692/Q-Limit` | No release; latest functional change remained Docker-related | GPL-3.0. Debate UX may be studied; frontend credential relay, free-text decisions, and weak audit patterns are not adopted. |
 | `a-stock-az` / `dbbbbm/kimi-stock-agent` | Functional activity remained at 2026-01 / 2026-05 | No clear license. Requirements and workflow may be observed; source is not copied. |
+
+The first `v2.0.0` development gate was rechecked on 2026-07-25. Microsoft
+RD-Agent (`v0.8.0`, MIT) and Qlib (`v0.9.7`, MIT), ai-hedge-fund (`v2.0.1`,
+MIT), and TradingAgents (`v0.3.1`, Apache-2.0) were reviewed as workflow
+references only. No runtime or source was imported. RD-Agent's iterative
+proposal/evaluation separation and Qlib's versioned experiment concepts are
+represented through native immutable records and existing Strategy Lab gates;
+ordinary installations do not acquire either project as a dependency.
 
 ## Hosted Platforms Worth Comparing
 
@@ -93,7 +103,7 @@ authoritative paper and broker ledgers.
 | Perspective conflict and coverage-gap audit | Complete within the assistant record | `deterministic-perspective-audit-v1` separates real stance conflicts from missing coverage, records evidence references and manual resolution requirements, and is reconstructed during internal validation. |
 | Model conclusion authority guard | Complete for the optional single configured model | A model may preserve or tighten the deterministic research conclusion. An attempted relaxation is blocked and recorded; it cannot change strategy, accounting, positions, orders, or permissions. |
 | Model call governance and cache | Complete within the local trust boundary | Per-user immutable call records capture attempt/retry, Token, latency, cache, budget, cost, and failure metadata without raw prompts/responses or credentials. Single-call/UTC-day budgets and concurrency fail closed; validated public enhancements use an immutable per-user cache. |
-| Autonomous factor research and model iteration | Reserved for `v2.0.0`, not implemented | The future line may propose falsifiable hypotheses and Champion/Challenger experiments using deterministic engines, small local models, or optional remote APIs. It may not approve its own strategy, weaken gates, place orders, or require a high-performance local model for normal use. |
+| Autonomous factor research and model iteration | Deterministic hypothesis core in development | The unreleased line can pre-register three bounded parameter-neighborhood hypotheses per immutable snapshot with explicit predictions, falsification, alternatives, confounds, holdout, rolling out-of-sample, cost, sensitivity, replication, and Holm-correction plans. An explicit human CLI action can materialize one fingerprint-bound Strategy Lab draft. It does not yet run the plan or call a model, and it may never approve itself, weaken gates, place orders, or require a high-performance local model. |
 
 ## Market Intelligence Status
 

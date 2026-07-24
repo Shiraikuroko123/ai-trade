@@ -1,6 +1,6 @@
 # AI K-line Assistant
 
-AI Trade `v1.0.0` includes an optional K-line assistant for reviewing completed market bars. The workstation does not require a model and falls back to deterministic local research when one is not configured or available. The assistant is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return. Autonomous hypothesis research and strategy iteration are reserved for the future `v2.0.0` line and are not implemented here.
+AI Trade `v1.0.0` includes an optional K-line assistant for reviewing completed market bars. The workstation does not require a model and falls back to deterministic local research when one is not configured or available. The assistant is always `research_only`: it cannot produce an order, change a target portfolio, approve a strategy candidate, unlock a broker gate, or promise a return. The unreleased `v2.0.0` line now has a separate deterministic hypothesis registry and an explicit human-only boundary that can materialize one bound Strategy Lab draft. Model-driven hypothesis generation and automatic experiment execution remain unavailable. The assistant itself retains the same `v1.0.0` authority.
 
 ## Contract
 

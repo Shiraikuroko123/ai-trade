@@ -25,6 +25,7 @@ from .config import AppConfig, load_config
 from .data.eastmoney import download_universe
 from .data.market import MarketData
 from .diagnostics import diagnose
+from .hypothesis_lab import HypothesisLabEngine
 from .monitoring import MonitoringEngine
 from .report import save_backtest_report
 from .strategy import MomentumTrendStrategy
@@ -252,6 +253,38 @@ def build_parser() -> argparse.ArgumentParser:
     assistant_analyze.add_argument("--lookback", type=int, default=180)
     assistant_analyze.add_argument(
         "--mode", choices=("local", "model"), default="local"
+    )
+
+    hypothesis_generate = subparsers.add_parser(
+        "hypothesis-generate",
+        help="Pre-register one deterministic hypothesis from the verified local cache",
+    )
+    hypothesis_generate.add_argument(
+        "--objective",
+        choices=("auto", "balanced", "drawdown", "turnover"),
+        default="auto",
+    )
+    hypothesis_generate.add_argument(
+        "--title",
+        help="Optional research title; does not alter the pre-registered tests",
+    )
+    hypothesis_list = subparsers.add_parser(
+        "hypothesis-list", help="List owner-isolated pre-registered hypotheses"
+    )
+    hypothesis_list.add_argument("--limit", type=int, default=50)
+    hypothesis_show = subparsers.add_parser(
+        "hypothesis-show", help="Show and verify one immutable hypothesis record"
+    )
+    hypothesis_show.add_argument("hypothesis_id")
+    hypothesis_materialize = subparsers.add_parser(
+        "hypothesis-materialize",
+        help="Explicitly create one Strategy Lab draft from a registered hypothesis",
+    )
+    hypothesis_materialize.add_argument("hypothesis_id")
+    hypothesis_materialize.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm human creation of a draft candidate; grants no approval",
     )
 
     monitor_scan = subparsers.add_parser(
@@ -835,6 +868,40 @@ def main(argv: list[str] | None = None) -> int:
                 lookback=args.lookback,
                 mode=args.mode,
                 user_id="local-owner",
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "hypothesis-generate":
+            market = MarketData(config, recover_snapshot=False)
+            result = HypothesisLabEngine(config).generate_local(
+                "local-owner",
+                market,
+                objective=args.objective,
+                title=args.title,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "hypothesis-list":
+            result = HypothesisLabEngine(config).list(
+                "local-owner", limit=args.limit
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "hypothesis-show":
+            result = HypothesisLabEngine(config).get(
+                "local-owner", args.hypothesis_id
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "hypothesis-materialize":
+            if not args.yes:
+                raise ValueError(
+                    "hypothesis-materialize requires --yes human confirmation"
+                )
+            result = HypothesisLabEngine(config).materialize_candidate(
+                "local-owner",
+                args.hypothesis_id,
+                confirmed_by="local-cli-user",
             )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0

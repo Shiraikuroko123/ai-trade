@@ -469,6 +469,47 @@ Generation and active digest-list APIs bind to the active epoch. The separate
 Research-page epoch browser can inspect validated old paper and digest evidence
 read-only, but cannot adopt it or change the active account.
 
+## Hypothesis Lab Boundary
+
+```text
+verified local market snapshot + active Strategy Lab baseline
+                         |
+              deterministic objective selector
+                         |
+        immutable, owner-isolated hypothesis record
+     mechanism + predictions + exact falsification rules
+      alternatives + confounds + experiment pre-registration
+                         |
+        X no automatic candidate, approval, activation, or order
+                         |
+         explicit human materialization boundary
+                         |
+             Strategy Lab DRAFT Challenger
+```
+
+`hypothesis_lab/` is the first unreleased `v2.0.0` research boundary. It reads
+an existing verified cache without provider refresh, runs the active baseline,
+and generates a bounded parameter-neighborhood protocol for balanced,
+drawdown, or turnover research. Each record binds the current Strategy Lab
+parent/settings/configuration fingerprints, market snapshot, per-symbol cache
+hashes, manifest, and security master. Raw prompts and model responses are not
+part of the schema, and the initial generator performs no model call.
+
+Records are create-once, owner-isolated, size-bounded, and fully
+fingerprint-verified on read. A design fingerprint excludes display titles and
+record identity so relabeling the same experiment does not spend another test.
+Each snapshot family admits at most three distinct designs and pre-registers
+Holm correction at alpha 0.05. Every design contains measurable predictions,
+their exact logical falsifiers, two or more competing explanations, confound
+controls, same-snapshot comparison, holdout, rolling out-of-sample, cost
+stress, parameter sensitivity, and independent replication. The record's
+safety contract explicitly denies the hypothesis itself candidate creation,
+approval, activation, trading, broker changes, and gate weakening. A separate
+`hypothesis-materialize --yes` command lets a human create one deterministic,
+fingerprint-bound Strategy Lab `DRAFT`. The candidate ID is derived from owner
+and hypothesis identity, so repeat or concurrent confirmation cannot create a
+second draft. Experiment execution remains intentionally outside this layer.
+
 ## Strategy Lab Boundary
 
 ```text
@@ -549,6 +590,7 @@ frozen paper epoch -> promotion gate -> broker sandbox adapter
 - `broker/live_guard.py`: paper, configuration, adapter capability, reconciliation, kill-switch, mandate, authorization, and process-confirmation gates.
 - `broker/live.py`: fail-closed pre-trade validation and the only future live submission boundary.
 - `assistant/`: local/model K-line review, closed research conclusion schema, and per-user local history; it has no broker capability.
+- `hypothesis_lab/`: deterministic evidence-bound hypothesis pre-registration, immutable owner-isolated records, falsification contracts, and experiment plans; only a separate explicit human action can create a bound Strategy Lab draft, and it cannot promote one.
 - `research_journal.py`: per-owner immutable human notes, decision rationale, correction links, evidence fingerprints, and fixed research-only authority.
 - `research_digest.py`: per-owner/per-paper-epoch immutable daily and weekly digest chains, source bindings, revisions, and fail-closed storage checks.
 - `monitoring.py`: owner-scoped watchlists, deterministic rules, immutable scan and alert evidence, append-only review actions, and research-only scheduled scans.
