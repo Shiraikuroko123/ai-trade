@@ -34,6 +34,7 @@ include docs/assets/workstation-overview.png
 include scripts/bootstrap.ps1
 include scripts/configure_ai.ps1
 include scripts/configure_cloud.ps1
+include scripts/configure_notifications.ps1
 include scripts/docker-entrypoint.sh
 include scripts/install_paper_task.ps1
 include scripts/run_daily_paper.ps1
@@ -57,8 +58,11 @@ include src/ai_trade/data/tushare.py
 include src/ai_trade/data/tushare_reference.py
 include src/ai_trade/data/valuation.py
 include src/ai_trade/notification_delivery.py
+include src/ai_trade/notification_channels.py
 include src/ai_trade/research_archive.py
 include src/ai_trade/research_digest.py
+include src/ai_trade/research_epochs.py
+include src/ai_trade/research_digest_cloud.py
 include src/ai_trade/assistant/governance.py
 include src/ai_trade/assistant/debate.py
 include src/ai_trade/web/assets/app.css

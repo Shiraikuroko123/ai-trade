@@ -1,6 +1,40 @@
 # Changelog
 
-AI Trade follows semantic versioning while the project remains experimental. `v0.18.1` is the current public release; `v0.12.0` remains the first-public-release historical baseline.
+AI Trade follows semantic versioning. `v1.0.0` is the current public release;
+`v0.12.0` remains the first-public-release historical baseline.
+
+## 1.0.0 - 2026-07-24
+
+- Promoted the completed personal workstation roadmap to the first stable
+  release. Core installation and operation remain fully usable without an LLM;
+  the existing optional assistant stays `research_only` and cannot alter
+  strategies, accounts, orders, positions, risk gates, or broker authority.
+- Added natural-month research projections with return, drawdown, session
+  coverage, trades, rejections, journal counts, positions, and source
+  fingerprints. Daily and ISO-week views remain available from the same
+  validated paper reports and equity ledger.
+- Added a read-only archived paper-epoch browser. It validates archived account
+  state and matching digest namespaces without copying, merging, reactivating,
+  or overwriting active state. Because journal entries do not contain a paper
+  epoch binding, archived views explicitly exclude them instead of showing a
+  same-date note from another epoch.
+- Added optional Cloudflare R2 backup, listing, and verified staging restore for
+  immutable daily/weekly research digest chains. Snapshots contain only hashed
+  owner/account identities and validated revisions; restore verifies archive
+  checksums, record schemas, bindings, revision chains, and fingerprints, and
+  never changes active state.
+- Added optional SMTP email and interactive Windows Toast delivery for unread
+  monitoring notifications. Credentials remain environment-only, attempts are
+  bounded and immutable, concurrent delivery is serialized, failures do not
+  change the local inbox or scan result, and Docker supports email but not host
+  desktop Toast.
+- Expanded release verification so the new archive, epoch, cloud-digest,
+  notification modules, configuration script, UI contracts, and tamper tests
+  are mandatory in wheel/source artifacts.
+- Defined `v2.0.0` as the future large-model research line: factor-hypothesis
+  generation, reproducible experiments, leakage controls, model comparison,
+  and Champion/Challenger proposals may be researched there, but no autonomous
+  strategy activation or trading authority is part of `v1.0.0`.
 
 ## 0.18.1 - 2026-07-24
 

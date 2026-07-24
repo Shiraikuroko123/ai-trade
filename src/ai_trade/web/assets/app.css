@@ -4129,6 +4129,23 @@ progress {
   min-width: 0;
 }
 
+.archive-section-wide {
+  grid-column: 1 / -1;
+}
+
+.epoch-list {
+  margin: 1rem;
+}
+
+.epoch-detail {
+  border-top: 1px solid var(--rule);
+  padding: 1rem;
+}
+
+.epoch-browser > .form-status {
+  margin: 0.75rem 1rem 0;
+}
+
 .archive-section-title {
   border-bottom: 1px solid var(--rule);
   margin-bottom: 0.55rem;

@@ -12,6 +12,7 @@ from ai_trade.web.auth import Session
 from ai_trade.web.server import (
     DashboardServer,
     _handler_factory,
+    _parse_research_epoch_list_query,
     _parse_research_archive_query,
 )
 
@@ -48,6 +49,7 @@ class _Service:
 
     def __init__(self):
         self.calls = []
+        self.epoch_calls = []
 
     def research_archive(self, **payload):
         self.calls.append(payload)
@@ -58,6 +60,16 @@ class _Service:
             "daily": [],
             "weekly": [],
             "snapshots": [],
+            "errors": [],
+        }
+
+    def research_epochs(self, **payload):
+        self.epoch_calls.append(payload)
+        return {
+            "schema_version": 1,
+            "available": True,
+            "status": "current",
+            "epochs": [],
             "errors": [],
         }
 
@@ -92,6 +104,30 @@ class ResearchArchiveHttpTests(unittest.TestCase):
             ),
         )
 
+    def test_month_query_is_canonical_and_owner_bound(self):
+        service = _Service()
+        account = "account-" + "a" * 32
+        cookie = "b" * 64
+        auth = _Auth({cookie: _session("alice", "csrf", account)})
+        with _running_server(service, auth=auth) as port:
+            status, payload = _request_json(
+                port,
+                "GET",
+                "/api/research/archive?kind=monthly&month=2026-07-01&limit=6",
+                cookie=cookie,
+            )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["available"])
+        self.assertEqual(
+            service.calls[-1]["query"],
+            ResearchArchiveQuery(
+                kind="monthly",
+                month_start=date(2026, 7, 1),
+                limit=6,
+            ),
+        )
+
     def test_invalid_query_returns_bad_request_without_service_call(self):
         service = _Service()
         with _running_server(service) as port:
@@ -110,6 +146,9 @@ class ResearchArchiveHttpTests(unittest.TestCase):
             "kind=unknown",
             "kind=daily&kind=weekly",
             "date=2026-07-17&week=2026-07-13",
+            "month=2026-07-02",
+            "month=2026-07-01&week=2026-07-13",
+            "kind=weekly&month=2026-07-01",
             "limit=0",
             "limit=53",
             "owner=alice",
@@ -117,6 +156,47 @@ class ResearchArchiveHttpTests(unittest.TestCase):
         ):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 _parse_research_archive_query(query)
+
+    def test_old_epoch_routes_are_owner_bound_and_read_only(self):
+        service = _Service()
+        principal = "account-" + "a" * 32
+        cookie = "b" * 64
+        auth = _Auth({cookie: _session("alice", "csrf", principal)})
+        with _running_server(service, auth=auth) as port:
+            list_status, _ = _request_json(
+                port,
+                "GET",
+                "/api/research/epochs?limit=10",
+                cookie=cookie,
+            )
+            detail_status, _ = _request_json(
+                port,
+                "GET",
+                "/api/research/epochs/20260701_120000?kind=monthly&month=2026-06-01",
+                cookie=cookie,
+            )
+
+        self.assertEqual(list_status, 200)
+        self.assertEqual(detail_status, 200)
+        self.assertEqual(
+            service.epoch_calls[0],
+            {"owner_id": principal, "limit": 10},
+        )
+        self.assertEqual(service.epoch_calls[1]["owner_id"], principal)
+        self.assertEqual(service.epoch_calls[1]["epoch_id"], "20260701_120000")
+        self.assertEqual(
+            service.epoch_calls[1]["query"],
+            ResearchArchiveQuery(
+                kind="monthly", month_start=date(2026, 6, 1)
+            ),
+        )
+
+    def test_old_epoch_list_query_is_strictly_bounded(self):
+        self.assertEqual(_parse_research_epoch_list_query(""), 50)
+        self.assertEqual(_parse_research_epoch_list_query("limit=200"), 200)
+        for query in ("owner=alice", "limit=0", "limit=201", "limit=1&limit=2"):
+            with self.subTest(query=query), self.assertRaises(ValueError):
+                _parse_research_epoch_list_query(query)
 
     def test_frontend_exposes_text_status_scroll_regions_and_read_only_boundary(self):
         root = Path(__file__).resolve().parents[1]
@@ -130,6 +210,9 @@ class ResearchArchiveHttpTests(unittest.TestCase):
         self.assertIn('id="research-archive-heading"', javascript)
         self.assertIn("逐日收盘归档表，可横向滚动", javascript)
         self.assertIn("周度研究归档表，可横向滚动", javascript)
+        self.assertIn("月度研究归档表，可横向滚动", javascript)
+        self.assertIn('id="research-epoch-heading"', javascript)
+        self.assertIn("旧账期浏览器只读取归档目录", javascript)
         self.assertIn("归档是账本和日志的只读投影", javascript)
         self.assertIn("缺失值不会补零", javascript)
         self.assertIn("价格与市值不回填", javascript)

@@ -61,6 +61,7 @@ from ..research_journal import (
     ResearchJournalStore,
     unavailable_journal,
 )
+from ..research_epochs import ResearchEpochBrowser
 from ..strategy_lab import StrategyLabConflictError, StrategyLabEngine
 from ..strategy import MomentumTrendStrategy
 from .screener import ScreeningFilters, screen_rows
@@ -123,6 +124,7 @@ class DashboardService:
         self._research_journal: ResearchJournalStore | None = None
         self._research_archive: ResearchArchiveProjection | None = None
         self._research_digests: ResearchDigestStore | None = None
+        self._research_epochs: ResearchEpochBrowser | None = None
         self._monitoring: MonitoringEngine | None = None
 
     def overview(self) -> dict[str, Any]:
@@ -263,6 +265,17 @@ class DashboardService:
             digests = self.research_digests(owner_id=owner_id)
         except (AttributeError, OSError, RuntimeError, ValueError, KeyError) as exc:
             digests = unavailable_research_digests(str(exc))
+        try:
+            epochs = self.research_epochs(owner_id=owner_id)
+        except (AttributeError, OSError, RuntimeError, ValueError, KeyError) as exc:
+            epochs = {
+                "schema_version": 1,
+                "available": False,
+                "status": "unavailable",
+                "summary": {"total": 0, "returned": 0, "truncated": False, "invalid": 0},
+                "epochs": [],
+                "errors": [{"code": "paper_epoch_browser_unavailable", "message": str(exc)}],
+            }
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
@@ -292,6 +305,7 @@ class DashboardService:
             "journal": journal,
             "archives": archives,
             "digests": digests,
+            "epochs": epochs,
         }
 
     def research_archive(
@@ -354,6 +368,35 @@ class DashboardService:
             return self._research_digest_store().list(owner_id, account_id, query)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return unavailable_research_digests(str(exc), query=query)
+
+    def research_epochs(
+        self,
+        *,
+        owner_id: str = "local-owner",
+        epoch_id: str | None = None,
+        query: ResearchArchiveQuery | None = None,
+        digest_query: ResearchDigestQuery | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """List or inspect archived paper epochs without reactivating them."""
+
+        browser = self._research_epoch_browser()
+        if epoch_id is None:
+            return browser.list(owner_id, limit=limit)
+        calendar = None
+        try:
+            market = self.market(recover_snapshot=False)
+            raw_calendar = getattr(market, "calendar", None)
+            calendar = list(raw_calendar) if raw_calendar is not None else None
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            calendar = None
+        return browser.get(
+            owner_id,
+            epoch_id,
+            query=query,
+            digest_query=digest_query,
+            market_calendar=calendar,
+        )
 
     def generate_research_digests(
         self,
@@ -1800,6 +1843,17 @@ class DashboardService:
                         root = reports_dir.parent / "state" / "research_digests"
                 self._research_digests = ResearchDigestStore(root)
             return self._research_digests
+
+    def _research_epoch_browser(self) -> ResearchEpochBrowser:
+        with self._lock:
+            if self._research_epochs is None:
+                state_file = Path(getattr(self.config, "paper_state_file"))
+                self._research_epochs = ResearchEpochBrowser(
+                    state_file.parent / "archive",
+                    self._research_journal_store(),
+                    self._research_digest_store(),
+                )
+            return self._research_epochs
 
     def _research_account_context(self) -> tuple[str, str]:
         state = self._paper_state()

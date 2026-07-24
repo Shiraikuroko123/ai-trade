@@ -134,10 +134,11 @@ symbol, and data date. A changed or missing source binding fails closed.
 
 `GET /api/monitoring` returns `notifications`, `notification_summary`, and
 `notification_delivery`. With no environment variables the delivery mode is
-`local_inbox`. An optional HTTPS webhook can be enabled with
-`AI_TRADE_WEBHOOK_URL` and `AI_TRADE_WEBHOOK_SECRET`; HTTP is accepted only for
-an explicit loopback endpoint. The secret is read from the process environment
-and never written to state, logs, outbox records, or release artifacts.
+`local_inbox`. Optional external channels are HTTPS HMAC Webhook, SMTP email,
+and interactive Windows Toast. Their secrets are read from the process
+environment and never written to state, logs, delivery records, or release
+artifacts. HTTP Webhook delivery is accepted only for an explicit loopback
+endpoint.
 The workstation supports
 `POST /api/monitoring/notifications/<notification-id>/actions` with
 `mark_read`, `mark_unread`, or `dismiss`. Every transition is a new immutable
@@ -173,11 +174,55 @@ successful; delivery status is exposed for review and can be retried on a
 later scan until the configured attempt cap is reached. Webhook evidence is
 not included in R2 market-cache backups.
 
+### Email and Windows Toast delivery
+
+Source-workspace users can configure one SMTP recipient, Windows Toast, or both
+for the current Windows user without writing credentials into the repository:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\configure_notifications.ps1 -Email
+powershell -ExecutionPolicy Bypass -File .\scripts\configure_notifications.ps1 -Desktop
+powershell -ExecutionPolicy Bypass -File .\scripts\configure_notifications.ps1 -Email -Desktop
+```
+
+Use `-Disable` to clear both channel configurations. Restart AI Trade after a
+user-level environment change, then run one monitoring scan to verify the
+result. The email channel requires `AI_TRADE_EMAIL_SMTP_HOST`,
+`AI_TRADE_EMAIL_FROM`, and `AI_TRADE_EMAIL_TO`. Optional authentication requires
+both `AI_TRADE_EMAIL_USERNAME` and `AI_TRADE_EMAIL_PASSWORD`. Set
+`AI_TRADE_EMAIL_SECURITY=starttls` for an explicit TLS upgrade (normally port
+587) or `ssl` for implicit TLS (normally port 465). Cleartext SMTP is not
+supported.
+
+`AI_TRADE_EMAIL_TIMEOUT_SECONDS` is bounded to 1-60 seconds,
+`AI_TRADE_EMAIL_MAX_ATTEMPTS` to 1-5 attempts, and
+`AI_TRADE_EMAIL_BATCH_SIZE` to 1-100 unread notifications. The corresponding
+Toast batch limit is `AI_TRADE_DESKTOP_BATCH_SIZE`, also 1-100. Retry attempts
+use a bounded exponential delay and do not alter the local inbox or scan
+outcome. A successful attempt for the same notification, channel, and target
+fingerprint is not sent again.
+
+Windows Toast requires `AI_TRADE_DESKTOP_NOTIFICATIONS=1`, a Windows host, and
+an interactive session for the same user running AI Trade. It is a workstation
+convenience, not a background mobile-push service. Docker containers can use
+SMTP email but cannot display host Windows Toast; configure Toast only for a
+native Windows process.
+
+Email and Toast attempts are create-once JSON records below owner-local
+`delivery_attempts/`. Each record binds the profile, notification fingerprint,
+channel, target fingerprint, sequence, result, bounded public error, duration,
+and its own SHA-256 fingerprint. One cross-process evidence lock covers prior
+attempt verification, the external send, and record publication so concurrent
+scans cannot knowingly deliver the same item twice. Local hashes still do not
+protect against a privileged operator who can consistently rewrite or delete
+the state directory.
+
 ## Storage and Trust Boundary
 
 Monitoring state is stored below
 `state/monitoring/users/<sha256-owner>/` as bounded strict JSON configuration
-revisions, scans, alerts, alert actions, notifications, and notification actions.
+revisions, scans, alerts, alert actions, notifications, notification actions,
+and delivery attempts.
 The repository ignores `state/`, release
 verification rejects it, and the Cloudflare R2 exporter can read only the market
 cache allowlist. Monitoring state therefore does not consume R2 quota and is not

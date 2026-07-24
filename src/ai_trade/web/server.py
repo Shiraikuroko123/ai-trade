@@ -93,6 +93,7 @@ ASSISTANT_MODES = frozenset({"local", "model"})
 ASSISTANT_MIN_LOOKBACK = 60
 ASSISTANT_MAX_LOOKBACK = 500
 JOURNAL_ENTRY_ID_PATTERN = re.compile(r"journal_[0-9a-f]{32}\Z")
+RESEARCH_EPOCH_PATH = re.compile(r"/api/research/epochs/(\d{8}_\d{6})\Z")
 MARKET_CHART_PERIODS = frozenset({"day", "week", "month"})
 MARKET_CHART_MIN_LIMIT = 60
 MARKET_CHART_MAX_LIMIT = 1500
@@ -409,6 +410,23 @@ def _handler_factory(
                         service.research_digests(
                             owner_id=_assistant_user_id(context),
                             query=digest_query,
+                        )
+                    )
+                elif parsed.path == "/api/research/epochs":
+                    epoch_limit = _parse_research_epoch_list_query(parsed.query)
+                    self._json(
+                        service.research_epochs(
+                            owner_id=_assistant_user_id(context),
+                            limit=epoch_limit,
+                        )
+                    )
+                elif epoch_match := RESEARCH_EPOCH_PATH.fullmatch(parsed.path):
+                    epoch_query = _parse_research_archive_query(parsed.query)
+                    self._json(
+                        service.research_epochs(
+                            owner_id=_assistant_user_id(context),
+                            epoch_id=epoch_match.group(1),
+                            query=epoch_query,
                         )
                     )
                 elif parsed.path == "/api/portfolio":
@@ -1257,7 +1275,7 @@ def _parse_research_journal_query(query: str) -> JournalQuery:
             query,
             keep_blank_values=True,
             strict_parsing=True,
-            max_num_fields=4,
+            max_num_fields=5,
         )
     except ValueError as exc:
         raise ValueError("Research journal query is invalid") from exc
@@ -1777,7 +1795,9 @@ def _parse_research_archive_query(query: str) -> ResearchArchiveQuery:
         )
     except ValueError as exc:
         raise ValueError("Research archive query is invalid") from exc
-    unsupported = sorted(set(values) - {"kind", "date", "week", "limit"})
+    unsupported = sorted(
+        set(values) - {"kind", "date", "week", "month", "limit"}
+    )
     if unsupported:
         raise ValueError(
             "Unsupported research archive query parameters: "
@@ -1788,13 +1808,27 @@ def _parse_research_archive_query(query: str) -> ResearchArchiveQuery:
             raise ValueError(f"{field} must be provided at most once")
     kind = values.get("kind", ["all"])[0]
     if kind not in ARCHIVE_KINDS:
-        raise ValueError("kind must be all, daily, or weekly")
+        raise ValueError("kind must be all, daily, weekly, or monthly")
     on_date = _parse_archive_date(values.get("date", [None])[0], "date")
     week_start = _parse_archive_date(values.get("week", [None])[0], "week")
+    month_start = _parse_archive_date(values.get("month", [None])[0], "month")
     if week_start is not None and week_start.weekday() != 0:
         raise ValueError("week must be an ISO Monday")
-    if on_date is not None and week_start is not None:
-        raise ValueError("date and week cannot be combined")
+    if month_start is not None and month_start.day != 1:
+        raise ValueError("month must be the first calendar day")
+    if sum(value is not None for value in (on_date, week_start, month_start)) > 1:
+        raise ValueError("date, week, and month cannot be combined")
+    selected_kind = (
+        "daily"
+        if on_date is not None
+        else "weekly"
+        if week_start is not None
+        else "monthly"
+        if month_start is not None
+        else None
+    )
+    if selected_kind is not None and kind not in {"all", selected_kind}:
+        raise ValueError(f"kind must be {selected_kind} when its period is selected")
     raw_limit = values.get("limit", [str(ARCHIVE_DEFAULT_LIMIT)])[0]
     if not raw_limit.isascii() or not raw_limit.isdigit():
         raise ValueError("limit must be an integer")
@@ -1807,8 +1841,34 @@ def _parse_research_archive_query(query: str) -> ResearchArchiveQuery:
         kind=kind,
         on_date=on_date,
         week_start=week_start,
+        month_start=month_start,
         limit=limit,
     )
+
+
+def _parse_research_epoch_list_query(query: str) -> int:
+    if len(query) > 128:
+        raise ValueError("Paper epoch query is too long")
+    if not query:
+        return 50
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=1,
+        )
+    except ValueError as exc:
+        raise ValueError("Paper epoch query is invalid") from exc
+    if set(values) != {"limit"} or len(values["limit"]) != 1:
+        raise ValueError("Paper epoch query accepts one limit parameter")
+    raw_limit = values["limit"][0]
+    if not raw_limit.isascii() or not raw_limit.isdigit():
+        raise ValueError("limit must be an integer")
+    limit = int(raw_limit)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be between 1 and 200")
+    return limit
 
 
 def _parse_research_digest_query(query: str) -> ResearchDigestQuery:

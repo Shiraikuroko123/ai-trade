@@ -47,6 +47,11 @@ class ResearchArchiveProjectionTests(unittest.TestCase):
             self.assertEqual(result["weekly"][0]["included_sessions"], 1)
             self.assertEqual(result["weekly"][0]["expected_sessions"], 1)
             self.assertAlmostEqual(result["weekly"][0]["period_return"], 0.005)
+            self.assertEqual(result["monthly"][0]["month_start"], "2026-07-01")
+            self.assertEqual(result["monthly"][0]["month_end"], "2026-07-31")
+            self.assertEqual(result["monthly"][0]["included_sessions"], 1)
+            self.assertEqual(result["monthly"][0]["expected_sessions"], 1)
+            self.assertAlmostEqual(result["monthly"][0]["period_return"], 0.005)
             self.assertEqual(result["snapshots"][0]["valuation_status"], "ledger_only")
             self.assertFalse(
                 result["snapshots"][0]["price_derived_values_available"]
@@ -211,6 +216,20 @@ class ResearchArchiveProjectionTests(unittest.TestCase):
             )
             self.assertEqual(len(result["daily"]), 1)
             self.assertEqual(result["weekly"], [])
+            self.assertEqual(result["monthly"], [])
+
+            monthly = _build(
+                projection,
+                "alice",
+                query=ResearchArchiveQuery(
+                    kind="monthly",
+                    month_start=date(2026, 7, 1),
+                    limit=1,
+                ),
+            )
+            self.assertEqual(monthly["daily"], [])
+            self.assertEqual(monthly["weekly"], [])
+            self.assertEqual(monthly["monthly"][0]["month_start"], "2026-07-01")
 
             with self.assertRaisesRegex(ValueError, "Monday"):
                 _build(

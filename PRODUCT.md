@@ -2,7 +2,19 @@
 
 ## Release Baseline
 
-`v0.18.1` is the current public release. It retains the independently governed bull, bear, and judge research roles from `v0.18.0` and now binds every new assistant history record to the corresponding immutable per-user call evidence. Missing, altered, cross-user, or mismatched call evidence excludes the new record from history and comparison; legacy version-1 history remains readable. The judge only organizes agreements, conflicts, and unresolved questions; it cannot vote, change the deterministic research conclusion, produce an order or position, or widen any permission. The existing Tushare reference checks, official-event and news evidence, completed-session market review, paper accounting, optional private R2 backup, broker-readiness controls, historical minute evidence, Level-1 five-level snapshots, and HMAC webhook delivery remain intact. It does not provide Tick or Level-2 data, a complete sentiment model, complete official coverage for every ETF/market, multi-model voting, a working live-broker adapter, or automatic real-money execution.
+`v1.0.0` is the stable personal-workstation release. Local research, backtesting,
+paper operation, monitoring, monthly review, archived-epoch browsing, and
+audited storage work without an LLM. The optional assistant retains the
+independently governed bull, bear, and judge roles from `v0.18.0`, immutable
+per-user call evidence, budgets, retries, and deterministic local fallback. The
+judge only organizes agreements, conflicts, and unresolved questions; it cannot
+vote, change a deterministic conclusion, produce an order or position, or widen
+permission. Private R2 can separately stage verified market snapshots and
+daily/weekly research digests; monitoring can use Webhook, email, or interactive
+Windows Toast without changing the authoritative local inbox. The release does
+not provide Tick or Level-2 data, a complete sentiment model, complete official
+coverage for every ETF/market, a working live-broker adapter, autonomous
+strategy activation, or automatic real-money execution.
 
 ## Register
 
@@ -18,7 +30,15 @@ AI Trade is a local, end-to-end systematic investment workstation for China A-sh
 
 Success means the user can answer six questions from one source of truth: what data the system used, how current and trustworthy that snapshot is, why a position is proposed, what could go wrong, what the account currently owns, and whether the evidence is strong enough to advance to the next operating stage.
 
-Future real-market trading is an explicit product goal, implemented through isolated broker adapters. Historical success never enables live trading. Promotion requires a frozen strategy version, sufficient independent paper sessions, a broker sandbox, order and position reconciliation, kill switches, credential isolation, and a separate human authorization for the selected broker account.
+`v2.0.0` is reserved for optional large-model research automation: falsifiable
+hypothesis generation, point-in-time experiment construction, leakage checks,
+reproducible comparison, and Champion/Challenger proposals. It must remain
+usable on an ordinary personal computer through deterministic engines, small
+local models, or user-selected remote APIs. Automated research never grants
+strategy activation or trading authority; all promotion remains an explicit
+human decision. Real-market connectivity, if ever implemented, is a separate
+broker-adapter and authorization problem rather than a consequence of model or
+backtest performance.
 
 ## Brand Personality
 

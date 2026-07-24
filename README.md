@@ -7,9 +7,11 @@
 
 [架构](docs/ARCHITECTURE.md) · [Docker 部署](docs/DOCKER_DEPLOYMENT.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
-`v0.18.1` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页提供九类彼此隔离的证据，包括股票时点基本面、股票历史估值分位、官方披露、第三方新闻和公开 Level-1 五档盘口；这些证据仍固定为 `research_only`。相互隔离的多头、空头和裁判研究账本中，每个角色分别经过预算、重试、缓存和不可变审计，失败时独立回退到确定性本地记录；裁判只能整理一致点、冲突和未决问题，不能改变研究结论、订单、仓位或权限。新历史记录会把公开调用摘要与对应的用户隔离不可变证据交叉绑定，缺失或不匹配的模型记录不会进入历史与下一次对比。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 或可选 Tushare 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
+`v1.0.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页提供九类彼此隔离的证据，包括股票时点基本面、股票历史估值分位、官方披露、第三方新闻和公开 Level-1 五档盘口；这些证据仍固定为 `research_only`。相互隔离的多头、空头和裁判研究账本中，每个角色分别经过预算、重试、缓存和不可变审计，失败时独立回退到确定性本地记录；裁判只能整理一致点、冲突和未决问题，不能改变研究结论、订单、仓位或权限。新历史记录会把公开调用摘要与对应的用户隔离不可变证据交叉绑定，缺失或不匹配的模型记录不会进入历史与下一次对比。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 或可选 Tushare 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
-本 README 描述 `v0.18.1` 公开发行版及其安全边界。可审计多空裁判、AI 调用治理、调用历史证据绑定、Tushare 财务/估值参考核验、官方事件与新闻证据、研究监控、归档、市场情报和 Webhook 均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
+`v1.0.0` 的完整本地研究、回测、模拟、监控和归档流程 **不需要大模型**。模型增强是用户自行配置的可选能力；未配置 Key、模型不可用或预算耗尽时，系统继续使用确定性本地结果。大模型驱动的规律发现、自动实验和策略自迭代不属于本版，统一规划为 `v2.0.0` 研究线。
+
+本 README 描述 `v1.0.0` 公开发行版及其安全边界。月度研究视图、旧模拟账期只读浏览、R2 digest 备份、邮件与 Windows Toast、可审计多空裁判、AI 调用治理、Tushare 财务/估值参考核验、官方事件与新闻证据、研究监控和市场情报均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
 
 系统已经贯通以下流程：
 
@@ -29,29 +31,36 @@
 14. 从本地券商订单与成交账本恢复每笔订单的当前状态，校验部分成交、撤单竞态、乱序回报和重启后的账本一致性。
 15. 用原子作用域清单把未来券商生命周期账本绑定到适配器、账户引用、环境、配置与账本路径，阻止跨账户或跨配置混写。
 16. 在每个登录用户隔离的研究日志中追加人工观察、判断和修正，并绑定当时的行情与策略证据；日志不会改变任何执行权限。
-17. 在研究页把模拟净值账本、不可覆盖的模拟日报和当前用户日志投影为逐日摘要、ISO 周度复盘与历史持仓数量快照，并可将该证据按用户和模拟账期追加为不可变日报/周报修订链；缺失或不一致证据始终显式披露。
+17. 在研究页把模拟净值账本、不可覆盖的模拟日报和当前用户日志投影为逐日摘要、ISO 周度复盘、自然月复盘与历史持仓数量快照，并可将日/周证据按用户和模拟账期追加为不可变 digest 修订链；旧账期只能在只读浏览器中核验，不能替换或复活活动账户。
 18. 把东方财富指定交易日的完整龙虎榜分页校验后固化为不可变修订，在独立市场情报页披露日期、来源、覆盖、指纹和筛选结果；该单源证据不等同情绪，也不进入策略或交易权限。
 19. 把东方财富指定交易日的全部板块分页与上证、深证、北证三条宽度响应联合校验后固化为另一条不可变修订链，提供可筛选板块排名和涨跌宽度；来源板块集合不冒充纯行业分类，也不生成交易信号。
 20. 把东方财富指定交易日的全部 `m:90+t:2` 板块分页校验后固化为第三条不可变修订链，披露主力及超大单、大单、中单、小单净额和占比；保留提供方空值、单位、日期、分页、指纹和重叠板块警告，不把板块行合计当作全市场资金流。
-21. 在当前登录账户下把规则告警和失败扫描幂等汇总为本地通知，保留来源与证据指纹，并用追加式动作记录未读、已读和归档；本地收件箱不会确认原告警、发送外部推送或取得交易权限。
+21. 在当前登录账户下把规则告警和失败扫描幂等汇总为本地通知，保留来源与证据指纹，并用追加式动作记录未读、已读和归档；可选 HTTPS HMAC Webhook、SMTP 邮件和交互式 Windows Toast 都有独立投递审计，失败不会改变本地收件箱或取得交易权限。
 22. 对最近完整日线执行可选的跨源一致性审计，将逐证券实际来源、独立参考源、日期重合、最大偏差和审计指纹写入行情 manifest；回退源供数时禁止同源自检，核对失败也不会替换主快照或提升交易权限。
 23. 提供非 root、只读根文件系统的 Docker/Compose 部署；容器通配绑定必须启用内测认证，宿主机端口固定发布到回环地址，免登录模式不能借容器暴露。
 24. 按已完成会话截止日固化股票财务指标，只接受公告日和更新日均不晚于截止日的期间记录；ETF 保持明确不支持。
 25. 把 SSE 与 CNINFO 官方披露元数据、第三方新闻分别存储和展示，不把第三方聚合信息冒充官方披露，也不自动生成情绪分数。
 26. 对股票的 PE/PB/现金流等历史正值样本计算可复核分位；少于 120 个有效观测或非股票标的时保持不可用。
 27. 固化公开 Level-1 五档买卖盘、价差和深度不平衡，保留“手到股”的换算；它不是 Tick、全深度、Level-2 或执行行情。
+28. 将验证通过的日报/周报 digest 单独备份到私有 R2 命名空间，恢复只进入新暂存目录并逐条复核 schema、账期、配置、修订链和指纹，永不覆盖活动状态。
 
 历史收益不代表未来结果。本项目不提供投资建议或盈利承诺，当前版本只用于研究和本地模拟；它没有可工作的真实券商适配器，也不应被视为已经具备实盘交易条件。
 
+## v2.0.0 路线边界
+
+`v2.0.0` 才引入大模型驱动的自主研究：从已有证据提出可证伪的因子或规则假设，生成带版本的数据集与实验计划，执行防未来泄漏的回测、留出集、成本压力和滚动样本外验证，再把合格结果登记为 Challenger。默认计算路线会优先使用普通个人电脑可运行的确定性研究引擎、小型本地模型或用户自选的远程模型 API，不把高性能本地大模型作为安装前提。
+
+“自我迭代”只表示自动提出和验证候选，不表示自动批准。任何候选进入 Champion、活动模拟策略或更高权限前仍须人工复核和明确批准；模型不能自行改写基准、降低门槛、删除不利实验、调整真实持仓或创建订单。`v1.0.0` 不包含这些自主研究运行时代码。
+
 ## 快速开始
 
-推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v0.18.1) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
+推荐普通用户从 [GitHub Releases](https://github.com/Shiraikuroko123/ai-trade/releases/tag/v1.0.0) 安装当前发行版。下面的命令创建隔离环境和独立工作目录，不需要 Git：
 
 ```powershell
-New-Item -ItemType Directory -Force .\AI-Trade-v0.18.1 | Out-Null
-Set-Location .\AI-Trade-v0.18.1
+New-Item -ItemType Directory -Force .\AI-Trade-v1.0.0 | Out-Null
+Set-Location .\AI-Trade-v1.0.0
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v0.18.1/ai_trade-0.18.1-py3-none-any.whl"
+.\.venv\Scripts\python.exe -m pip install "https://github.com/Shiraikuroko123/ai-trade/releases/download/v1.0.0/ai_trade-1.0.0-py3-none-any.whl"
 .\.venv\Scripts\ai-trade.exe init --directory .\workspace
 Set-Location .\workspace
 ..\.venv\Scripts\ai-trade.exe download --force
@@ -239,7 +248,7 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 ## 收盘市场情报
 
-`v0.18.1` 的左侧 **市场情报** 视图包含九个独立证据集：历史分钟行情、当前估值与股票历史分位、股票时点基本面、官方披露、第三方新闻与公告、Level-1 五档盘口、龙虎榜、市场宽度与板块排名、板块资金流。每次刷新都校验日期或截止时间、字段、有限数值、来源响应指纹和规范化证据指纹，再在各自的 `state/` 子目录追加不可覆盖的本地 revision。相同规范化证据会幂等复用，证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
+`v1.0.0` 的左侧 **市场情报** 视图包含九个独立证据集：历史分钟行情、当前估值与股票历史分位、股票时点基本面、官方披露、第三方新闻与公告、Level-1 五档盘口、龙虎榜、市场宽度与板块排名、板块资金流。每次刷新都校验日期或截止时间、字段、有限数值、来源响应指纹和规范化证据指纹，再在各自的 `state/` 子目录追加不可覆盖的本地 revision。相同规范化证据会幂等复用，证据改变会追加带 `supersedes` 的新版本，失败或取消不会覆盖上一份完整快照。
 
 基本面和历史估值分位仅对 `STOCK` 开放：基本面同时按公告日、更新日过滤未来信息，估值分位至少需要 120 个正值有限历史观测。设置 `AI_TRADE_TUSHARE_TOKEN` 后会按共同报告期或同一交易日做字段级参考核验，但不补值、不覆盖东方财富主记录，也不构成自动共识。官方披露按确定性标题规则标出解禁、股东增减持/变动和质押事件；可记录有界 PDF 响应的 SHA-256 与字节数，但不保存正文，哈希也不是签名、归档或 WORM 证据。第三方新闻按规范化标题去重，校准发布时间，保留内容修订链，并用时间衰减和独立传输 Provider 数量计算可解释热度；同一 Tushare 传输下的多个编辑源不算多份独立确认，`lexicon-v1` 也不被冒充为完整情绪模型。五档盘口边界不变。
 
@@ -266,7 +275,7 @@ Unregister-ScheduledTask -TaskName 'AI Trade Workstation' -Confirm:$false
 
 完成上面的启动步骤后，打开命令打印的回环地址，在左侧导航选择 **AI 分析**。默认本地模式不需要 API Key；选择标的和 **回看交易日** 后即可对已完成 K 线做研究复核。助理结论只有 `NO_ACTION`、`WATCH`、`REVIEW_CANDIDATE` 和 `REDUCE_RISK`：它们都不是买卖指令，其中 `REDUCE_RISK` 也只表示需要人工检查风险，不表示自动卖出或调整仓位。
 
-`v0.18.1` 会为每份新分析生成确定性的 **视角冲突审计** 和 **多空裁判账本**。多头、空头、裁判分别保存结构化状态、证据引用、Token、费用与失败码；模型模式下三个角色各自经过预算、并发、重试和用户隔离缓存，单个角色失败不会抹去其他角色，裁判仍可在已验证的本地回退材料上继续整理。本地模式不发送模型请求。多头与空头只能登记论点和反证，裁判只能整理一致点、冲突点和未决问题，不能投票、输出订单/仓位/目标价/止损、改变确定性结论或放宽任何门禁。每份新记录还会在保存和历史读取时核对其公开调用摘要与用户隔离的不可变调用文件；缺失、篡改、跨用户或字段不匹配的已绑定模型记录不会参与历史和下一次比较。股票基本面角色仍只读取最终 K 线交易日已经落盘的不可变记录；数据稀疏、多空冲突或 Tushare 字段核验冲突时明确弃权，ETF 和 `provisional` 估值不进入结论。
+`v1.0.0` 会为每份新分析生成确定性的 **视角冲突审计** 和 **多空裁判账本**。多头、空头、裁判分别保存结构化状态、证据引用、Token、费用与失败码；模型模式下三个角色各自经过预算、并发、重试和用户隔离缓存，单个角色失败不会抹去其他角色，裁判仍可在已验证的本地回退材料上继续整理。本地模式不发送模型请求。多头与空头只能登记论点和反证，裁判只能整理一致点、冲突点和未决问题，不能投票、输出订单/仓位/目标价/止损、改变确定性结论或放宽任何门禁。每份新记录还会在保存和历史读取时核对其公开调用摘要与用户隔离的不可变调用文件；缺失、篡改、跨用户或字段不匹配的已绑定模型记录不会参与历史和下一次比较。股票基本面角色仍只读取最终 K 线交易日已经落盘的不可变记录；数据稀疏、多空冲突或 Tushare 字段核验冲突时明确弃权，ETF 和 `provisional` 估值不进入结论。
 
 需要使用自己的 OpenAI 兼容模型端点时，在 PowerShell 运行：
 
@@ -286,17 +295,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
 
 助理始终为 `research_only`：不能创建订单意图、目标仓位、入场/止损/止盈价格，不能解锁模拟晋级、沙箱对账、人工授权、紧急停止或真实交易门禁，也不提供收益承诺。每个本地用户的历史位于 Git 忽略的 `state/assistant/`，不会进入 R2 或发行版。完整模式说明、变量约束、数据边界和故障处理见 [AI K线助理](docs/AI_ASSISTANT.md)。
 
-## 研究日志与日报/周报归档
+## 研究日志与研究归档
 
-本节的持久化日报/周报、生成接口和计划任务已包含在 `v0.18.1` wheel 中。
+本节的持久化日报/周报、生成接口和计划任务已包含在 `v1.0.0` wheel 中。
 
 **研究** 页面中的“研究日志”用于记录人工观察、研究理由和复盘结论。每条记录按用户隔离，带有研究日期、记录类型、可选证券、标题、笔记、观点和确信度；服务器会自动绑定登录用户和记录人，并在写入时保存可重算的内容指纹、行情快照日期/指纹以及当前策略候选状态。行情或策略证据暂不可用时会显式记录 `available=false`，不会用空值冒充已验证证据。
 
 日志是 **append-only**：页面没有编辑或删除操作。发现错误时对原记录执行“追加修正”，系统新增一条带 `correction_of` 的记录并保留旧记录。直接改写 JSON 会使指纹校验失败，读取会安全失败。研究日志只属于 `research_only` 研究层，不能修改策略实验室、模拟账户、订单、券商权限或任何实盘门禁；详细字段、接口、限额和恢复边界见 [研究日志](docs/RESEARCH_JOURNAL.md)。
 
-默认记录目录为 Git 忽略的 `state/research_journal/users/<owner-sha256>/entries/`，不进入发行包，也不上传 Cloudflare R2。R2 行情备份只允许 `data/cache` CSV 与行情 manifest；存储页显示的容量和 A/B 预算不包含研究日志。
+默认日志目录为 Git 忽略的 `state/research_journal/users/<owner-sha256>/entries/`，不进入发行包，也不上传 Cloudflare R2。R2 行情备份只允许 `data/cache` CSV 与行情 manifest；独立的 digest 云备份只允许已验证的日报/周报 revision，仍不会包含研究日志。
 
-同页的“收盘归档”会在读取时严格校验并组合当前模拟账户的 `state/paper_equity.csv`、`reports/paper_YYYYMMDD.json` 与当前登录用户的研究日志，生成逐日摘要、ISO 周度汇总和持仓数量快照。权益、现金、持仓、目标权重或行情快照 ID 在日报与净值账本间不一致时会显示“证据不一致”；缺少日报、日报未绑定账本、仅有日志和部分可用也都有独立文字状态。缺失值不会补零，历史快照只披露账本记录的数量，不按当前或历史价格推算市值。
+同页的“收盘归档”会在读取时严格校验并组合当前模拟账户的 `state/paper_equity.csv`、`reports/paper_YYYYMMDD.json` 与当前登录用户的研究日志，生成逐日摘要、ISO 周度汇总、自然月汇总和持仓数量快照。权益、现金、持仓、目标权重或行情快照 ID 在日报与净值账本间不一致时会显示“证据不一致”；缺少日报、日报未绑定账本、仅有日志和部分可用也都有独立文字状态。缺失值不会补零，历史快照只披露账本记录的数量，不按当前或历史价格推算市值。
 
 这项投影仍是 **只读即时计算**：打开页面或调用 `GET /api/research/archive` 时重新从已有证据计算，不刷新行情、不写模拟账本、不改变策略，也不调用券商。现在可以通过 `archive-generate` 或研究页的生成操作，把投影结果写入独立的 `state/research_digests/` 不可变日报/周报修订链；相同证据会幂等复用，证据变化会追加带 `supersedes` 的新 revision。原始模拟日报、净值账本和研究日志仍是权威来源，digest 只是带来源指纹的研究派生证据。完整命令、计划任务、接口、容量和恢复边界见 [日报/周报归档](docs/RESEARCH_DIGESTS.md)。
 
@@ -307,6 +316,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
 ```
 
 不带周期过滤器时，单次命令最多物化最近 52 个日报和最近 52 个周报，不是全历史回填。更早周期需要使用 `--kind daily --date YYYY-MM-DD` 或 `--kind weekly --week ISO-MONDAY` 逐期生成。
+
+研究页可选择 `state/archive/` 中通过校验的旧模拟账期。旧账期读取只使用归档账本、日报和匹配的 digest 命名空间；不会复制、合并、恢复或激活旧状态。研究日志目前没有 `account_id` 账期字段，因此旧账期投影明确排除同日人工日志，避免把活动账期笔记误归入历史账户。
+
+配置私有 R2 后，可显式备份、列出和恢复当前本地所有者的 digest：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli cloud-digest-backup
+.\.venv\Scripts\python.exe -m ai_trade.cli cloud-digest-list --limit 20
+.\.venv\Scripts\python.exe -m ai_trade.cli cloud-digest-restore <snapshot-id>
+```
+
+恢复默认写入新的 `local/cloud-digest-restore/<snapshot-id>/`，返回 `active_state_unchanged: true`；它不会覆盖 `state/research_digests/` 或模拟账户。
 
 18:10 模拟盘、18:20 监控和 18:30 全用户归档是三个独立的错峰计划任务，不是带依赖关系的流水线，也不保证前一任务已在后一任务启动前完成。归档任务使用 `--all-profiles --trigger scheduled`，只消费运行时可安全读取的最近已完成证据，不会刷新行情或取得交易权限；`scheduled` 是操作者可传入的审计标签和内置 runner 约定，不是经过认证的任务来源证明。安装、日志复核和卸载方式见 [日报/周报归档](docs/RESEARCH_DIGESTS.md)。
 
@@ -354,7 +375,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_cloud.ps1
 
 存储页不是 Cloudflare 账单页。容量来自当前安装命名空间最近一次 R2 对象清点；A/B 类操作只统计 AI Trade 从本版本开始在本机观测到的高层请求，不包含其他应用、其他电脑、升级前请求或 SDK 内部重试。页面中的额度、周期和“剩余”是用户自行设置的本地预算，不是 Cloudflare 官方账户余额、免费额度证明或强制限流。初始预算为 10 GB、A 类 1,000,000 次、B 类 10,000,000 次、每月 1 日起算，用户应按自己的 Cloudflare 套餐和管理目标修改。
 
-`cloud-backup` 只打包当前已校验的 `data/cache` CSV 与 `manifest.json`。`reports/`、`state/`（包括本地 `state/research_journal/` 研究日志和 `state/research_digests/` 日报/周报）、`logs/`、内测账号、券商凭据和任何实盘授权都不会上传。R2 endpoint、bucket、安装命名空间、对象 key 和访问密钥不会返回网页或写入报告；非敏感偏好和本机观测账本位于 Git 忽略的 `state/`。`cloud-restore` 只解压到新的 `local/cloud-restore/<snapshot-id>/` 暂存目录，不会覆盖活动缓存。完整口径、命令、权限建议、轮换和恢复检查见 [云端行情快照](docs/CLOUD_STORAGE.md)。
+`cloud-backup` 只打包当前已校验的 `data/cache` CSV 与 `manifest.json`；`cloud-digest-backup` 使用另一条严格白名单，只打包当前本地所有者和活动模拟账期下已验证的日报/周报 revision。两者都不会上传研究日志、模拟账户、助理历史、内测账号、券商凭据或任何实盘授权。R2 endpoint、bucket、安装命名空间、对象 key 和访问密钥不会返回网页或写入报告；恢复命令只写新的 `local/` 暂存目录，不会覆盖活动缓存或活动 digest。完整口径、命令、权限建议、轮换和恢复检查见 [云端行情快照](docs/CLOUD_STORAGE.md)。
 
 ## 工程结构
 
@@ -452,7 +473,7 @@ ai-trade/
 - `validation_report.json`、`validation_report.md`：移动区块自助法、1/2/3 倍成本压力、参数邻域和历史危机区间测试。
 - `paper_YYYYMMDD.json`：不可由同日重复运行覆盖的模拟日报。
 - 研究页“收盘归档”：从模拟日报、`state/paper_equity.csv` 与当前用户日志即时生成的只读视图。
-- `state/research_digests/users/<owner-sha256>/accounts/<account-epoch-sha256>/digests/`：按用户和模拟账期隔离的日报/周报不可变 revision 链；重复证据幂等复用，变化证据通过 `supersedes` 追加。当前页面、HTTP API 和 CLI 只绑定活动模拟账期，不能选择旧账期；旧目录仅供受控离线留存，不能通过替换活动状态来直接打开。
+- `state/research_digests/users/<owner-sha256>/accounts/<account-epoch-sha256>/digests/`：按用户和模拟账期隔离的日报/周报不可变 revision 链；重复证据幂等复用，变化证据通过 `supersedes` 追加。活动接口仍绑定当前账期，研究页另提供严格只读的旧账期浏览器，不能把旧状态写回或切换为活动账户。
 - `state/paper_trades.csv`：带 `account_id` 和唯一 `trade_id` 的模拟成交账本。
 - `state/paper_rejections.csv`：停牌、涨跌停或前置卖单失败造成的可审计拒单账本。
 - `state/paper_equity.csv`：带配置指纹和行情快照 ID 的逐交易日前向净值账本。
@@ -503,7 +524,7 @@ Get-ScheduledTask -TaskName 'AI-Trade Research Monitor Daily'
 Get-ScheduledTaskInfo -TaskName 'AI-Trade Research Monitor Daily'
 ```
 
-监控任务调用一次性 `monitor-scan --all-profiles`，不会启动常驻服务或修改策略、模拟账本和券商权限。打开监控页后，本地收件箱会把新告警和失败扫描按来源 ID 幂等登记；设置 `AI_TRADE_WEBHOOK_URL` 与 `AI_TRADE_WEBHOOK_SECRET` 后，还可通过 HTTPS HMAC Webhook 投递未读通知，投递失败不会改变本地扫描结果。日志位于 `logs/scheduled_monitor.log`，超过 5 MiB 自动轮换并保留最近 5 份。完整命令、失败语义、通知状态和卸载方法见 [监控与告警运维](docs/MONITORING.md)。
+监控任务调用一次性 `monitor-scan --all-profiles`，不会启动常驻服务或修改策略、模拟账本和券商权限。本地收件箱会把新告警和失败扫描按来源 ID 幂等登记；可选外部渠道包括 HTTPS HMAC Webhook、SMTP SSL/STARTTLS 邮件和交互式 Windows Toast。源码用户可运行 `scripts/configure_notifications.ps1` 配置邮件或 Toast；Toast 需要当前 Windows 用户的交互会话，容器只支持邮件。任一渠道失败都不会改变本地扫描结果。完整命令、变量、重试语义和审计边界见 [监控与告警运维](docs/MONITORING.md)。
 
 安装每日 18:30 的全用户日报/周报归档任务：
 
@@ -547,8 +568,8 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Research Archive Daily' -Confirm:$f
 .\.venv\Scripts\python.exe -m compileall -q src tests scripts adapters/qmt/src
 node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m pip install build==1.2.2.post1
-.\.venv\Scripts\python.exe -m build --outdir .\dist\release-0.18.1
-.\.venv\Scripts\python.exe .\scripts\verify_distribution.py .\dist\release-0.18.1
+.\.venv\Scripts\python.exe -m build --outdir .\dist\release-1.0.0
+.\.venv\Scripts\python.exe .\scripts\verify_distribution.py .\dist\release-1.0.0
 .\.venv\Scripts\python.exe -m ai_trade.cli doctor
 .\.venv\Scripts\python.exe -m ai_trade.cli validate
 .\.venv\Scripts\python.exe -m ai_trade.cli live-check

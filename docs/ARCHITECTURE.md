@@ -309,7 +309,7 @@ order, position, pricing, risk-budget, voting, or authorization contract.
 
 Before model I/O, `ModelCallGovernance` performs per-user single-call and UTC-day Token/cost checks under a cross-process lock and acquires a bounded process semaphore. Each logical call, cache hit, denial, and failed/successful HTTP attempt is committed as immutable hash-bound evidence under `state/assistant_calls/`; normalized validated public enhancements use a separate immutable per-user cache under `state/assistant_model_cache/`. Request and cache identity bind the role, model, endpoint hash, evidence, input, and prompt-template version, so wording, bull, bear, and judge responses cannot be reused across roles. Audit storage failure or tampering fails closed for later model work. Raw prompts, raw provider responses, hidden reasoning, endpoint URLs, and credentials are not stored.
 
-Per-user assistant results, call audits, and model cache records are stored under `state/assistant/`, `state/assistant_calls/`, and `state/assistant_model_cache/`. New assistant results are no-replace files with a recomputable `record_sha256` and a `call_audit_binding`. Before save and on every history read, each public wording/bull/bear/judge call summary is reconstructed from its immutable record under the same hashed user directory; user scope, call ID, UTC date, role, template, status, cache, usage, cost, budget, record fingerprint, and complete evidence digest must match. A missing or altered call excludes the newly bound analysis from history and next-analysis comparison. Fingerprinted records that fail their own verification are also excluded, while legacy schema-v1 records without the binding remain readable and are labeled as legacy. Assistant and call directory symlinks are rejected. These local unkeyed hashes are integrity evidence, not signatures or WORM controls. The repository-wide `state/*` ignore rule excludes all three stores from Git, the R2 exporter can read only its market-cache allowlist, and release verification rejects every `state/` member. Assistant history and governance evidence are therefore local operational state rather than a portable report or cloud backup.
+Per-user assistant results, call audits, and model cache records are stored under `state/assistant/`, `state/assistant_calls/`, and `state/assistant_model_cache/`. New assistant results are no-replace files with a recomputable `record_sha256` and a `call_audit_binding`. Before save and on every history read, each public wording/bull/bear/judge call summary is reconstructed from its immutable record under the same hashed user directory; user scope, call ID, UTC date, role, template, status, cache, usage, cost, budget, record fingerprint, and complete evidence digest must match. A missing or altered call excludes the newly bound analysis from history and next-analysis comparison. Fingerprinted records that fail their own verification are also excluded, while legacy schema-v1 records without the binding remain readable and are labeled as legacy. Assistant and call directory symlinks are rejected. These local unkeyed hashes are integrity evidence, not signatures or WORM controls. The repository-wide `state/*` ignore rule excludes all three stores from Git, both R2 exporters reject assistant paths, and release verification rejects every `state/` member. Assistant history and governance evidence are therefore local operational state rather than a portable report or cloud backup.
 
 ## Append-only Research Journal Boundary
 
@@ -359,10 +359,9 @@ separate read-only closing-archive projection, but that projection is computed o
 demand and is not an automated report or a new authoritative ledger.
 
 The journal root is Git-ignored local state and is excluded from release
-artifacts. The optional R2 exporter has an explicit market-cache allowlist and
-cannot read `state/research_journal/` (or any other `state/` member). Consequently
-R2 capacity and operation counters do not include journal records, and a cloud
-cache restore cannot restore or mutate a user's journal. See
+artifacts. The R2 market-cache and digest exporters have separate explicit
+allowlists; neither can read `state/research_journal/`. Consequently a cloud
+restore cannot restore or mutate a user's journal. See
 `docs/RESEARCH_JOURNAL.md` for the user workflow and request contract.
 
 ## Read-only Closing Archive Projection
@@ -371,7 +370,8 @@ cache restore cannot restore or mutate a user's journal. See
 paper_equity.csv  +  paper_YYYYMMDD.json  +  current owner's journal entries
           | strict schema, account/date/fingerprint cross-checks
           v
-  daily summaries + ISO weekly review + ledger-quantity position snapshots
+  daily summaries + ISO weekly review + natural-month review
+                  + ledger-quantity position snapshots
           |
           X no provider refresh, strategy write, ledger write, broker call,
             order intent, permission change, or cloud upload
@@ -388,10 +388,11 @@ than being converted to zeros or silently dropped. The aggregate response report
 `current`, `partial`, `empty`, or `unavailable` and includes source fingerprints and
 recovery actions.
 
-The `/api/research/archive` endpoint bounds the projection to `all`, `daily`, or
-`weekly`, an optional ISO date or Monday week start, and at most 52 rows. Weekly
-records use the supplied market calendar when available to disclose expected versus
-included sessions and unexpected ledger dates. Position snapshots deliberately expose
+The `/api/research/archive` endpoint bounds the projection to `all`, `daily`,
+`weekly`, or `monthly`, an optional ISO date, Monday week start, or first
+calendar day of a month, and at most 52 rows. Weekly and monthly records use the
+supplied market calendar when available to disclose expected versus included
+sessions and unexpected ledger dates. Position snapshots deliberately expose
 ledger quantities only;
 they do not reconstruct historical prices, market value, or weights from today's
 cache. The browser renders the same limitations and keeps wide tables internally
@@ -406,9 +407,17 @@ or creates an order intent. The original paper reports, equity ledger, and
 owner-scoped journal remain authoritative; digests are derivative, fingerprinted
 research evidence.
 
+`ResearchEpochBrowser` separately scans canonical
+`state/archive/YYYYMMDD_HHMMSS/` directories, validates the archived paper
+state and ledger, and reads only the matching digest namespace. It exposes no
+raw account ID and cannot copy, merge, reactivate, or overwrite active state.
+Archived projections omit journal entries because the journal schema has no
+paper-account epoch binding; the response records that limitation instead of
+guessing from the date.
+
 ### Persistent digest ledger
 
-This surface is included in the public `v0.18.1` wheel. It remains derivative
+This surface is included in the public `v1.0.0` wheel. It remains derivative
 research evidence and does not replace the authoritative paper ledger,
 reports, or journal.
 
@@ -442,7 +451,8 @@ empty chain or temporary member in the verified ledger. If publication is
 visible but a later verification or directory durability barrier fails, the
 batch result includes that revision in its committed prefix and still returns
 an explicit partial failure. Local hashes detect many accidental edits but are
-not signatures or WORM storage; no built-in cloud sync or compaction exists.
+not signatures or WORM storage; no compaction exists. The optional R2 digest
+export described below is a verified staging backup, not a stronger signature.
 
 An unfiltered materialization reads at most the newest 52 daily and newest 52
 weekly projection rows. Older periods require explicit one-period `--date` or
@@ -455,10 +465,9 @@ dependency; a later task may start while an earlier task is running or retrying.
 A missed run can be retried safely because the append operation is idempotent.
 Revisions are isolated by the paper `account_id` epoch, so a new
 `paper-init --overwrite` cannot inherit or mutate an old account's digest chain.
-Current browser, HTTP, and CLI reads always bind to the active epoch and expose
-no old-epoch selector. Old namespaces are retained offline with their matching
-paper evidence; directly browsing or exporting them requires a future dedicated
-verifier, not replacement of the active paper state.
+Generation and active digest-list APIs bind to the active epoch. The separate
+Research-page epoch browser can inspect validated old paper and digest evidence
+read-only, but cannot adopt it or change the active account.
 
 ## Strategy Lab Boundary
 
@@ -570,9 +579,12 @@ The security-master schema removes a fixed instrument-count assumption, but the 
 ```text
 validated data/cache allowlist -> ZIP + snapshot manifest + SHA-256 -> private R2 namespace
 private R2 namespace -> size/hash/schema/path verification -> local/cloud-restore staging
+
+validated daily/weekly digest chains -> ZIP + digest manifest -> private R2 namespace
+private R2 namespace -> checksum/schema/binding/chain verification -> local/cloud-digest-restore staging
 ```
 
-R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The upload boundary can read only the configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest rather than copying arbitrary fields or exception text. It cannot serialize `reports/`, `state/` (including `state/assistant/`, `state/research_journal/`, and `state/research_digests/`), `logs/`, beta users, broker material, or live-trading controls. Deduplication verifies that the pointed-to object still exists with matching size and hashes. Restore creates a new Git-ignored staging directory and never mutates the active cache, so adopting restored data remains a separate, explicit operator decision.
+R2 is an optional object-backup adapter and is disabled without each user's own environment configuration. The market upload boundary can read only configured instrument CSV files and `data/cache/manifest.json`; it recomputes CSV date facts and emits a strict, sanitized manifest. The separate digest boundary can read only already verified daily/weekly revisions for the active local owner/account namespace and stores only hashed identities. Neither can serialize reports, journals, assistant state, paper/broker ledgers, beta users, credentials, logs, or live-trading controls. Deduplication verifies the remote object metadata. Both restore paths create new Git-ignored staging directories and never mutate active cache, digest, paper, or broker state; adopting any staged evidence remains a separate operator decision.
 
 ## Clean-room Reference Boundary
 

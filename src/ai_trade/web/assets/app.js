@@ -243,6 +243,9 @@ const state = {
   researchDigestBusy: false,
   researchDigestStatus: "",
   researchDigestStatusKind: "",
+  researchEpochDetail: null,
+  researchEpochBusy: "",
+  researchEpochError: "",
   intelligenceFilters: {
     date: "",
     symbol: "",
@@ -1693,6 +1696,34 @@ async function reloadResearch() {
   if (state.route === "research") renderRoute(payload);
 }
 
+async function loadResearchEpoch(epochId, button = null) {
+  if (!/^\d{8}_\d{6}$/.test(String(epochId || "")) || state.researchEpochBusy) return;
+  state.researchEpochBusy = epochId;
+  state.researchEpochError = "";
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+  }
+  try {
+    const detail = await api(`/api/research/epochs/${encodeURIComponent(epochId)}`);
+    state.researchEpochDetail = detail;
+    const research = state.data.get("research");
+    if (state.route === "research" && research) renderRoute(research);
+    restoreFocusAfterRender(`[data-research-epoch="${epochId}"]`, "research");
+  } catch (error) {
+    state.researchEpochError = friendlyError(error.message);
+    const research = state.data.get("research");
+    if (state.route === "research" && research) renderRoute(research);
+    notify(state.researchEpochError, true);
+  } finally {
+    state.researchEpochBusy = "";
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.setAttribute("aria-busy", "false");
+    }
+  }
+}
+
 async function generateResearchDigests(button) {
   if (state.researchDigestBusy) return;
   state.researchDigestBusy = true;
@@ -3069,6 +3100,7 @@ function researchArchives(data) {
   }
   const daily = Array.isArray(data.daily) ? data.daily : [];
   const weekly = Array.isArray(data.weekly) ? data.weekly : [];
+  const monthly = Array.isArray(data.monthly) ? data.monthly : [];
   const snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
   const latestSnapshot = snapshots[0];
   const errors = Array.isArray(data.errors) ? data.errors : [];
@@ -3077,7 +3109,7 @@ function researchArchives(data) {
       <header class="archive-heading">
         <div>
           <h2 id="research-archive-heading">收盘归档</h2>
-          <p>逐日持仓快照和 ISO 周汇总只读取已落盘证据，不刷新行情或改变账户</p>
+          <p>逐日持仓快照、ISO 周汇总和月度复盘只读取已落盘证据，不刷新行情或改变账户</p>
         </div>
         <div class="archive-heading-status">
           ${researchArchiveStatusChip(data.status)}
@@ -3105,6 +3137,15 @@ function researchArchives(data) {
             <table class="dense-table archive-table">
               <thead><tr><th>周起始</th><th>覆盖</th><th class="numeric">交易日</th><th class="numeric">周收益</th><th class="numeric">最低回撤</th><th class="numeric">成交 / 拒单</th><th class="numeric">日志</th></tr></thead>
               <tbody>${weekly.length ? weekly.map(archiveWeeklyRow).join("") : emptyRow(7, "尚无可聚合的周度证据")}</tbody>
+            </table>
+          </div>
+        </section>
+        <section class="archive-section archive-section-wide" aria-labelledby="archive-monthly-heading">
+          <div class="archive-section-title"><h3 id="archive-monthly-heading">月度复盘</h3><span>按自然月归组</span></div>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="月度研究归档表，可横向滚动">
+            <table class="dense-table archive-table">
+              <thead><tr><th>月份</th><th>覆盖</th><th class="numeric">交易日</th><th class="numeric">月收益</th><th class="numeric">最低回撤</th><th class="numeric">成交 / 拒单</th><th class="numeric">日志</th></tr></thead>
+              <tbody>${monthly.length ? monthly.map(archiveMonthlyRow).join("") : emptyRow(7, "尚无可聚合的月度证据")}</tbody>
             </table>
           </div>
         </section>
@@ -3147,6 +3188,71 @@ function archiveWeeklyRow(item) {
   </tr>`;
 }
 
+function archiveMonthlyRow(item) {
+  const expected = item.expected_sessions === null || item.expected_sessions === undefined
+    ? `${formatInteger(item.included_sessions)} / 待确认`
+    : `${formatInteger(item.included_sessions)} / ${formatInteger(item.expected_sessions)}`;
+  const coverageIssues = [
+    item.missing_sessions?.length ? `缺 ${formatInteger(item.missing_sessions.length)} 个已知交易日` : "",
+    item.unexpected_sessions?.length ? `多 ${formatInteger(item.unexpected_sessions.length)} 个非交易日记录` : "",
+  ].filter(Boolean).join("；");
+  return `<tr>
+    <td class="mono"><strong>${escapeHtml(String(item.month_start || "—").slice(0, 7))}</strong><span class="table-subtext">至 ${escapeHtml(item.month_end || "—")}</span></td>
+    <td>${researchArchiveStatusChip(item.status)}${coverageIssues ? `<span class="table-subtext">${coverageIssues}</span>` : ""}</td>
+    <td class="numeric">${escapeHtml(expected)}</td>
+    <td class="numeric ${tone(item.period_return)}">${formatPercent(item.period_return, true)}</td>
+    <td class="numeric ${tone(item.max_drawdown)}">${formatPercent(item.max_drawdown)}</td>
+    <td class="numeric">${formatInteger(item.trades_count)} / ${formatInteger(item.rejections_count)}</td>
+    <td class="numeric">${formatInteger(item.journal_count)}</td>
+  </tr>`;
+}
+
+function researchEpochs(data) {
+  const epochs = Array.isArray(data?.epochs) ? data.epochs : [];
+  const detail = state.researchEpochDetail;
+  const selectedId = detail?.epoch?.epoch_id || "";
+  return `
+    <section class="archive-panel epoch-browser" aria-labelledby="research-epoch-heading">
+      <header class="archive-heading">
+        <div><h2 id="research-epoch-heading">历史模拟账期</h2><p>只读核验已归档账户，不替换或复活活动账本</p></div>
+        <div class="archive-heading-status">${researchArchiveStatusChip(data?.status || "empty")}<span>${formatInteger(data?.summary?.total || 0)} 个旧账期</span></div>
+      </header>
+      ${state.researchEpochError ? `<p class="form-status error" role="alert">${escapeHtml(state.researchEpochError)}</p>` : ""}
+      <div class="table-wrap epoch-list" tabindex="0" role="region" aria-label="历史模拟账期列表，可横向滚动">
+        <table class="dense-table archive-table">
+          <thead><tr><th>归档时间</th><th>账期指纹</th><th>最后交易日</th><th class="numeric">期末权益</th><th class="numeric">日报</th><th>状态</th><th>查看</th></tr></thead>
+          <tbody>${epochs.length ? epochs.map((epoch) => `<tr>
+            <td class="mono">${escapeHtml(formatDate(epoch.archived_at, true))}</td>
+            <td><code>${escapeHtml(shortFingerprint(epoch.account_fingerprint))}</code></td>
+            <td class="mono">${escapeHtml(epoch.last_run_date || "—")}</td>
+            <td class="numeric">${formatMoney(epoch.last_equity)}</td>
+            <td class="numeric">${formatInteger(epoch.paper_report_count || 0)}</td>
+            <td>${researchArchiveStatusChip(epoch.available ? "current" : "unavailable")}</td>
+            <td><button class="button ghost compact" type="button" data-research-epoch="${escapeHtml(epoch.epoch_id)}"${!epoch.available || state.researchEpochBusy ? " disabled" : ""} aria-pressed="${selectedId === epoch.epoch_id}">${state.researchEpochBusy === epoch.epoch_id ? "读取中" : "查看"}</button></td>
+          </tr>`).join("") : emptyRow(7, "尚无已归档的模拟账期")}</tbody>
+        </table>
+      </div>
+      ${detail ? researchEpochDetail(detail) : ""}
+      <p class="archive-boundary"><strong>隔离边界：</strong>旧账期浏览器只读取归档目录和匹配的 digest 命名空间；不能写入、恢复、合并或切换活动账户。</p>
+    </section>`;
+}
+
+function researchEpochDetail(detail) {
+  const archive = detail?.archive || {};
+  const monthly = Array.isArray(archive.monthly) ? archive.monthly : [];
+  const daily = Array.isArray(archive.daily) ? archive.daily : [];
+  return `
+    <div class="epoch-detail" aria-live="polite">
+      <div class="archive-section-title"><h3>${escapeHtml(detail.epoch?.epoch_id || "旧账期")}</h3><span>${escapeHtml(detail.epoch?.last_run_date || "无交易日")} · ${formatInteger(daily.length)} 个记录日</span></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="选中旧账期的月度复盘，可横向滚动">
+        <table class="dense-table archive-table">
+          <thead><tr><th>月份</th><th>覆盖</th><th class="numeric">交易日</th><th class="numeric">月收益</th><th class="numeric">最低回撤</th><th class="numeric">成交 / 拒单</th><th class="numeric">日志</th></tr></thead>
+          <tbody>${monthly.length ? monthly.map(archiveMonthlyRow).join("") : emptyRow(7, "该账期没有月度证据")}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function archivePositionSnapshot(snapshot) {
   const positions = Array.isArray(snapshot.positions) ? snapshot.positions : [];
   return `
@@ -3179,6 +3285,8 @@ function renderResearch(data) {
       ${researchFreshness(data.reports)}
 
       ${researchArchives(data.archives)}
+
+      ${researchEpochs(data.epochs)}
 
       ${researchDigests(data.digests)}
 
@@ -6726,6 +6834,10 @@ function renderMonitoring(data) {
   const scanLabel = monitoringStatusLabel(scanStatus);
   const scanKind = monitoringStatusKind(scanStatus);
   const deliveryStatus = String(notificationDelivery.status || "disabled").toLowerCase();
+  const deliveryChannels = Object.entries(notificationDelivery.channels || {})
+    .filter(([, channel]) => channel?.configured || channel?.external_delivery_configured)
+    .map(([name]) => ({ webhook: "Webhook", email: "邮件", desktop: "桌面 Toast" }[name] || name));
+  const deliveryChannelLabel = deliveryChannels.length ? deliveryChannels.join(" + ") : "未启用";
   const deliveryCounts = `成功 ${formatInteger(notificationDelivery.succeeded_count)} · 失败 ${formatInteger(notificationDelivery.failed_count)} · 待投递 ${formatInteger(notificationDelivery.pending_count)}`;
   const deliveryNote = notificationDelivery.last_error
     ? String(notificationDelivery.last_error)
@@ -6817,7 +6929,7 @@ function renderMonitoring(data) {
       { label: "监控列表", value: `${formatInteger(summary.watchlist_count || 0)} 个`, status: `${formatInteger(summary.symbol_count || 0)} 支证券`, kind: summary.watchlist_count ? "info" : "neutral", note: `${formatInteger(summary.enabled_rule_count || 0)} / ${formatInteger(summary.rule_count || 0)} 条规则启用` },
       { label: "最近扫描", value: scanLabel, status: scan.data_date || scan.status === "succeeded" ? "有记录" : "无记录", kind: scanKind, note: scan.finished_at ? `完成于 ${formatDate(scan.finished_at, true)}` : "尚未生成扫描记录" },
       { label: "待处理告警", value: `${formatInteger(unresolved)} 条`, status: critical ? `${formatInteger(critical)} 条严重` : unresolved ? "需要复核" : "当前为空", kind: critical ? "danger" : unresolved ? "warning" : "success", note: `未读通知 ${formatInteger(unreadNotifications)} 条 · 滞后告警 ${formatInteger(summary.stale_count || 0)} 条` },
-      { label: "外部投递", value: monitoringDeliveryStatusLabel(deliveryStatus), status: notificationDelivery.external_delivery_configured ? "Webhook" : "未启用", kind: monitoringDeliveryStatusKind(deliveryStatus), note: deliveryNote },
+      { label: "外部投递", value: monitoringDeliveryStatusLabel(deliveryStatus), status: deliveryChannelLabel, kind: monitoringDeliveryStatusKind(deliveryStatus), note: deliveryNote },
       { label: "权限边界", value: authority.research_only === false ? "状态待确认" : "仅研究", status: authority.execution_authorized ? "需复核" : "不会下单", kind: authority.execution_authorized ? "warning" : "info", note: "不会修改策略、账本或券商权限" },
     ], "监控日期、范围与权限")}
     <section class="metric-strip monitoring-metric-strip" aria-label="监控摘要">
@@ -7894,6 +8006,11 @@ document.addEventListener("click", (event) => {
   const researchDigestGenerate = event.target.closest("[data-research-digest-generate]");
   if (researchDigestGenerate) {
     generateResearchDigests(researchDigestGenerate);
+    return;
+  }
+  const researchEpoch = event.target.closest("[data-research-epoch]");
+  if (researchEpoch) {
+    loadResearchEpoch(researchEpoch.dataset.researchEpoch, researchEpoch);
     return;
   }
   const journalCorrect = event.target.closest("[data-journal-correct]");

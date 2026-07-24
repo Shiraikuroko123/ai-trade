@@ -1,6 +1,6 @@
 # Docker 部署
 
-Docker 方案用于从源码启动 `v0.18.1` 工作台。它不改变策略、回测、风控、
+Docker 方案用于从源码启动 `v1.0.0` 工作台。它不改变策略、回测、风控、
 模拟账本或券商权限，也不会把源码部署能力伪装成发行 wheel 中不存在的远程托管服务。
 
 ## 安全边界
@@ -77,16 +77,25 @@ Linux 用户应在 `.env.docker` 中把 `AI_TRADE_DOCKER_UID` 和
 可写。这两个值主要影响绑定挂载模式；默认命名卷使用镜像内的非 root 身份。
 Docker Desktop for Windows 通常可直接使用默认值。
 
-## 可选 Tushare、AI、Webhook 与 R2
+## 可选 Tushare、AI、通知与 R2
 
 只有容器显式收到的环境变量才可见。需要 Tushare 独立日线核对、模型增强、
-监控 Webhook 或 R2 时，
+监控 Webhook、SMTP 邮件或 R2 时，
 在本地 `.env.docker` 填写对应变量再重建容器；本地规则无需 AI Key，本机通知
 收件箱无需 Webhook，纯本地存储无需 R2 凭据，默认 Yahoo 核对也无需
 Tushare Token。`AI_TRADE_TUSHARE_TOKEN` 仅从容器环境读取，不写入配置、
 证据或日志；Tushare 始终是 `reference_only`，不能成为策略主源或回退源。
 外部 Webhook 必须使用 HTTPS，
 密钥至少 16 个 UTF-8 字节；HTTP 只允许容器可达的回环测试端点。
+
+SMTP 邮件可通过 `AI_TRADE_EMAIL_SMTP_HOST`、`AI_TRADE_EMAIL_SMTP_PORT`、
+`AI_TRADE_EMAIL_SECURITY`、`AI_TRADE_EMAIL_USERNAME`、
+`AI_TRADE_EMAIL_PASSWORD`、`AI_TRADE_EMAIL_FROM` 和
+`AI_TRADE_EMAIL_TO` 配置。安全模式只能是 `starttls` 或 `ssl`；超时、重试和
+批量上限可使用 `docker.env.example` 中的对应变量调整。邮件失败与 Webhook 失败
+一样只记录独立投递状态，不会推翻本地扫描。Windows Toast 依赖宿主 Windows
+用户的交互会话，容器无法显示宿主 Toast；不要在 Compose 环境中启用
+`AI_TRADE_DESKTOP_NOTIFICATIONS`。
 
 模型治理变量与 Windows 本地模式一致：`AI_TRADE_AI_MAX_RETRIES`、
 `AI_TRADE_AI_MAX_CONCURRENT_CALLS`、`AI_TRADE_AI_MAX_TOKENS_PER_CALL` 和

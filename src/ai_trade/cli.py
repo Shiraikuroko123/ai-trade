@@ -204,6 +204,27 @@ def build_parser() -> argparse.ArgumentParser:
             "defaults to local/cloud-restore/<snapshot-id>"
         ),
     )
+    subparsers.add_parser(
+        "cloud-digest-backup",
+        help="Upload the active local-owner research digest namespace to R2",
+    )
+    cloud_digest_list = subparsers.add_parser(
+        "cloud-digest-list",
+        help="List research-digest snapshots in this installation's namespace",
+    )
+    cloud_digest_list.add_argument("--limit", type=int, default=20)
+    cloud_digest_restore = subparsers.add_parser(
+        "cloud-digest-restore",
+        help="Verify a research-digest snapshot into a new staging directory",
+    )
+    cloud_digest_restore.add_argument("snapshot_id")
+    cloud_digest_restore.add_argument(
+        "--directory",
+        help=(
+            "New destination directory (must not already exist); defaults to "
+            "local/cloud-digest-restore/<snapshot-id>"
+        ),
+    )
 
     backtest = subparsers.add_parser("backtest", help="Run historical backtest")
     backtest.add_argument("--start", help="YYYY-MM-DD")
@@ -486,6 +507,84 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(status, ensure_ascii=False, indent=2))
                 return 0
             store = tracked_r2_store(config, settings)
+            if args.command.startswith("cloud-digest-"):
+                from .research_digest import ResearchDigestStore
+                from .research_digest_cloud import (
+                    backup_research_digests,
+                    list_research_digest_snapshots,
+                    restore_research_digest_snapshot,
+                )
+
+                if args.command == "cloud-digest-list":
+                    snapshots = list_research_digest_snapshots(
+                        store, limit=args.limit
+                    )
+                    public = [
+                        {
+                            key: value
+                            for key, value in item.items()
+                            if key != "object_key"
+                        }
+                        for item in snapshots
+                    ]
+                    print(
+                        json.dumps(
+                            {"dataset": "research-digests", "snapshots": public},
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                    return 0
+                if args.command == "cloud-digest-restore":
+                    destination = (
+                        Path(args.directory)
+                        if args.directory
+                        else config.project_root
+                        / "local"
+                        / "cloud-digest-restore"
+                        / args.snapshot_id
+                    )
+                    restored = restore_research_digest_snapshot(
+                        store, args.snapshot_id, destination
+                    )
+                    print(
+                        json.dumps(
+                            {
+                                "dataset": "research-digests",
+                                "snapshot_id": args.snapshot_id,
+                                "restored_to": str(restored),
+                                "active_state_unchanged": True,
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                    return 0
+                state = paper_status(config)
+                result = backup_research_digests(
+                    ResearchDigestStore(config.research_digest_dir),
+                    "local-owner",
+                    str(state["account_id"]),
+                    store,
+                )
+                public_keys = (
+                    "dataset",
+                    "snapshot_id",
+                    "sha256",
+                    "dataset_sha256",
+                    "size",
+                    "created_at",
+                    "account_fingerprint",
+                    "skipped_duplicate",
+                )
+                print(
+                    json.dumps(
+                        {key: result[key] for key in public_keys if key in result},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
             if args.command == "cloud-backup":
                 _ensure_cache(config)
                 result = backup_market_cache(config, store)

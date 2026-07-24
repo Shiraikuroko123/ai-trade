@@ -15,6 +15,100 @@ from ai_trade.web.auth import UserStore
 
 
 class CliTests(unittest.TestCase):
+    def test_cloud_digest_commands_dispatch_without_exposing_object_keys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = MagicMock()
+            config.project_root = root
+            config.research_digest_dir = root / "state" / "research_digests"
+            settings = object()
+            r2 = object()
+            list_output = io.StringIO()
+            with (
+                patch("ai_trade.cli.load_config", return_value=config),
+                patch("ai_trade.cli._configure_logging"),
+                patch("ai_trade.cloud.load_cloud_settings", return_value=settings),
+                patch("ai_trade.cloud.tracked_r2_store", return_value=r2),
+                patch(
+                    "ai_trade.research_digest_cloud.list_research_digest_snapshots",
+                    return_value=[
+                        {
+                            "snapshot_id": "20260724T080000Z-" + "a" * 12,
+                            "size": 123,
+                            "object_key": "private/research-digest.zip",
+                        }
+                    ],
+                ) as listing,
+                redirect_stdout(list_output),
+            ):
+                self.assertEqual(main(["cloud-digest-list", "--limit", "7"]), 0)
+            list_payload = json.loads(list_output.getvalue())
+            self.assertEqual(list_payload["dataset"], "research-digests")
+            self.assertNotIn("object_key", list_payload["snapshots"][0])
+            listing.assert_called_once_with(r2, limit=7)
+
+            restore_output = io.StringIO()
+            snapshot_id = "20260724T080000Z-" + "b" * 12
+            destination = root / "restored"
+            with (
+                patch("ai_trade.cli.load_config", return_value=config),
+                patch("ai_trade.cli._configure_logging"),
+                patch("ai_trade.cloud.load_cloud_settings", return_value=settings),
+                patch("ai_trade.cloud.tracked_r2_store", return_value=r2),
+                patch(
+                    "ai_trade.research_digest_cloud.restore_research_digest_snapshot",
+                    return_value=destination.resolve(),
+                ) as restore,
+                redirect_stdout(restore_output),
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            "cloud-digest-restore",
+                            snapshot_id,
+                            "--directory",
+                            str(destination),
+                        ]
+                    ),
+                    0,
+                )
+            restore_payload = json.loads(restore_output.getvalue())
+            self.assertTrue(restore_payload["active_state_unchanged"])
+            restore.assert_called_once_with(r2, snapshot_id, destination)
+
+            backup_output = io.StringIO()
+            backup_result = {
+                "dataset": "research-digests",
+                "snapshot_id": "20260724T080000Z-" + "c" * 12,
+                "sha256": "d" * 64,
+                "dataset_sha256": "e" * 64,
+                "size": 456,
+                "created_at": "2026-07-24T08:00:00+00:00",
+                "account_fingerprint": "f" * 64,
+                "object_key": "private/research-digest.zip",
+                "skipped_duplicate": False,
+            }
+            with (
+                patch("ai_trade.cli.load_config", return_value=config),
+                patch("ai_trade.cli._configure_logging"),
+                patch("ai_trade.cloud.load_cloud_settings", return_value=settings),
+                patch("ai_trade.cloud.tracked_r2_store", return_value=r2),
+                patch(
+                    "ai_trade.cli.paper_status",
+                    return_value={"account_id": "paper-epoch"},
+                ),
+                patch(
+                    "ai_trade.research_digest_cloud.backup_research_digests",
+                    return_value=backup_result,
+                ) as backup,
+                redirect_stdout(backup_output),
+            ):
+                self.assertEqual(main(["cloud-digest-backup"]), 0)
+            backup_payload = json.loads(backup_output.getvalue())
+            self.assertEqual(backup_payload["dataset"], "research-digests")
+            self.assertNotIn("object_key", backup_payload)
+            self.assertEqual(backup.call_args.args[1:], ("local-owner", "paper-epoch", r2))
+
     def test_automatic_cloud_backup_failure_emits_safe_web_job_event(self):
         endpoint = "https://secret-account.r2.cloudflarestorage.com"
         bucket = "private-bucket-name"

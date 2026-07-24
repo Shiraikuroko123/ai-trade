@@ -2,6 +2,16 @@
 
 AI Trade does not attempt to merge several large repositories into one process. It uses each project as a reference for a specific layer, then keeps local contracts small, testable, and auditable.
 
+## Product Version Boundary
+
+`v1.0.0` is the complete personal research workstation and has no LLM runtime
+requirement. Existing model calls are optional, budgeted wording/research
+enhancements with deterministic fallback and permanent `research_only`
+authority. `v2.0.0` is reserved for large-model-assisted hypothesis discovery,
+reproducible experiment generation, and Champion/Challenger proposals. It must
+remain practical on ordinary personal hardware and cannot activate a strategy,
+change positions, or submit orders without explicit human review.
+
 | System | Strongest reference value | AI Trade adoption |
 |---|---|---|
 | [QuantConnect LEAN](https://github.com/QuantConnect/Lean) | Event engine, universe selection, brokerage abstraction | Point-in-time universe now; explicit order lifecycle and broker adapters later |
@@ -11,7 +21,7 @@ AI Trade does not attempt to merge several large repositories into one process. 
 | [RQAlpha](https://github.com/ricequant/rqalpha) | China-market simulation rules | Dated stock fees, lot size, suspension and price-limit rules |
 | [vectorbt](https://github.com/polakowo/vectorbt) | Fast parameter and signal research | Useful future research backend, not the accounting authority |
 | [OpenBB](https://github.com/OpenBB-finance/OpenBB) | Data-provider abstraction | Shared daily-provider boundary, Eastmoney/Tencent snapshot routes, bounded Yahoo or token-gated Tushare reconciliation, and separate minute, fundamentals, valuation, disclosure, news, and Level-1 depth stores are implemented; additional licensed adapters remain planned |
-| [kimi-stock-agent](https://github.com/dbbbbm/kimi-stock-agent) | Daily research cadence, historical review, and human operation notes | Immutable per-user research notes, persistent daily/weekly digest revisions, idempotent generation, and Windows scheduled archive runs are implemented; source accounting remains authoritative |
+| [kimi-stock-agent](https://github.com/dbbbbm/kimi-stock-agent) | Daily research cadence, historical review, and human operation notes | Immutable per-user notes, daily/weekly digest revisions, monthly projections, archived-epoch review, optional R2 digest staging, and Windows scheduled archive runs are implemented; source accounting remains authoritative |
 | [PyPortfolioOpt](https://github.com/PyPortfolio/PyPortfolioOpt) | Efficient frontier, Black-Litterman and HRP | Research candidates after simple risk budgets pass forward tests |
 | [cvxportfolio](https://github.com/cvxgrp/cvxportfolio) | Multi-period optimization with costs and constraints | Reference for future institutional portfolio construction |
 | [Riskfolio-Lib](https://github.com/dcajasn/Riskfolio-Lib) | Broad portfolio-risk optimization | Reference for CVaR and hierarchical risk research |
@@ -21,17 +31,17 @@ AI Trade does not attempt to merge several large repositories into one process. 
 
 ## Upstream Release Gate
 
-The `v0.18.1` gate was rechecked on 2026-07-24 before implementation. Project
-`main` and the latest public release were both at `v0.17.0`
-(`fa3806ca8ffa17a81d92920b8a73d487b7583693`); no newer project commit had to be
+The `v1.0.0` gate was rechecked on 2026-07-24 before release. Local `HEAD` and
+`origin/main` were both `c9407d7ec5b470c0c38fef4d94392cf666b241a4`, and the
+latest public release remained `v0.18.1`; no newer project commit had to be
 integrated first.
 
 | Upstream | Checked release/commit state | License and portability decision |
 |---|---|---|
-| `simonlin1212/TradingAgents-astock` | `v0.2.21` | Apache-2.0. Windowing and OpenAI-compatible provider ideas were already represented; free-text Chinese ratings do not replace strict local enums. |
+| `simonlin1212/TradingAgents-astock` | `v0.2.21`; post-release `d55820c` removes executable price/stop/size/target fields | Apache-2.0. Windowing and OpenAI-compatible provider ideas were already represented. The new removal matches AI Trade's existing prohibition on price, position, and order outputs, so no source port is required; free-text Chinese ratings do not replace strict local enums. |
 | `TauricResearch/TradingAgents` | `v0.3.1` | Apache-2.0. Retry-budget and run-identity ideas informed the already shipped call-governance boundary; future-data and UTC cutoffs remain independently enforced here. |
 | `virattt/ai-hedge-fund` | `v2.0.1` | MIT. The new historical `run_cycle` workflow and reduced backtest interface do not change AI Trade's research-only role contract and are not copied as a trading cycle. Protocol and caching ideas remain portable only through immutable local call/cache evidence, not overwrite-style JSON state. |
-| `KylinMountain/TradingAgents-AShare` | `v0.8.1`; GitHub license detection currently reports `NOASSERTION` | Repository terms were previously identified as PolyForm Noncommercial. Design may be studied, but source is not copied into a potentially commercial distribution unless the effective license is independently cleared. |
+| `KylinMountain/TradingAgents-AShare` | `v0.8.1` / `fef942f`; GitHub license detection reports `NOASSERTION` | Repository terms were previously identified as PolyForm Noncommercial. Design may be studied, but source is not copied into a potentially commercial distribution unless the effective license is independently cleared. |
 | `zhaoboy9692/Q-Limit` | No release; latest functional change remained Docker-related | GPL-3.0. Debate UX may be studied; frontend credential relay, free-text decisions, and weak audit patterns are not adopted. |
 | `a-stock-az` / `dbbbbm/kimi-stock-agent` | Functional activity remained at 2026-01 / 2026-05 | No clear license. Requirements and workflow may be observed; source is not copied. |
 
@@ -55,8 +65,9 @@ authoritative paper and broker ledgers.
 | Manual research notes and decision rationale | Complete | The Research page appends immutable, per-user notes with category, symbol, date, decision, confidence, actor, and evidence fingerprints. Corrections append a linked record; the original is retained. |
 | Manual holdings, fills, and cash accounting | Separate authoritative layer | Paper and shadow-account ledgers remain the source of positions, fills, cash, and fees. The research journal can describe a review but cannot edit those ledgers. |
 | Daily analysis archive | Complete within the local trust boundary | `archive-generate` materializes owner/account-scoped daily digests from validated paper reports, equity rows, and journal evidence. Repeated evidence is reused; changed evidence appends a `supersedes` revision. |
-| Weekly analysis/archive | Complete within the local trust boundary | ISO-week digests expose expected versus included sessions, source fingerprints, and immutable revisions. The 18:30 Windows task can process all enabled profiles; there is no R2 digest sync. |
-| Historical holdings snapshot | Partial | The Research page exposes recent ledger quantities by date; it deliberately does not reconstruct historical prices, market value, or weights, and does not create a separate snapshot ledger. |
+| Weekly analysis/archive | Complete within the local trust boundary | ISO-week digests expose expected versus included sessions, source fingerprints, and immutable revisions. The 18:30 Windows task can process all enabled profiles, and the active local owner/account digest namespace can be backed up to private R2 and restored only into a new staging directory. |
+| Monthly analysis view | Complete as a read-time projection | Natural-month grouping reports return, drawdown, coverage, trades, rejections, journals, latest quantities, and evidence fingerprints. It does not create a third persistent digest kind. |
+| Historical holdings and account epochs | Complete for ledger quantities and read-only epoch review | The Research page exposes ledger quantities by date and validates archived paper epochs without reactivation. It deliberately does not reconstruct historical prices, market value, or weights. Archived views exclude journal entries because those records do not carry a paper-account epoch binding. |
 
 ## Research Monitoring Status
 
@@ -67,7 +78,7 @@ authoritative paper and broker ledgers.
 | Partial and failed retry | Complete | Only a fully successful owner/configuration/snapshot scan is reusable. Partial and failed attempts remain evidence and are reevaluated under a new attempt ID; staged alert/scan publication has owner-local marker recovery. |
 | Historical rule/evidence binding | Complete within the local trust boundary | Historical configuration revisions and persisted snapshot evidence rederive alert rule metadata and evidence fingerprints. The hashes remain unkeyed local values. |
 | Alert review lifecycle | Complete within the local trust boundary | Open, acknowledge, snooze, dismiss, reopen, and automatic scan-time unsnooze actions are append-only and state-fingerprint protected. Snooze remains scan-driven rather than a background timer. |
-| Owner-scoped local notification inbox and webhook | Partial, external delivery implemented | Local inbox remains authoritative; optional HTTPS HMAC webhook delivery uses idempotency keys, bounded retries, DNS/public-address checks, and immutable outbox/attempt evidence. Remote failure never changes a scan or alert and no execution authority is granted. |
+| Owner-scoped local inbox and external channels | Complete for Webhook, email, and host Windows Toast | The local inbox remains authoritative. HTTPS HMAC Webhook, SMTP SSL/STARTTLS email, and interactive Windows Toast have bounded delivery, immutable attempt evidence, target fingerprints, and isolated failures. Mobile push and multi-tenant routing remain unavailable. |
 | Capacity and retention | Bounded | Each owner has hard immutable-file caps and no archive/compaction service; reaching a cap stops new writes until a future verified checkpoint format exists. |
 | Host-independent tamper evidence | Not implemented | Local SHA-256 and cross-record validation are not signatures or WORM storage. A local administrator can recalculate records or delete a newest chain tail; monitoring state is not included in the R2 market-cache backup. |
 | Minute/Tick/Level-2 monitoring and live execution | Partial | Historical minute evidence and observed public Level-1 five-level snapshots are separate research datasets. Real-time minute monitoring, Tick, replayable order events, full-depth/Level-2, and live execution remain unavailable; monitoring rules still use completed daily data only. |
@@ -82,7 +93,7 @@ authoritative paper and broker ledgers.
 | Perspective conflict and coverage-gap audit | Complete within the assistant record | `deterministic-perspective-audit-v1` separates real stance conflicts from missing coverage, records evidence references and manual resolution requirements, and is reconstructed during internal validation. |
 | Model conclusion authority guard | Complete for the optional single configured model | A model may preserve or tighten the deterministic research conclusion. An attempted relaxation is blocked and recorded; it cannot change strategy, accounting, positions, orders, or permissions. |
 | Model call governance and cache | Complete within the local trust boundary | Per-user immutable call records capture attempt/retry, Token, latency, cache, budget, cost, and failure metadata without raw prompts/responses or credentials. Single-call/UTC-day budgets and concurrency fail closed; validated public enhancements use an immutable per-user cache. |
-| Multiple-model parallel analysis, weighting, voting, or judge model | Not implemented | The audit must not be described as MoA or consensus voting. Adding models would first require provider isolation, deterministic aggregation, cost and failure accounting, and conflict evidence that remains `research_only`. |
+| Autonomous factor research and model iteration | Reserved for `v2.0.0`, not implemented | The future line may propose falsifiable hypotheses and Champion/Challenger experiments using deterministic engines, small local models, or optional remote APIs. It may not approve its own strategy, weaken gates, place orders, or require a high-performance local model for normal use. |
 
 ## Market Intelligence Status
 
@@ -97,7 +108,7 @@ authoritative paper and broker ledgers.
 | Valuation temperature | Partial, stock history and reference checks implemented | Eastmoney stock PE/PB/cash-flow/sales percentiles require at least 120 positive finite observations. Optional exact-session Tushare PE/PB/PS checks never fill or replace primary values; ETFs and insufficient histories stay unavailable. |
 | Level-1 five-level order book | Partial, observed snapshots implemented | Public five-level bids/asks, lots, normalized shares, spread, observation time, and bounded imbalance are immutable research evidence. It is not Tick, full depth, Level-2, exchange-certified, replayable, real-time monitoring, or execution data. |
 | Market sentiment | Not implemented | News heat, lexicon annotations, official events, and Dragon-Tiger rows remain research evidence and do not make assistant `sentiment_coverage` available. |
-| External push notification delivery | Partial | Webhook is available behind `AI_TRADE_WEBHOOK_*` environment variables with HTTPS/loopback restrictions, HMAC signatures, idempotency, retries, and immutable delivery evidence. Email, Toast, mobile push, and multi-tenant routing remain out of scope. |
+| External push notification delivery | Complete for personal-computer channels | Webhook uses HTTPS/loopback restrictions, HMAC signatures, idempotency, and immutable evidence. SMTP email supports SSL/STARTTLS; Windows Toast uses an encoded host command and requires an interactive user session. Mobile push and multi-tenant routing remain out of scope. |
 
 ## Deployment Status
 
@@ -123,7 +134,7 @@ operator thought at that time, not a signal, order, or promotion fact.
 8. Eastmoney is a bounded primary data route, Tencent Finance is an auditable network fallback, and Yahoo Finance or environment-authorized Tushare Pro can be a short-window independent reference only; no public endpoint is treated as exchange-certified or guaranteed.
 9. The market workstation renders only local validated completed snapshots. Indicator and chart controls are observations, not strategy mutations or order signals.
 10. Research notes are append-only, owner-scoped evidence. They can explain a decision, but cannot mutate strategy, accounting, broker permissions, or live authority.
-11. Closing archives have two layers: `/api/research/archive` is a read-time evidence projection, while `ResearchDigestStore` persists a derivative, append-only daily/weekly revision chain. The paper equity ledger and daily reports remain accounting authority; digest rows cannot promote a strategy or authorize an order.
+11. Closing archives have three bounded surfaces: `/api/research/archive` projects daily/weekly/monthly evidence at read time, `ResearchDigestStore` persists derivative daily/weekly revision chains, and the archived-epoch browser validates old paper namespaces without reactivation. Optional R2 digest backup restores only to staging. The paper equity ledger and daily reports remain accounting authority; no archive or digest can promote a strategy or authorize an order.
 12. Monitoring alerts are owner-scoped research prompts. Partial and failed scans remain explicit attempts, and no alert or review action changes strategy, paper accounting, broker permissions, or order authority.
 13. Market breadth and board rankings are third-party closing evidence. Their provider-defined classification and counts are disclosed, and they cannot create a signal, alter a strategy, or authorize an order.
 14. Board capital flow is provider-reported closing evidence. Signed amounts and direction words are retained without treating overlapping board sums as whole-market flow; the dataset cannot create a signal, alter a strategy, or authorize an order.

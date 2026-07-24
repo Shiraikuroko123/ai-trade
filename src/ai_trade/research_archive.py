@@ -16,7 +16,7 @@ from .research_journal import ResearchJournalStore
 
 
 SCHEMA_VERSION = 1
-ARCHIVE_KINDS = frozenset({"all", "daily", "weekly"})
+ARCHIVE_KINDS = frozenset({"all", "daily", "weekly", "monthly"})
 ARCHIVE_DEFAULT_LIMIT = 12
 ARCHIVE_MAX_LIMIT = 52
 MAX_EQUITY_LEDGER_BYTES = 16 * 1024 * 1024
@@ -70,11 +70,16 @@ _AUTHORITY = {
 }
 
 
+class _JournalExcluded(Exception):
+    """Internal control flow for an explicitly unavailable journal projection."""
+
+
 @dataclass(frozen=True)
 class ResearchArchiveQuery:
     kind: str = "all"
     on_date: date | None = None
     week_start: date | None = None
+    month_start: date | None = None
     limit: int = ARCHIVE_DEFAULT_LIMIT
 
 
@@ -123,6 +128,7 @@ class ResearchArchiveProjection:
         config_fingerprint: str | None,
         query: ResearchArchiveQuery | None = None,
         market_calendar: Sequence[date] | None = None,
+        include_journal: bool = True,
     ) -> dict[str, Any]:
         query = query or ResearchArchiveQuery()
         _validate_query(query)
@@ -171,11 +177,22 @@ class ResearchArchiveProjection:
         journal_records: list[dict[str, Any]] = []
         journal_error: dict[str, str] | None = None
         try:
+            if not include_journal:
+                journal_error = _error(
+                    "research_journal_epoch_binding_unavailable",
+                    "Research journal entries are not bound to a paper account epoch and are excluded from archived epoch projections.",
+                    "review-active-journal-separately",
+                )
+                errors.append(journal_error)
+                raise _JournalExcluded
             if query.on_date is not None:
                 lower = upper = query.on_date
             elif query.week_start is not None:
                 lower = query.week_start
                 upper = query.week_start + timedelta(days=6)
+            elif query.month_start is not None:
+                lower = query.month_start
+                upper = _month_end(query.month_start)
             else:
                 # The journal is independent evidence. Read its bounded,
                 # owner-scoped store across the full calendar so a note added
@@ -188,6 +205,8 @@ class ResearchArchiveProjection:
                 for item in journal_records
             )
             selected_dates = _selected_dates(evidence_dates, query)
+        except _JournalExcluded:
+            pass
         except (OSError, UnicodeError, ValueError, RuntimeError) as exc:
             journal_error = _error(
                 "research_journal_unavailable",
@@ -213,18 +232,31 @@ class ResearchArchiveProjection:
             for on_date in sorted(selected_dates, reverse=True)
         ]
         weekly = _weekly_records(daily, market_calendar)
+        monthly = _monthly_records(daily, market_calendar)
         if query.week_start is not None:
             weekly = [
                 item for item in weekly if item["week_start"] == query.week_start.isoformat()
             ]
+        if query.month_start is not None:
+            monthly = [
+                item
+                for item in monthly
+                if item["month_start"] == query.month_start.isoformat()
+            ]
 
         if query.kind == "daily":
             weekly = []
+            monthly = []
         elif query.kind == "weekly":
             daily = []
+            monthly = []
+        elif query.kind == "monthly":
+            daily = []
+            weekly = []
 
         daily = daily[: query.limit]
         weekly = weekly[: query.limit]
+        monthly = monthly[: query.limit]
         snapshots = [
             {
                 "as_of_date": item["as_of_date"],
@@ -242,7 +274,7 @@ class ResearchArchiveProjection:
             if item["equity"] is not None
             and item["source"]["equity_session_id"] is not None
         ]
-        status = _projection_status(daily, weekly, errors)
+        status = _projection_status(daily, weekly, monthly, errors)
         return {
             "schema_version": SCHEMA_VERSION,
             "available": status != "unavailable",
@@ -253,6 +285,7 @@ class ResearchArchiveProjection:
             "summary": {
                 "daily_count": len(daily),
                 "weekly_count": len(weekly),
+                "monthly_count": len(monthly),
                 "snapshot_count": len(snapshots),
                 "source_daily_reports": len(reports),
                 "source_equity_sessions": len(equity_rows),
@@ -260,6 +293,7 @@ class ResearchArchiveProjection:
             },
             "daily": daily,
             "weekly": weekly,
+            "monthly": monthly,
             "snapshots": snapshots,
             "authority": dict(_AUTHORITY),
             "errors": errors,
@@ -351,6 +385,7 @@ def unavailable_research_archive(
         "summary": {
             "daily_count": 0,
             "weekly_count": 0,
+            "monthly_count": 0,
             "snapshot_count": 0,
             "source_daily_reports": 0,
             "source_equity_sessions": 0,
@@ -358,6 +393,7 @@ def unavailable_research_archive(
         },
         "daily": [],
         "weekly": [],
+        "monthly": [],
         "snapshots": [],
         "authority": dict(_AUTHORITY),
         "errors": [_error(code, message, recovery_action)],
@@ -730,6 +766,115 @@ def _weekly_records(
     return sorted(result, key=lambda value: str(value["week_start"]), reverse=True)
 
 
+def _monthly_records(
+    daily: Sequence[Mapping[str, Any]],
+    market_calendar: Sequence[date] | None,
+) -> list[dict[str, Any]]:
+    groups: dict[date, list[Mapping[str, Any]]] = defaultdict(list)
+    for item in daily:
+        on_date = date.fromisoformat(str(item["as_of_date"]))
+        groups[on_date.replace(day=1)].append(item)
+    calendar = set(market_calendar or ())
+    result: list[dict[str, Any]] = []
+    for month_start, items in groups.items():
+        items = sorted(items, key=lambda value: str(value["as_of_date"]))
+        paper_items = [
+            item for item in items if item["source"]["equity_session_id"] is not None
+        ]
+        current = [item for item in paper_items if item["status"] == "current"]
+        month_end = _month_end(month_start)
+        expected_dates = sorted(
+            value for value in calendar if month_start <= value <= month_end
+        )
+        included_dates = {
+            date.fromisoformat(str(item["as_of_date"])) for item in paper_items
+        }
+        missing_sessions = [
+            value.isoformat() for value in expected_dates if value not in included_dates
+        ]
+        expected_date_set = set(expected_dates)
+        unexpected_sessions = (
+            sorted(
+                value.isoformat()
+                for value in included_dates
+                if value not in expected_date_set
+            )
+            if calendar
+            else []
+        )
+        non_journal_items = [item for item in items if item["status"] != "journal_only"]
+        if not paper_items:
+            status = "journal_only" if not non_journal_items else "partial"
+        elif (
+            len(current) != len(paper_items)
+            or any(
+                item["status"] not in {"current", "journal_only"}
+                for item in items
+            )
+            or missing_sessions
+            or unexpected_sessions
+        ):
+            status = "partial"
+        else:
+            status = "current"
+        evidence_fingerprints = [
+            str(item["source"]["evidence_fingerprint"]) for item in items
+        ]
+        result.append(
+            {
+                "month_start": month_start.isoformat(),
+                "month_end": month_end.isoformat(),
+                "status": status,
+                "expected_sessions": len(expected_dates) if calendar else None,
+                "included_sessions": len(paper_items),
+                "missing_sessions": missing_sessions,
+                "unexpected_sessions": unexpected_sessions,
+                "start_equity": paper_items[0]["equity"] if paper_items else None,
+                "end_equity": paper_items[-1]["equity"] if paper_items else None,
+                "period_return": (
+                    math.prod(1.0 + float(item["daily_return"]) for item in paper_items)
+                    - 1.0
+                    if paper_items
+                    else None
+                ),
+                "max_drawdown": (
+                    min(float(item["drawdown"]) for item in paper_items)
+                    if paper_items
+                    else None
+                ),
+                "trades_count": sum(
+                    int(item["trades_count"]) for item in paper_items
+                ),
+                "rejections_count": sum(
+                    int(item["rejections_count"]) for item in paper_items
+                ),
+                "journal_count": sum(
+                    int(item["journal"]["entry_count"]) for item in items
+                ),
+                "latest_positions": paper_items[-1]["positions"] if paper_items else [],
+                "daily_statuses": [
+                    {"date": item["as_of_date"], "status": item["status"]}
+                    for item in items
+                ],
+                "source": {
+                    "evidence_fingerprints": evidence_fingerprints,
+                    "monthly_fingerprint": _fingerprint(evidence_fingerprints),
+                    "calendar_available": bool(calendar),
+                },
+                "authority": dict(_AUTHORITY),
+            }
+        )
+    return sorted(result, key=lambda value: str(value["month_start"]), reverse=True)
+
+
+def _month_end(month_start: date) -> date:
+    if month_start.month == 12:
+        following = date(month_start.year + 1, 1, 1)
+    else:
+        following = date(month_start.year, month_start.month + 1, 1)
+    return following - timedelta(days=1)
+
+
 def _journal_summary(entries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     if len(entries) > MAX_ARCHIVE_JOURNAL_REFS:
         raise RuntimeError("Research archive journal reference limit exceeded")
@@ -766,29 +911,44 @@ def _selected_dates(
         return {
             value for value in selected if query.week_start <= value <= upper
         }
-    maximum_dates = query.limit if query.kind == "daily" else query.limit * 7
+    if query.month_start is not None:
+        upper = _month_end(query.month_start)
+        return {
+            value for value in selected if query.month_start <= value <= upper
+        }
+    maximum_dates = (
+        query.limit
+        if query.kind == "daily"
+        else query.limit * 7
+        if query.kind == "weekly"
+        else query.limit * 31
+    )
     return set(sorted(selected, reverse=True)[:maximum_dates])
 
 
 def _projection_status(
     daily: Sequence[Mapping[str, Any]],
     weekly: Sequence[Mapping[str, Any]],
+    monthly: Sequence[Mapping[str, Any]],
     errors: Sequence[Mapping[str, str]],
 ) -> str:
     if errors:
-        return "partial" if daily or weekly else "unavailable"
-    if not daily and not weekly:
+        return "partial" if daily or weekly or monthly else "unavailable"
+    if not daily and not weekly and not monthly:
         return "empty"
     bad_daily = any(item["status"] != "current" for item in daily)
     bad_weekly = any(item["status"] not in {"current", "journal_only"} for item in weekly)
-    return "partial" if bad_daily or bad_weekly else "current"
+    bad_monthly = any(
+        item["status"] not in {"current", "journal_only"} for item in monthly
+    )
+    return "partial" if bad_daily or bad_weekly or bad_monthly else "current"
 
 
 def _validate_query(query: ResearchArchiveQuery) -> None:
     if not isinstance(query, ResearchArchiveQuery):
         raise ValueError("Research archive query is invalid")
     if query.kind not in ARCHIVE_KINDS:
-        raise ValueError("Research archive kind must be all, daily, or weekly")
+        raise ValueError("Research archive kind must be all, daily, weekly, or monthly")
     if query.on_date is not None and (
         not isinstance(query.on_date, date)
         or isinstance(query.on_date, datetime)
@@ -801,8 +961,18 @@ def _validate_query(query: ResearchArchiveQuery) -> None:
             or query.week_start.weekday() != 0
         ):
             raise ValueError("Research archive week must be an ISO Monday")
-    if query.on_date is not None and query.week_start is not None:
-        raise ValueError("Research archive date and week cannot be combined")
+    if query.month_start is not None:
+        if (
+            not isinstance(query.month_start, date)
+            or isinstance(query.month_start, datetime)
+            or query.month_start.day != 1
+        ):
+            raise ValueError("Research archive month must be the first calendar day")
+    if sum(
+        value is not None
+        for value in (query.on_date, query.week_start, query.month_start)
+    ) > 1:
+        raise ValueError("Research archive date, week, and month cannot be combined")
     if (
         isinstance(query.limit, bool)
         or not isinstance(query.limit, int)
@@ -818,6 +988,7 @@ def _query_payload(query: ResearchArchiveQuery) -> dict[str, Any]:
         "kind": query.kind,
         "date": query.on_date.isoformat() if query.on_date else None,
         "week_start": query.week_start.isoformat() if query.week_start else None,
+        "month_start": query.month_start.isoformat() if query.month_start else None,
         "limit": query.limit,
     }
 

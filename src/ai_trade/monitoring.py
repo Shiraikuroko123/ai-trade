@@ -1079,6 +1079,13 @@ class MonitoringProfile:
             self.profile_id,
             {item["notification_id"]: item for item in notifications},
         )
+        from .notification_channels import verify_channel_records
+
+        verify_channel_records(
+            self.directory,
+            self.profile_id,
+            {item["notification_id"]: item for item in notifications},
+        )
 
     def _project_alerts_unlocked(self) -> list[dict[str, Any]]:
         records = self._list_records_unlocked("alerts", _ALERT_FIELDS, MAX_ALERTS)
@@ -1742,10 +1749,10 @@ class MonitoringEngine:
         notifications = profile.notification_status(
             limit=MAX_PUBLIC_NOTIFICATIONS
         )
-        from .notification_delivery import webhook_delivery_status
+        from .notification_channels import external_delivery_status
 
         delivery_notifications = profile.delivery_notifications()
-        notifications["delivery"] = webhook_delivery_status(
+        notifications["delivery"] = external_delivery_status(
             profile.directory,
             profile.profile_id,
             delivery_notifications,
@@ -1839,32 +1846,29 @@ class MonitoringEngine:
     ) -> dict[str, Any]:
         """Attempt configured delivery without changing the scan outcome."""
 
-        from .notification_delivery import (
-            deliver_webhook_notifications,
-            load_webhook_settings,
-            webhook_delivery_status,
+        from .notification_channels import (
+            deliver_external_notifications,
+            external_delivery_configured,
+            external_delivery_status,
         )
 
         try:
-            settings = load_webhook_settings()
-            if not settings.enabled:
+            if not external_delivery_configured():
                 notifications = profile.delivery_notifications(materialize=False)
-                return webhook_delivery_status(
+                return external_delivery_status(
                     profile.directory,
                     profile.profile_id,
                     notifications,
-                    settings=settings,
                 )
             notifications = profile.delivery_notifications()
-            return deliver_webhook_notifications(
+            return deliver_external_notifications(
                 profile.directory,
                 profile.profile_id,
                 notifications,
-                settings=settings,
             )
         except Exception as exc:
             return {
-                "mode": "local_inbox+webhook",
+                "mode": "local_inbox+external",
                 "external_delivery_configured": True,
                 "configuration_status": "configured",
                 "endpoint_origin": None,

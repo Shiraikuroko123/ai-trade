@@ -73,11 +73,21 @@ class DistributionVerificationTests(unittest.TestCase):
         self.assertIn("docs/RESEARCH_JOURNAL.md", SDIST_REQUIRED)
 
     def test_research_digest_release_surface_is_required(self):
-        self.assertIn("ai_trade/research_digest.py", WHEEL_REQUIRED)
-        self.assertIn("src/ai_trade/research_digest.py", SDIST_REQUIRED)
+        for module in (
+            "research_digest.py",
+            "research_digest_cloud.py",
+            "research_epochs.py",
+        ):
+            self.assertIn(f"ai_trade/{module}", WHEEL_REQUIRED)
+            self.assertIn(f"src/ai_trade/{module}", SDIST_REQUIRED)
         self.assertIn("docs/RESEARCH_DIGESTS.md", SDIST_REQUIRED)
         self.assertIn("scripts/install_archive_task.ps1", SDIST_REQUIRED)
         self.assertIn("scripts/run_daily_archive.ps1", SDIST_REQUIRED)
+
+    def test_notification_channels_are_required_in_both_artifacts(self):
+        self.assertIn("ai_trade/notification_channels.py", WHEEL_REQUIRED)
+        self.assertIn("src/ai_trade/notification_channels.py", SDIST_REQUIRED)
+        self.assertIn("scripts/configure_notifications.ps1", SDIST_REQUIRED)
 
     def test_assistant_release_surface_is_required_in_both_artifacts(self):
         for module in (

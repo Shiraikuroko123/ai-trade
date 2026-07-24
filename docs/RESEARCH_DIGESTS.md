@@ -1,7 +1,8 @@
 # Persistent Research Digests
 
-> **Release status:** the `v0.18.1` wheel contains the research-digest surface,
-> `archive-generate`, these HTTP routes, and the Windows archive-task scripts.
+> **Release status:** the `v1.0.0` wheel contains the research-digest surface,
+> `archive-generate`, monthly read-time projection, archived-epoch browser,
+> optional R2 digest staging, these HTTP routes, and the Windows archive-task scripts.
 > Digests remain derivative, owner-scoped research evidence rather than an
 > accounting or execution authority.
 
@@ -38,6 +39,10 @@ strategy_changed=false
 paper_account_changed=false
 broker_permissions_changed=false
 ```
+
+The Research page also projects natural-month summaries from daily evidence.
+Monthly rows are read-time views, not a third persistent digest kind; they do
+not change the daily/weekly store schema or generate additional revisions.
 
 Records are immutable. Repeating a generation with the same canonical payload
 and source evidence reuses the newest revision (idempotent). If evidence or the
@@ -90,12 +95,14 @@ chain. A failure after publication is reported with the visible revision in the
 committed prefix, so operators are not told to repeat a write that already
 became immutable.
 
-Current Research-page, HTTP, and CLI queries always derive the account epoch
-from the active `paper_state.json`. They do not expose an old-epoch selector.
-After `paper-init --overwrite`, an old digest namespace is therefore offline
-retention evidence only: keep it with the archived paper evidence, but do not
-replace or hand-edit active state to make it appear in the workstation. A
-supported old-epoch browser/export verifier has not been implemented.
+Current digest-generation and active digest-list APIs always derive the account
+epoch from `paper_state.json`. The Research page has a separate read-only
+browser for validated `state/archive/YYYYMMDD_HHMMSS/` epochs and their matching
+digest namespaces. It never copies, merges, restores, reactivates, or replaces
+active state and does not expose raw account IDs. Because journal records do not
+carry a paper-account epoch binding, archived projections exclude journals and
+show that limitation explicitly instead of attaching a same-date note to the
+wrong account.
 
 The store is bounded: at most 2,000 period chains per account and 2,000
 revisions per chain. There is no automatic deletion or compaction. A capacity
@@ -237,21 +244,31 @@ unavailable evidence.
 
 Digest files are local application state. The repository ignores
 `state/research_digests/`; release verification rejects `state/` members. The
-Cloudflare R2 market-cache exporter is allowlisted to validated
-`data/cache/*.csv` and `data/cache/manifest.json` and cannot upload research
-digests, journals, reports, paper ledgers, broker files, credentials, or logs.
-Storage-page capacity and A/B operation counters therefore do not include
-digest records.
+Cloudflare R2 market-cache exporter remains allowlisted to validated
+`data/cache/*.csv` and `data/cache/manifest.json`. A separate digest exporter
+can read only validated `daily/` and `weekly/` revision chains for the active
+local owner and paper epoch. It never uploads journals, reports, paper ledgers,
+broker files, assistant state, credentials, logs, or raw owner/account IDs.
+Storage-page capacity does not include digest objects; high-level R2 requests
+still enter the same local A/B observation ledger.
 
-There is no built-in cloud sync or restore operation for digests. To preserve
-them, stop the workstation and make a controlled, encrypted backup of the
-workspace's `state/research_digests/` together with the matching paper epoch and
-reports. A Research-page query can validate only the namespace matching the
-currently active paper epoch. Old-epoch backups have no supported page/API/CLI
-selector and must remain offline until a dedicated verifier exists. Do not swap
-active paper state, hand-edit a revision, or copy records between
-owners/accounts; strict validation will reject mismatches and manual state
-replacement is not a recovery procedure.
+After configuring private R2, use:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli cloud-digest-backup
+.\.venv\Scripts\python.exe -m ai_trade.cli cloud-digest-list --limit 20
+.\.venv\Scripts\python.exe -m ai_trade.cli cloud-digest-restore <snapshot-id>
+```
+
+Backup verifies the complete local namespace before and after reading, uses
+hashed owner/account identities, and deduplicates an unchanged dataset. Restore
+checks remote object metadata, ZIP limits, safe paths, manifest and file hashes,
+record schemas, owner/account/config bindings, revision numbering,
+`supersedes` links, and record fingerprints. It writes only a new
+`local/cloud-digest-restore/<snapshot-id>/` staging directory and returns
+`active_state_unchanged: true`; it never overwrites `state/research_digests/` or
+adopts an archived account. These SHA-256 checks are not signatures or remote
+attestation, so bucket access and independent retention still matter.
 
 ## Verification Checklist
 
@@ -265,7 +282,9 @@ replacement is not a recovery procedure.
    revisions rather than append duplicates.
 4. Open **Research** and inspect the digest status, period, source fingerprints,
    revision timeline, and authority declaration.
-5. If a report or ledger is changed, do not repair it by editing a digest. Fix
+5. Optionally run `cloud-digest-backup`, list the snapshot, and restore it to a
+   new staging directory; confirm active state remains unchanged.
+6. If a report or ledger is changed, do not repair it by editing a digest. Fix
    the authoritative source and run generation again; a new `supersedes`
    revision will preserve the previous evidence.
 

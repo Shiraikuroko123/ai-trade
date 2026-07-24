@@ -5,6 +5,13 @@ provider boundary is implemented in `src/ai_trade/data/providers.py`; the
 existing Eastmoney and Tencent parsers remain deliberately separate so their
 response validation and provenance rules cannot be mixed accidentally.
 
+The `v1.0.0` release gate was rechecked on 2026-07-24 against local and remote
+`main`, the latest public release, and the tracked upstream projects. No new
+provider implementation or license change justified a source port. In
+particular, adding a dependency wrapper around the same Eastmoney endpoint does
+not create an independent source, and repositories without a clear compatible
+license remain design references only.
+
 ## Supported configuration
 
 The current release registers four daily-bar providers. Eastmoney and Tencent
@@ -153,8 +160,9 @@ execution data.
 
 ## Assistant consumption boundary
 
-The `v0.18.1` assistant does not register another market-data provider and never fetches
-network data during analysis. For a configured `STOCK`, it queries the existing
+The `v1.0.0` assistant does not register another market-data provider and never
+fetches network data during analysis. The workstation remains fully usable
+without a model. For a configured `STOCK`, it queries the existing
 fundamental and valuation stores using the exact final completed K-line date.
 Only `current` or `partial` evidence is eligible; a `provisional` valuation is
 excluded to prevent pre-close observations from entering a completed-bar
@@ -172,6 +180,12 @@ The bull, bear, and judge records consume only this already validated assistant
 evidence. Their OpenAI-compatible endpoint is a wording/research service, not a
 market-data source or independent confirmation. Three role calls against one
 endpoint are three isolated audits, not three independent data providers.
+
+Future `v2.0.0` hypothesis generation must preserve the same rule: a model may
+propose a transform or experiment, but it cannot invent observations, relabel
+one transport as multiple sources, or turn model agreement into data
+confirmation. Every experiment must bind to versioned point-in-time inputs and
+remain subject to explicit human promotion.
 
 Both stores keep Eastmoney as the primary normalized data. Consuming them
 together does not make them independent sources and must not be presented as
