@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - "site/**"
-      - "docs/assets/workstation-overview.png"
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
@@ -27,9 +26,8 @@ jobs:
       - name: Assemble static site
         shell: bash
         run: |
-          mkdir -p _site/assets
-          cp site/index.html site/styles.css _site/
-          cp docs/assets/workstation-overview.png _site/assets/
+          mkdir -p _site
+          cp -R site/. _site/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
