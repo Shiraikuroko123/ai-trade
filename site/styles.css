@@ -40,7 +40,7 @@ html { min-width: 320px; scroll-behavior: smooth; background: var(--bg); }
 body { margin: 0; min-width: 320px; overflow-x: hidden; background: var(--bg); color: var(--ink); font-family: var(--font-ui); line-height: 1.55; }
 a { color: inherit; }
 button, summary { font: inherit; }
-img { max-width: 100%; }
+img { max-width: 100%; height: auto; }
 h1, h2, h3, p { margin-top: 0; }
 h1, h2, h3 { line-height: 1.05; text-wrap: balance; }
 a:focus-visible, summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 4px; }
