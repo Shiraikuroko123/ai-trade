@@ -10,6 +10,7 @@ the candidate experiment or change strategy state.
 
 ```powershell
 ai-trade --config config/default.json hypothesis-generate --objective auto
+ai-trade --config config/default.json hypothesis-from-model mdl_<32-lowercase-hex>
 ai-trade --config config/default.json hypothesis-list --limit 20
 ai-trade --config config/default.json hypothesis-show hyp_<32-lowercase-hex>
 ai-trade --config config/default.json hypothesis-materialize hyp_<32-lowercase-hex> --yes
@@ -89,6 +90,31 @@ record binds the hypothesis record and design fingerprints, the executed
 snapshot fingerprint, and the configuration context; repeating an identical
 execution returns the existing record as reused instead of appending a
 duplicate. Tampered records fail fingerprint verification on read.
+
+## Model-evidence bridge
+
+`hypothesis-from-model` turns one fingerprint-verified model-lab evaluation
+into a registered hypothesis draft under pre-registered, fail-closed gates
+(`model-evidence-derivation-v1`): the evaluation must show a positive
+out-of-sample mean rank IC over at least 24 evaluated dates, must beat its
+best single input factor (`model_minus_best_factor_ic > 0` — otherwise the
+honest conclusion is that the single factor wins and the bridge refuses), and
+must be bound to exactly the current market snapshot fingerprint. A
+deterministic mapping of the disclosed dominant factor selects the objective:
+defensive families (`volatility_60`, `reversal_5`, `drawdown_from_high_120`)
+select drawdown, everything else stays balanced, and the bridge never selects
+turnover on its own.
+
+The ML model contributes evidence, not content: the candidate plan comes from
+the same allowlisted parameter neighborhood as every other hypothesis, the
+record keeps `model_used: false` (no generative model authors any text), and
+the evaluation is bound as a `model_evaluation` evidence reference carrying
+the evaluation id and record fingerprint. The derived draft consumes one slot
+of the same three-hypothesis snapshot-family Holm budget, is deduplicated by
+design fingerprint like any other registration, and still has to survive the
+experiment runner plus explicit human materialization — in the first
+real-data drill the runner promptly falsified the derived hypothesis, which
+is the pipeline working, not failing.
 
 ## Exploratory parameter sweep
 

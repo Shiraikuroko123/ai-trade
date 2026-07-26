@@ -158,6 +158,42 @@ class HypothesisCliTests(TestCase):
         )
         runner.get_run.assert_called_once_with("local-owner", "run_" + "b" * 32)
 
+    def test_parser_and_dispatch_for_model_evidence_bridge(self):
+        parsed = build_parser().parse_args(
+            ["hypothesis-from-model", "mdl_" + "f" * 32, "--title", "Bridge"]
+        )
+        self.assertEqual(parsed.evaluation_id, "mdl_" + "f" * 32)
+        self.assertEqual(parsed.title, "Bridge")
+
+        config = object()
+        market = object()
+        engine = MagicMock()
+        engine.derive_from_model.return_value = {
+            "hypothesis_id": "hyp_" + "d" * 32,
+            "source": {"kind": "model_evidence_deterministic"},
+            "reused": False,
+        }
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.MarketData", return_value=market) as market_data,
+            patch("ai_trade.cli.HypothesisLabEngine", return_value=engine),
+            patch("ai_trade.cli._ensure_cache") as ensure_cache,
+            redirect_stdout(output),
+        ):
+            status = main(["hypothesis-from-model", "mdl_" + "f" * 32])
+
+        self.assertEqual(status, 0)
+        market_data.assert_called_once_with(config, recover_snapshot=False)
+        ensure_cache.assert_not_called()
+        engine.derive_from_model.assert_called_once_with(
+            "local-owner", market, "mdl_" + "f" * 32, title=None
+        )
+        self.assertEqual(
+            json.loads(output.getvalue())["hypothesis_id"], "hyp_" + "d" * 32
+        )
+
     def test_materialization_requires_confirmation_and_dispatches_human_actor(self):
         config = object()
         engine = MagicMock()

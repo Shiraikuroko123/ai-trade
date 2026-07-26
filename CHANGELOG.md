@@ -5,6 +5,16 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Added the model-evidence bridge (`hypothesis-from-model`): one
+  fingerprint-verified model evaluation can register a hypothesis draft under
+  pre-registered fail-closed gates (positive out-of-sample IC over ≥24 dates,
+  must beat its best single factor, snapshot fingerprint must match the
+  current cache). A deterministic dominant-factor mapping selects the
+  balanced or drawdown objective; the ML model contributes no parameter
+  values or text (`model_used` stays false), the evaluation is bound as a
+  `model_evaluation` evidence reference, and the draft consumes the same
+  three-hypothesis Holm family budget before facing the experiment runner
+  and explicit human materialization.
 - Added deterministic sentiment tilt evidence (`sentiment-compose`,
   `sentiment-show`, `sentiment-list`). One bounded `[-1, +1]` daily tilt is
   composed from the already-validated local breadth, capital-flow, and

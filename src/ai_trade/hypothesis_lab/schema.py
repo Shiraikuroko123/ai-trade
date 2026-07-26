@@ -18,6 +18,7 @@ CANDIDATE_ID = re.compile(r"cand_[0-9a-f]{32}\Z")
 EVIDENCE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}\Z")
 
 OBJECTIVES = frozenset({"balanced", "drawdown", "turnover"})
+SOURCE_KINDS = frozenset({"local_deterministic", "model_evidence_deterministic"})
 PREDICTION_METRICS = frozenset(
     {
         "cost_stress.total_return_delta",
@@ -200,13 +201,16 @@ def validate_record(value: Mapping[str, Any]) -> None:
     _text(value.get("mechanism"), "mechanism", 2_000)
 
     source = _object(value.get("source"), _SOURCE_FIELDS, "source")
-    if source.get("kind") != "local_deterministic":
+    if source.get("kind") not in SOURCE_KINDS:
         raise ValueError("Hypothesis source kind is invalid")
     if source.get("objective") not in OBJECTIVES:
         raise ValueError("Hypothesis source objective is invalid")
     _text(source.get("selection_reason"), "selection_reason", 500)
+    # model_used attests that no generative model authored this record. A
+    # model_evidence_deterministic hypothesis is still template-written; the
+    # ML evaluation it cites is bound as a fingerprinted evidence reference.
     if source.get("model_used") is not False:
-        raise ValueError("Local deterministic hypothesis cannot claim a model call")
+        raise ValueError("Deterministic hypothesis generation cannot claim a model call")
 
     scope = _object(value.get("scope"), _SCOPE_FIELDS, "scope")
     _text(scope.get("universe"), "scope.universe", 200)
@@ -388,6 +392,7 @@ def _validate_evidence(value: Any) -> None:
             "daily_bars",
             "cache_manifest",
             "security_master",
+            "model_evaluation",
         }:
             raise ValueError("Hypothesis evidence kind is invalid")
         _iso_date(reference.get("as_of"), "evidence.as_of")

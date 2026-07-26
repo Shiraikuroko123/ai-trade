@@ -29,6 +29,36 @@ _OBJECTIVE_TITLES = {
     "turnover": "Turnover-control parameter-neighborhood hypothesis",
 }
 
+_MODEL_TITLES = {
+    "balanced": "Model-evidence risk-adjusted parameter-neighborhood hypothesis",
+    "drawdown": "Model-evidence drawdown-control parameter-neighborhood hypothesis",
+}
+
+# Pre-registered derivation rule: which disclosed dominant-factor families map
+# to which objective. Defensive families argue for loss control; everything
+# else (momentum, trend, liquidity, custom expressions) stays balanced. The
+# bridge never selects the turnover objective on its own.
+MODEL_EVIDENCE_RULE_VERSION = "model-evidence-derivation-v1"
+MINIMUM_MODEL_EVIDENCE_DATES = 24
+_DEFENSIVE_FACTORS = frozenset(
+    {"volatility_60", "reversal_5", "drawdown_from_high_120"}
+)
+
+_MODEL_MECHANISM_SUFFIX = (
+    " This registration is motivated by walk-forward model evidence, which is "
+    "correlational: a positive out-of-sample rank IC does not by itself justify "
+    "a parameter change, so the champion/challenger experiment below remains "
+    "the only test that counts."
+)
+
+_MODEL_LIMITATION = (
+    "Model-evidence derivation reuses the same allowlisted parameter "
+    "neighborhood; the model contributes no parameter values, no text, and no "
+    "authority, and the derived hypothesis consumes one slot of the same "
+    "three-hypothesis snapshot family budget."
+)
+
+
 _MECHANISMS = {
     "balanced": (
         "A modest volatility reduction and a wider rebalance band may suppress "
@@ -81,6 +111,85 @@ class HypothesisLabEngine:
             baseline["metrics"],
             baseline["settings"]["risk"],
         )
+        return self._register(
+            owner,
+            market,
+            metadata_before,
+            snapshot_fingerprint,
+            baseline,
+            resolved,
+            selection_reason,
+            source_kind="local_deterministic",
+            title=(title.strip() if title is not None else _OBJECTIVE_TITLES[resolved]),
+            mechanism=_MECHANISMS[resolved],
+        )
+
+    def derive_from_model(
+        self,
+        owner: str,
+        market: MarketData,
+        evaluation_id: str,
+        *,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Register one hypothesis draft derived from immutable model evidence.
+
+        The bridge is evidence-gated and fail-closed: the fingerprint-verified
+        model evaluation must show positive out-of-sample IC over enough
+        dates, must beat its best single input factor, and must be bound to
+        exactly the current market snapshot. The ML model contributes no
+        parameter values and no text; the candidate plan comes from the same
+        allowlisted parameter neighborhood as every other hypothesis, and the
+        resulting draft still requires the experiment runner plus explicit
+        human materialization before anything can change.
+        """
+        from ..model_lab import ModelLabEngine
+
+        evaluation = ModelLabEngine(self.config).get(owner, evaluation_id)
+        resolved, selection_reason, reference, mechanism_suffix, limitation = (
+            _model_evidence_case(evaluation)
+        )
+        metadata_before = _market_metadata(market)
+        snapshot_fingerprint = json_fingerprint(metadata_before)
+        if evaluation["evidence"]["snapshot"]["fingerprint"] != snapshot_fingerprint:
+            raise RuntimeError(
+                "模型证据绑定的市场快照与当前缓存不一致；"
+                "请先在当前缓存上重新运行 model-evaluate，再派生假设"
+            )
+        baseline = self._configured_baseline(owner, market)
+        return self._register(
+            owner,
+            market,
+            metadata_before,
+            snapshot_fingerprint,
+            baseline,
+            resolved,
+            selection_reason,
+            source_kind="model_evidence_deterministic",
+            title=(
+                title.strip() if title is not None else _MODEL_TITLES[resolved]
+            ),
+            mechanism=_MECHANISMS[resolved] + mechanism_suffix,
+            extra_references=[reference],
+            extra_limitations=[limitation],
+        )
+
+    def _register(
+        self,
+        owner: str,
+        market: MarketData,
+        metadata_before: Mapping[str, Any],
+        snapshot_fingerprint: str,
+        baseline: Mapping[str, Any],
+        resolved: str,
+        selection_reason: str,
+        *,
+        source_kind: str,
+        title: str,
+        mechanism: str,
+        extra_references: list[dict[str, str]] | None = None,
+        extra_limitations: list[str] | None = None,
+    ) -> dict[str, Any]:
         blueprint = self.strategy_lab.local_proposal_blueprint(owner, resolved)
         if blueprint["parent_fingerprint"] != baseline["settings_fingerprint"]:
             raise RuntimeError("Strategy baseline changed during hypothesis generation")
@@ -91,8 +200,17 @@ class HypothesisLabEngine:
             raise RuntimeError("Market snapshot changed during hypothesis generation")
 
         evidence = _evidence(metadata_before, market, snapshot_fingerprint)
+        for reference in extra_references or []:
+            evidence["references"].append(dict(reference))
+        if len(evidence["references"]) > 250:
+            raise ValueError("Hypothesis evidence has too many references")
         metrics = baseline["metrics"]
         predictions = _predictions(resolved, metrics)
+        quality_limitations = [
+            "This deterministic template explores only the existing allowlisted parameter neighborhood.",
+            "Backtest evidence cannot establish a causal market law without independent replication.",
+            *(extra_limitations or []),
+        ]
         record = finalize_record(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -102,14 +220,14 @@ class HypothesisLabEngine:
                 "owner": self.store.owner_id(owner),
                 "created_at": _utc_now(),
                 "source": {
-                    "kind": "local_deterministic",
+                    "kind": source_kind,
                     "objective": resolved,
                     "selection_reason": selection_reason,
                     "model_used": False,
                 },
-                "title": (title.strip() if title is not None else _OBJECTIVE_TITLES[resolved]),
+                "title": title,
                 "observation": _observation(metrics, evidence["snapshot"]),
-                "mechanism": _MECHANISMS[resolved],
+                "mechanism": mechanism,
                 "scope": _scope(self.config, metrics),
                 "assumptions": _assumptions(resolved),
                 "predictions": predictions,
@@ -165,10 +283,7 @@ class HypothesisLabEngine:
                     "consistency": "HIGH",
                     "novelty": "LOW",
                     "distinguishable": True,
-                    "limitations": [
-                        "This deterministic template explores only the existing allowlisted parameter neighborhood.",
-                        "Backtest evidence cannot establish a causal market law without independent replication.",
-                    ],
+                    "limitations": quality_limitations,
                 },
                 "safety": dict(SAFETY),
             }
@@ -272,6 +387,74 @@ class HypothesisLabEngine:
             "settings_fingerprint": blueprint["parent_fingerprint"],
             "metrics": metrics,
         }
+
+
+def _model_evidence_case(
+    evaluation: Mapping[str, Any],
+) -> tuple[str, str, dict[str, str], str, str]:
+    """Apply the pre-registered, fail-closed model-evidence gates.
+
+    Returns (objective, selection_reason, evidence_reference,
+    mechanism_suffix, limitation) or raises with the exact unmet gate.
+    """
+    results = evaluation["results"]
+    model_stats = results["model"]
+    dates = int(model_stats["dates"])
+    if dates < MINIMUM_MODEL_EVIDENCE_DATES:
+        raise ValueError(
+            f"模型证据不足：有效评估日 {dates} 少于 {MINIMUM_MODEL_EVIDENCE_DATES}，"
+            "不登记假设"
+        )
+    mean_ic = float(model_stats["mean_ic"])
+    if not math.isfinite(mean_ic) or mean_ic <= 0:
+        raise ValueError(
+            "模型样本外平均 IC 不为正，证据不支持登记参数邻域假设"
+        )
+    delta = float(results["model_minus_best_factor_ic"])
+    if not math.isfinite(delta) or delta <= 0:
+        raise ValueError(
+            "模型未跑赢最优单因子 "
+            f"({results['best_factor_id']}，差值 {delta:.4f})；"
+            "诚实的结论是单因子占优，请改用 hypothesis-generate"
+        )
+    coefficients = sorted(
+        (
+            item
+            for item in evaluation.get("coefficients", [])
+            if isinstance(item, Mapping)
+        ),
+        key=lambda item: float(item.get("mean_abs", 0.0)),
+        reverse=True,
+    )
+    if not coefficients:
+        raise ValueError("模型评估记录缺少可披露的因子权重，无法派生假设")
+    dominant = str(coefficients[0]["factor_id"])
+    defensive = dominant in _DEFENSIVE_FACTORS
+    objective = "drawdown" if defensive else "balanced"
+    model_id = str(evaluation["model"]["model_id"])
+    horizon = int(evaluation["parameters"]["horizon"])
+    selection_reason = (
+        f"{MODEL_EVIDENCE_RULE_VERSION}: model evaluation "
+        f"{evaluation['evaluation_id']} shows {model_id} out-of-sample mean "
+        f"rank IC {mean_ic:.4f} over {dates} dates at horizon {horizon}, "
+        f"beating its best single factor {results['best_factor_id']} by "
+        f"{delta:.4f}; dominant disclosed factor {dominant} "
+        f"({'defensive' if defensive else 'trend/liquidity'} family) selects "
+        f"the {objective} objective."
+    )
+    reference = {
+        "evidence_id": f"model_evaluation:{evaluation['evaluation_id']}",
+        "kind": "model_evaluation",
+        "as_of": str(evaluation["evidence"]["snapshot"]["as_of"]),
+        "fingerprint": str(evaluation["record_fingerprint"]),
+    }
+    return (
+        objective,
+        selection_reason,
+        reference,
+        _MODEL_MECHANISM_SUFFIX,
+        _MODEL_LIMITATION,
+    )
 
 
 def _resolve_objective(

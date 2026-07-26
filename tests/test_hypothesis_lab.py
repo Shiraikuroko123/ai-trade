@@ -276,6 +276,123 @@ class HypothesisLabTests(TestCase):
             self.store.get(owner, hypothesis_id)
 
 
+def _model_evaluation(
+    snapshot_fingerprint: str,
+    *,
+    mean_ic: float = 0.07,
+    dates: int = 400,
+    delta: float = 0.02,
+    dominant: str = "momentum_60_5",
+) -> dict:
+    return {
+        "evaluation_id": "mdl_" + "a" * 32,
+        "record_fingerprint": "e" * 64,
+        "model": {"model_id": "gbdt_v1"},
+        "parameters": {"horizon": 20},
+        "coefficients": [
+            {"factor_id": dominant, "mean_abs": 0.3, "mean": 0.3, "final": 0.3},
+            {"factor_id": "trend_gap_100", "mean_abs": 0.1, "mean": 0.1, "final": 0.1},
+        ],
+        "evidence": {
+            "snapshot": {
+                "as_of": "2026-07-24",
+                "fingerprint": snapshot_fingerprint,
+            }
+        },
+        "results": {
+            "best_factor_id": "volatility_60",
+            "model_minus_best_factor_ic": delta,
+            "model": {"dates": dates, "mean_ic": mean_ic},
+        },
+    }
+
+
+class ModelEvidenceBridgeTests(TestCase):
+    """The bridge derives bounded drafts from verified model evidence only."""
+
+    def setUp(self) -> None:
+        self.temporary = TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.config = load_config(REPOSITORY_ROOT / "config" / "default.json")
+        self.store = HypothesisLabStore(root / "hypothesis_lab")
+        self.strategy_store = StrategyLabStore(root / "strategy_lab")
+        self.strategy_lab = StrategyLabEngine(self.config, self.strategy_store)
+        self.engine = HypothesisLabEngine(
+            self.config,
+            self.store,
+            self.strategy_lab,
+        )
+        self.market = _Market()
+        from ai_trade.hypothesis_lab.schema import json_fingerprint
+
+        self.snapshot_fingerprint = json_fingerprint(
+            dict(self.market.snapshot_metadata())
+        )
+
+    def _derive(self, evaluation):
+        engine = SimpleNamespace(get=lambda owner, evaluation_id: evaluation)
+        with patch(
+            "ai_trade.model_lab.ModelLabEngine", return_value=engine
+        ):
+            return self.engine.derive_from_model(
+                "alice", self.market, evaluation["evaluation_id"]
+            )
+
+    @patch("ai_trade.hypothesis_lab.engine.BacktestEngine", _Backtest)
+    def test_derives_bound_draft_and_maps_defensive_evidence_to_drawdown(self):
+        record = self._derive(
+            _model_evaluation(self.snapshot_fingerprint, dominant="volatility_60")
+        )
+
+        self.assertFalse(record["reused"])
+        self.assertEqual(record["source"]["kind"], "model_evidence_deterministic")
+        self.assertEqual(record["source"]["objective"], "drawdown")
+        self.assertFalse(record["source"]["model_used"])
+        self.assertIn("model-evidence-derivation-v1", record["source"]["selection_reason"])
+        reference = next(
+            item
+            for item in record["evidence"]["references"]
+            if item["kind"] == "model_evaluation"
+        )
+        self.assertEqual(reference["evidence_id"], "model_evaluation:mdl_" + "a" * 32)
+        self.assertEqual(reference["fingerprint"], "e" * 64)
+        self.assertTrue(
+            any("no authority" in item for item in record["quality_assessment"]["limitations"])
+        )
+        # Round-trips through fail-closed schema validation on read.
+        stored = self.store.get("alice", record["hypothesis_id"])
+        self.assertEqual(stored["record_fingerprint"], record["record_fingerprint"])
+        # Momentum-dominant evidence maps to balanced instead.
+        balanced = self._derive(_model_evaluation(self.snapshot_fingerprint))
+        self.assertEqual(balanced["source"]["objective"], "balanced")
+        # Same derivation is idempotent: identical design is reused.
+        again = self._derive(_model_evaluation(self.snapshot_fingerprint))
+        self.assertTrue(again["reused"])
+        self.assertEqual(again["hypothesis_id"], balanced["hypothesis_id"])
+
+    @patch("ai_trade.hypothesis_lab.engine.BacktestEngine", _Backtest)
+    def test_gates_fail_closed_on_weak_or_stale_evidence(self):
+        with self.assertRaisesRegex(ValueError, "有效评估日"):
+            self._derive(_model_evaluation(self.snapshot_fingerprint, dates=10))
+        with self.assertRaisesRegex(ValueError, "IC 不为正"):
+            self._derive(_model_evaluation(self.snapshot_fingerprint, mean_ic=-0.01))
+        with self.assertRaisesRegex(ValueError, "未跑赢最优单因子"):
+            self._derive(_model_evaluation(self.snapshot_fingerprint, delta=-0.005))
+        with self.assertRaisesRegex(RuntimeError, "快照"):
+            self._derive(_model_evaluation("f" * 64))
+        self.assertEqual(self.store.list("alice")["hypotheses"], [])
+        self.assertEqual(self.strategy_store.list_candidates("alice"), [])
+
+    @patch("ai_trade.hypothesis_lab.engine.BacktestEngine", _Backtest)
+    def test_derived_draft_counts_against_the_family_budget(self):
+        self.engine.generate_local("alice", self.market, objective="balanced")
+        self.engine.generate_local("alice", self.market, objective="drawdown")
+        self._derive(_model_evaluation(self.snapshot_fingerprint))
+        with self.assertRaises(HypothesisLabCapacityError):
+            self.engine.generate_local("alice", self.market, objective="turnover")
+
+
 if __name__ == "__main__":
     import unittest
 

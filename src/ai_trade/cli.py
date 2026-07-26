@@ -444,6 +444,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     research_report.add_argument("--output", default=None)
+    hypothesis_from_model = subparsers.add_parser(
+        "hypothesis-from-model",
+        help=(
+            "Register one hypothesis draft derived from a fingerprint-verified "
+            "model evaluation (evidence-gated; grants no authority)"
+        ),
+    )
+    hypothesis_from_model.add_argument("evaluation_id")
+    hypothesis_from_model.add_argument("--title", default=None)
     hypothesis_materialize = subparsers.add_parser(
         "hypothesis-materialize",
         help="Explicitly create one Strategy Lab draft from a registered hypothesis",
@@ -1065,6 +1074,16 @@ def main(argv: list[str] | None = None) -> int:
             market = MarketData(config, recover_snapshot=False)
             result = HypothesisExperimentRunner(config).execute(
                 "local-owner", args.hypothesis_id, market
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "hypothesis-from-model":
+            market = MarketData(config, recover_snapshot=False)
+            result = HypothesisLabEngine(config).derive_from_model(
+                "local-owner",
+                market,
+                args.evaluation_id,
+                title=args.title,
             )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
