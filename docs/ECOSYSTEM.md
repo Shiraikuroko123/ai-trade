@@ -17,7 +17,7 @@ without explicit human review.
 | System | Strongest reference value | AI Trade adoption |
 |---|---|---|
 | [QuantConnect LEAN](https://github.com/QuantConnect/Lean) | Event engine, universe selection, brokerage abstraction | Point-in-time universe now; explicit order lifecycle and broker adapters later |
-| [Microsoft Qlib](https://github.com/microsoft/qlib) | Factor datasets, ML experiments, research workflow | Planned factor registry and point-in-time feature store |
+| [Microsoft Qlib](https://github.com/microsoft/qlib) | Factor datasets, ML experiments, research workflow | A deterministic versioned factor registry with point-in-time rank-IC/decay/spread evidence (docs/FACTOR_LAB.md) and a pure-stdlib walk-forward ridge/equal-weight baseline with leakage guards and same-protocol factor comparison (docs/MODEL_LAB.md) are implemented; a persistent feature store and gradient-boosted models remain planned |
 | [NautilusTrader](https://github.com/nautechsystems/nautilus_trader) | Deterministic event state, execution and reconciliation | Deterministic paper state, append-only ledgers and rejection audit |
 | [VeighNa](https://github.com/vnpy/vnpy) | China broker gateways and live operations | Gateway contract reference plus an independent QMT read-only probe; no live gateway is enabled |
 | [RQAlpha](https://github.com/ricequant/rqalpha) | China-market simulation rules | Dated stock fees, lot size, suspension and price-limit rules |

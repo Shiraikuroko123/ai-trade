@@ -1,4 +1,4 @@
-"""Audited email and Windows Toast delivery for monitoring notifications."""
+"""Audited email, Windows Toast, and mobile push delivery for monitoring."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from hashlib import sha256
+import hmac
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,8 @@ import subprocess
 import sys
 import time
 from typing import Any, Mapping, Sequence
+import urllib.parse
+import urllib.request
 
 from .data.evidence_io import atomic_create_json, evidence_store_lock
 from .json_utils import load_unique_json
@@ -25,13 +28,18 @@ from .json_utils import load_unique_json
 SCHEMA_VERSION = 1
 MAX_ATTEMPTS = 35_000
 MAX_RECORD_BYTES = 128 * 1024
+MAX_PUSH_RESPONSE_BYTES = 64 * 1024
 FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 PROFILE_ID = FINGERPRINT
 NOTIFICATION_ID = re.compile(r"notification_[0-9a-f]{32}\Z")
 ATTEMPT_FILE = re.compile(
-    r"delivery_attempt_(?:email|desktop)_[0-9a-f]{32}_[0-9]{3}\.json\Z"
+    r"delivery_attempt_(?:email|desktop|pushplus|dingtalk)_[0-9a-f]{32}_[0-9]{3}\.json\Z"
 )
 EMAIL_ADDRESS = re.compile(r"[^\s@]{1,128}@[^\s@]{1,190}\Z")
+PUSHPLUS_TOKEN = re.compile(r"[A-Za-z0-9]{8,64}\Z")
+PUSHPLUS_ENDPOINT = "https://www.pushplus.plus/send"
+DINGTALK_WEBHOOK_PREFIX = "https://oapi.dingtalk.com/robot/send?access_token="
+CHANNEL_NAMES = frozenset({"email", "desktop", "pushplus", "dingtalk"})
 
 _FIELDS = frozenset(
     {
@@ -93,6 +101,42 @@ class DesktopSettings:
     batch_size: int
     target_fingerprint: str | None
     configuration_error: str | None = None
+
+
+@dataclass(frozen=True)
+class PushplusSettings:
+    token: str | None
+    topic: str | None
+    timeout_seconds: float
+    max_attempts: int
+    batch_size: int
+    target_fingerprint: str | None
+    configuration_error: str | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(
+            self.token and self.target_fingerprint and not self.configuration_error
+        )
+
+
+@dataclass(frozen=True)
+class DingtalkSettings:
+    webhook_url: str | None
+    secret: str | None
+    timeout_seconds: float
+    max_attempts: int
+    batch_size: int
+    target_fingerprint: str | None
+    configuration_error: str | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(
+            self.webhook_url
+            and self.target_fingerprint
+            and not self.configuration_error
+        )
 
 
 def load_email_settings(environ: Mapping[str, str] | None = None) -> EmailSettings:
@@ -160,14 +204,111 @@ def load_desktop_settings(
     return DesktopSettings(requested, requested, batch, fingerprint)
 
 
+def load_pushplus_settings(
+    environ: Mapping[str, str] | None = None,
+) -> PushplusSettings:
+    values = os.environ if environ is None else environ
+    token = str(values.get("AI_TRADE_PUSHPLUS_TOKEN", "")).strip()
+    topic = str(values.get("AI_TRADE_PUSHPLUS_TOPIC", "")).strip()
+    try:
+        timeout = _number(values, "AI_TRADE_PUSHPLUS_TIMEOUT_SECONDS", 10.0, 1.0, 60.0)
+        attempts = _integer(values, "AI_TRADE_PUSHPLUS_MAX_ATTEMPTS", 3, 1, 5)
+        batch = _integer(values, "AI_TRADE_PUSHPLUS_BATCH_SIZE", 20, 1, 100)
+    except ValueError as exc:
+        return PushplusSettings(None, None, 10.0, 3, 20, None, str(exc))
+    if not token and not topic:
+        return PushplusSettings(None, None, timeout, attempts, batch, None)
+    if PUSHPLUS_TOKEN.fullmatch(token) is None:
+        return PushplusSettings(
+            None,
+            None,
+            timeout,
+            attempts,
+            batch,
+            None,
+            "AI_TRADE_PUSHPLUS_TOKEN must be 8 to 64 letters or digits",
+        )
+    if topic and (len(topic) > 64 or any(ord(char) < 33 for char in topic)):
+        return PushplusSettings(
+            None,
+            None,
+            timeout,
+            attempts,
+            batch,
+            None,
+            "AI_TRADE_PUSHPLUS_TOPIC is invalid",
+        )
+    token_digest = sha256(token.encode("utf-8")).hexdigest()
+    target = sha256(
+        f"pushplus:{token_digest}:{topic.lower()}".encode("utf-8")
+    ).hexdigest()
+    return PushplusSettings(token, topic or None, timeout, attempts, batch, target)
+
+
+def load_dingtalk_settings(
+    environ: Mapping[str, str] | None = None,
+) -> DingtalkSettings:
+    values = os.environ if environ is None else environ
+    url = str(values.get("AI_TRADE_DINGTALK_WEBHOOK", "")).strip()
+    secret = str(values.get("AI_TRADE_DINGTALK_SECRET", "")).strip()
+    try:
+        timeout = _number(values, "AI_TRADE_DINGTALK_TIMEOUT_SECONDS", 10.0, 1.0, 60.0)
+        attempts = _integer(values, "AI_TRADE_DINGTALK_MAX_ATTEMPTS", 3, 1, 5)
+        batch = _integer(values, "AI_TRADE_DINGTALK_BATCH_SIZE", 20, 1, 100)
+    except ValueError as exc:
+        return DingtalkSettings(None, None, 10.0, 3, 20, None, str(exc))
+    if not url and not secret:
+        return DingtalkSettings(None, None, timeout, attempts, batch, None)
+    if (
+        not url.startswith(DINGTALK_WEBHOOK_PREFIX)
+        or len(url) > 512
+        or len(url) <= len(DINGTALK_WEBHOOK_PREFIX)
+        or any(ord(char) < 33 for char in url)
+    ):
+        return DingtalkSettings(
+            None,
+            None,
+            timeout,
+            attempts,
+            batch,
+            None,
+            (
+                "AI_TRADE_DINGTALK_WEBHOOK must be an HTTPS DingTalk robot "
+                "URL starting with " + DINGTALK_WEBHOOK_PREFIX
+            ),
+        )
+    if secret and (len(secret) > 128 or any(ord(char) < 33 for char in secret)):
+        return DingtalkSettings(
+            None,
+            None,
+            timeout,
+            attempts,
+            batch,
+            None,
+            "AI_TRADE_DINGTALK_SECRET is invalid",
+        )
+    url_digest = sha256(url.encode("utf-8")).hexdigest()
+    target = sha256(f"dingtalk:{url_digest}".encode("utf-8")).hexdigest()
+    return DingtalkSettings(url, secret or None, timeout, attempts, batch, target)
+
+
 def configured_channel_delivery(
     *,
     email: EmailSettings | None = None,
     desktop: DesktopSettings | None = None,
+    pushplus: PushplusSettings | None = None,
+    dingtalk: DingtalkSettings | None = None,
 ) -> bool:
     selected_email = email or load_email_settings()
     selected_desktop = desktop or load_desktop_settings()
-    return selected_email.enabled or selected_desktop.enabled
+    selected_pushplus = pushplus or load_pushplus_settings()
+    selected_dingtalk = dingtalk or load_dingtalk_settings()
+    return (
+        selected_email.enabled
+        or selected_desktop.enabled
+        or selected_pushplus.enabled
+        or selected_dingtalk.enabled
+    )
 
 
 def external_delivery_configured() -> bool:
@@ -228,9 +369,13 @@ def deliver_channel_notifications(
     *,
     email: EmailSettings | None = None,
     desktop: DesktopSettings | None = None,
+    pushplus: PushplusSettings | None = None,
+    dingtalk: DingtalkSettings | None = None,
 ) -> dict[str, Any]:
     selected_email = email or load_email_settings()
     selected_desktop = desktop or load_desktop_settings()
+    selected_pushplus = pushplus or load_pushplus_settings()
+    selected_dingtalk = dingtalk or load_dingtalk_settings()
     directory = Path(profile_directory).resolve()
     notification_map = {
         str(item.get("notification_id")): item for item in notifications
@@ -259,12 +404,38 @@ def deliver_channel_notifications(
                 maximum_attempts=1,
                 sender=_send_windows_toast,
             )
+    if selected_pushplus.enabled:
+        for notification in _eligible(notifications, selected_pushplus.batch_size):
+            _attempt_delivery(
+                directory,
+                profile_id,
+                notification,
+                notification_map=notification_map,
+                channel="pushplus",
+                target_fingerprint=str(selected_pushplus.target_fingerprint),
+                maximum_attempts=selected_pushplus.max_attempts,
+                sender=lambda item: _send_pushplus(selected_pushplus, item),
+            )
+    if selected_dingtalk.enabled:
+        for notification in _eligible(notifications, selected_dingtalk.batch_size):
+            _attempt_delivery(
+                directory,
+                profile_id,
+                notification,
+                notification_map=notification_map,
+                channel="dingtalk",
+                target_fingerprint=str(selected_dingtalk.target_fingerprint),
+                maximum_attempts=selected_dingtalk.max_attempts,
+                sender=lambda item: _send_dingtalk(selected_dingtalk, item),
+            )
     return channel_delivery_status(
         directory,
         profile_id,
         notifications,
         email=selected_email,
         desktop=selected_desktop,
+        pushplus=selected_pushplus,
+        dingtalk=selected_dingtalk,
     )
 
 
@@ -275,9 +446,19 @@ def channel_delivery_status(
     *,
     email: EmailSettings | None = None,
     desktop: DesktopSettings | None = None,
+    pushplus: PushplusSettings | None = None,
+    dingtalk: DingtalkSettings | None = None,
 ) -> dict[str, Any]:
     selected_email = email or load_email_settings()
     selected_desktop = desktop or load_desktop_settings()
+    selected_pushplus = pushplus or load_pushplus_settings()
+    selected_dingtalk = dingtalk or load_dingtalk_settings()
+    configured = (
+        selected_email.enabled
+        or selected_desktop.enabled
+        or selected_pushplus.enabled
+        or selected_dingtalk.enabled
+    )
     notification_map = {
         str(item.get("notification_id")): item for item in notifications
     }
@@ -288,9 +469,15 @@ def channel_delivery_status(
     except (OSError, RuntimeError, ValueError) as exc:
         return {
             "status": "invalid_evidence",
-            "configured": selected_email.enabled or selected_desktop.enabled,
+            "configured": configured,
             "email": _empty_channel(selected_email.enabled, selected_email.configuration_error),
             "desktop": _empty_channel(selected_desktop.enabled, selected_desktop.configuration_error),
+            "pushplus": _empty_channel(
+                selected_pushplus.enabled, selected_pushplus.configuration_error
+            ),
+            "dingtalk": _empty_channel(
+                selected_dingtalk.enabled, selected_dingtalk.configuration_error
+            ),
             "last_error": str(exc)[:500],
             "authority": dict(_AUTHORITY),
         }
@@ -310,15 +497,33 @@ def channel_delivery_status(
         selected_desktop.target_fingerprint,
         selected_desktop.configuration_error,
     )
-    channels = (email_status, desktop_status)
+    pushplus_status = _channel_status(
+        attempts,
+        notifications,
+        "pushplus",
+        selected_pushplus.enabled,
+        selected_pushplus.target_fingerprint,
+        selected_pushplus.configuration_error,
+    )
+    dingtalk_status = _channel_status(
+        attempts,
+        notifications,
+        "dingtalk",
+        selected_dingtalk.enabled,
+        selected_dingtalk.target_fingerprint,
+        selected_dingtalk.configuration_error,
+    )
+    channels = (email_status, desktop_status, pushplus_status, dingtalk_status)
     invalid = any(item["configuration_status"] == "invalid" for item in channels)
     failed = any(item["status"] == "failed" for item in channels)
     succeeded = any(item["status"] == "succeeded" for item in channels)
     return {
         "status": "configuration_error" if invalid else "failed" if failed else "succeeded" if succeeded else "disabled",
-        "configured": selected_email.enabled or selected_desktop.enabled,
+        "configured": configured,
         "email": email_status,
         "desktop": desktop_status,
+        "pushplus": pushplus_status,
+        "dingtalk": dingtalk_status,
         "last_error": next((item["last_error"] for item in reversed(channels) if item["last_error"]), None),
         "authority": dict(_AUTHORITY),
     }
@@ -353,7 +558,7 @@ def verify_channel_records(
             raise RuntimeError("notification delivery schema version is invalid")
         if value.get("attempt_id") != path.stem:
             raise RuntimeError("notification delivery attempt identity is invalid")
-        if value.get("channel") not in {"email", "desktop"}:
+        if value.get("channel") not in CHANNEL_NAMES:
             raise RuntimeError("notification delivery channel is invalid")
         if NOTIFICATION_ID.fullmatch(str(value.get("notification_id", ""))) is None:
             raise RuntimeError("notification delivery notification id is invalid")
@@ -516,6 +721,101 @@ def _send_email(settings: EmailSettings, notification: Mapping[str, Any]) -> Non
         client.send_message(message)
 
 
+def _notification_text(notification: Mapping[str, Any]) -> tuple[str, str]:
+    title = f"[AI Trade] {str(notification.get('title') or '研究监控通知')[:160]}"
+    body = "\n".join(
+        [
+            str(notification.get("message") or "")[:500],
+            f"证券: {notification.get('symbol') or '无'}",
+            f"数据日期: {notification.get('data_date') or '未知'}",
+            f"通知 ID: {notification.get('notification_id')}",
+            "权限: research_only；本通知不会创建订单或改变策略。",
+        ]
+    )
+    return title, body
+
+
+def _send_pushplus(
+    settings: PushplusSettings, notification: Mapping[str, Any]
+) -> None:
+    if not settings.enabled or settings.token is None:
+        raise RuntimeError("PushPlus delivery is disabled")
+    title, body = _notification_text(notification)
+    payload: dict[str, Any] = {
+        "token": settings.token,
+        "title": title,
+        "content": body,
+        "template": "txt",
+    }
+    if settings.topic:
+        payload["topic"] = settings.topic
+    response = _post_json(PUSHPLUS_ENDPOINT, payload, settings.timeout_seconds)
+    code = response.get("code")
+    if code != 200:
+        message = str(response.get("msg") or "")[:200]
+        raise RuntimeError(f"PushPlus rejected the notification: code={code} {message}")
+
+
+def _send_dingtalk(
+    settings: DingtalkSettings, notification: Mapping[str, Any]
+) -> None:
+    if not settings.enabled or settings.webhook_url is None:
+        raise RuntimeError("DingTalk delivery is disabled")
+    title, body = _notification_text(notification)
+    payload = {"msgtype": "text", "text": {"content": f"{title}\n{body}"}}
+    url = settings.webhook_url
+    if settings.secret:
+        url = _dingtalk_signed_url(url, settings.secret)
+    response = _post_json(url, payload, settings.timeout_seconds)
+    errcode = response.get("errcode")
+    if errcode != 0:
+        message = str(response.get("errmsg") or "")[:200]
+        raise RuntimeError(
+            f"DingTalk rejected the notification: errcode={errcode} {message}"
+        )
+
+
+def _dingtalk_signed_url(url: str, secret: str) -> str:
+    timestamp = str(round(time.time() * 1000))
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        f"{timestamp}\n{secret}".encode("utf-8"),
+        sha256,
+    ).digest()
+    sign = urllib.parse.quote_plus(base64.b64encode(digest).decode("ascii"))
+    return f"{url}&timestamp={timestamp}&sign={sign}"
+
+
+def _post_json(
+    url: str, payload: Mapping[str, Any], timeout_seconds: float
+) -> dict[str, Any]:
+    if not url.startswith("https://"):
+        raise RuntimeError("Push delivery endpoints must use HTTPS")
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "ai-trade-notification/1",
+        },
+        method="POST",
+    )
+    context = ssl.create_default_context()
+    with urllib.request.urlopen(
+        request, timeout=timeout_seconds, context=context
+    ) as response:
+        body = response.read(MAX_PUSH_RESPONSE_BYTES + 1)
+    if len(body) > MAX_PUSH_RESPONSE_BYTES:
+        raise RuntimeError("Push delivery response exceeded the size limit")
+    try:
+        value = json.loads(body.decode("utf-8"))
+    except (UnicodeError, ValueError) as exc:
+        raise RuntimeError("Push delivery response is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("Push delivery response must be a JSON object")
+    return value
+
+
 def _send_windows_toast(notification: Mapping[str, Any]) -> None:
     title = str(notification.get("title") or "AI Trade 研究通知")[:160]
     message = str(notification.get("message") or "")[:500]
@@ -598,6 +898,8 @@ def _combined_status(
 ) -> dict[str, Any]:
     email = dict(channels.get("email", {}))
     desktop = dict(channels.get("desktop", {}))
+    pushplus = dict(channels.get("pushplus", {}))
+    dingtalk = dict(channels.get("dingtalk", {}))
     webhook_public = dict(webhook)
     configured_names = [
         name
@@ -605,11 +907,13 @@ def _combined_status(
             ("webhook", webhook_public),
             ("email", email),
             ("desktop", desktop),
+            ("pushplus", pushplus),
+            ("dingtalk", dingtalk),
         )
         if item.get("external_delivery_configured") is True
         or item.get("configured") is True
     ]
-    channel_values = (webhook_public, email, desktop)
+    channel_values = (webhook_public, email, desktop, pushplus, dingtalk)
     configuration_error = any(
         item.get("configuration_status") == "invalid" for item in channel_values
     )
@@ -637,7 +941,13 @@ def _combined_status(
         "attempt_count": sum(int(item.get("attempt_count", 0) or 0) for item in channel_values),
         "last_delivery_at": max((str(item.get("last_delivery_at")) for item in channel_values if item.get("last_delivery_at")), default=None),
         "last_error": next((str(item.get("last_error")) for item in reversed(channel_values) if item.get("last_error")), None),
-        "channels": {"webhook": webhook_public, "email": email, "desktop": desktop},
+        "channels": {
+            "webhook": webhook_public,
+            "email": email,
+            "desktop": desktop,
+            "pushplus": pushplus,
+            "dingtalk": dingtalk,
+        },
         "authority": dict(_AUTHORITY),
     }
 

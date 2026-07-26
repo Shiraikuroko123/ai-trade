@@ -45,7 +45,9 @@ class CloudTests(unittest.TestCase):
             result = main(["init", "--directory", str(self.root)])
         self.assertEqual(result, 0)
         self.config = load_config(self.root / "config/default.json")
-        self.assertEqual(len(self.config.instruments), 8)
+        # Pinned to the curated security master; update together with
+        # default_security_master.json when the universe changes.
+        self.assertEqual(len(self.config.instruments), 47)
         _write_market_cache(self.config)
 
     def test_cloud_is_disabled_by_default_and_public_status_hides_configuration(self):

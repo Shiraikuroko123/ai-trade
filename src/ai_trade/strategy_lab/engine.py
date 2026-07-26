@@ -1029,6 +1029,10 @@ class StrategyLabEngine:
     def _configured_baseline(self) -> dict[str, Any]:
         return self._stored_or_configured_baseline(None)
 
+    def config_context_fingerprint(self) -> str:
+        """Public read-only view of the current configuration context binding."""
+        return self._config_context_fingerprint()
+
     def _config_context_fingerprint(self) -> str:
         return _fingerprint(
             {

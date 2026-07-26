@@ -135,10 +135,11 @@ symbol, and data date. A changed or missing source binding fails closed.
 `GET /api/monitoring` returns `notifications`, `notification_summary`, and
 `notification_delivery`. With no environment variables the delivery mode is
 `local_inbox`. Optional external channels are HTTPS HMAC Webhook, SMTP email,
-and interactive Windows Toast. Their secrets are read from the process
-environment and never written to state, logs, delivery records, or release
-artifacts. HTTP Webhook delivery is accepted only for an explicit loopback
-endpoint.
+interactive Windows Toast, PushPlus WeChat push, and a DingTalk group robot.
+Their secrets are read from the process environment and never written to
+state, logs, delivery records, or release artifacts. HTTP Webhook delivery is
+accepted only for an explicit loopback endpoint; PushPlus and DingTalk always
+require HTTPS provider endpoints.
 The workstation supports
 `POST /api/monitoring/notifications/<notification-id>/actions` with
 `mark_read`, `mark_unread`, or `dismiss`. Every transition is a new immutable
@@ -208,14 +209,48 @@ convenience, not a background mobile-push service. Docker containers can use
 SMTP email but cannot display host Windows Toast; configure Toast only for a
 native Windows process.
 
-Email and Toast attempts are create-once JSON records below owner-local
-`delivery_attempts/`. Each record binds the profile, notification fingerprint,
-channel, target fingerprint, sequence, result, bounded public error, duration,
-and its own SHA-256 fingerprint. One cross-process evidence lock covers prior
-attempt verification, the external send, and record publication so concurrent
-scans cannot knowingly deliver the same item twice. Local hashes still do not
-protect against a privileged operator who can consistently rewrite or delete
-the state directory.
+### PushPlus and DingTalk mobile delivery
+
+Both channels reach a phone without exposing the workstation to inbound
+traffic and are configured the same way as email:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\configure_notifications.ps1 -PushPlus
+powershell -ExecutionPolicy Bypass -File .\scripts\configure_notifications.ps1 -DingTalk
+```
+
+PushPlus requires `AI_TRADE_PUSHPLUS_TOKEN` (8-64 letters or digits from
+pushplus.plus) and optionally `AI_TRADE_PUSHPLUS_TOPIC` for a group topic.
+Notifications are sent as plain-text messages to the fixed HTTPS endpoint
+`https://www.pushplus.plus/send`; a provider response whose `code` is not 200
+is a failed attempt with a bounded public error.
+
+DingTalk requires `AI_TRADE_DINGTALK_WEBHOOK`, which must start with
+`https://oapi.dingtalk.com/robot/send?access_token=`; any other origin or an
+HTTP URL fails closed at configuration time. With the optional
+`AI_TRADE_DINGTALK_SECRET`, each request is signed using the official
+`timestamp + "\n" + secret` HMAC-SHA256 scheme. Without a secret, configure the
+robot's keyword filter to `AI Trade`: every message begins with that prefix.
+A response whose `errcode` is not 0 is a failed attempt.
+
+Message bodies contain the notification title, bounded message, symbol, data
+date, notification ID, and the fixed `research_only` authority sentence. The
+token, webhook URL, and secret never appear in delivery records; targets are
+identified only by salted SHA-256 fingerprints.
+`AI_TRADE_PUSHPLUS_TIMEOUT_SECONDS` / `AI_TRADE_DINGTALK_TIMEOUT_SECONDS`
+(1-60), `..._MAX_ATTEMPTS` (1-5), and `..._BATCH_SIZE` (1-100) follow the same
+bounds as email. Provider availability, WeChat follow status, and group
+membership are outside the local trust boundary: a succeeded attempt proves an
+accepted HTTPS request, not a read message.
+
+Email, Toast, PushPlus, and DingTalk attempts are create-once JSON records
+below owner-local `delivery_attempts/`. Each record binds the profile,
+notification fingerprint, channel, target fingerprint, sequence, result,
+bounded public error, duration, and its own SHA-256 fingerprint. One
+cross-process evidence lock covers prior attempt verification, the external
+send, and record publication so concurrent scans cannot knowingly deliver the
+same item twice. Local hashes still do not protect against a privileged
+operator who can consistently rewrite or delete the state directory.
 
 ## Storage and Trust Boundary
 

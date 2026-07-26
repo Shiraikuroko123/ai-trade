@@ -276,11 +276,13 @@ class DashboardService:
                 "epochs": [],
                 "errors": [{"code": "paper_epoch_browser_unavailable", "message": str(exc)}],
             }
+        labs = self._research_labs(owner_id)
         return {
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
             "warnings": self._report_warnings(report_statuses),
             "reports": report_statuses,
+            "labs": labs,
             "configuration": self._research_configuration(),
             "backtest": {
                 "metrics": backtest.get("strategy_metrics"),
@@ -306,6 +308,121 @@ class DashboardService:
             "archives": archives,
             "digests": digests,
             "epochs": epochs,
+        }
+
+    def _research_labs(self, owner_id: str) -> dict[str, Any]:
+        """Read-only projections of the deterministic research labs.
+
+        Every section fails soft with an explicit error so one unavailable
+        store cannot hide the others; nothing here refreshes a provider,
+        trains a model, or changes any state.
+        """
+        sections: dict[str, Any] = {}
+
+        def load(name: str, loader) -> None:
+            try:
+                sections[name] = {"available": True, **loader()}
+            except (
+                AttributeError,
+                ImportError,
+                KeyError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                sections[name] = {
+                    "available": False,
+                    "error": str(exc)[:200],
+                }
+
+        def factors() -> dict[str, Any]:
+            from ..factor_lab import CustomFactorStore, FactorLabEngine
+
+            listing = FactorLabEngine(self.config).list(owner_id, limit=8)
+            custom = [
+                {
+                    "name": item["name"],
+                    "label": item["label"],
+                    "direction": item["direction"],
+                    "expression": item["expression"],
+                    "minimum_history": item["minimum_history"],
+                }
+                for item in CustomFactorStore(self.config).list(owner_id)
+            ]
+            return {
+                "evaluations": listing.get("evaluations", []),
+                "total": listing.get("summary", {}).get("total", 0),
+                "custom_factors": custom,
+            }
+
+        def models() -> dict[str, Any]:
+            from ..model_lab import ModelLabEngine
+
+            listing = ModelLabEngine(self.config).list(owner_id, limit=8)
+            return {
+                "evaluations": listing.get("evaluations", []),
+                "total": listing.get("summary", {}).get("total", 0),
+            }
+
+        def hypotheses() -> dict[str, Any]:
+            from ..hypothesis_lab import HypothesisLabEngine
+            from ..hypothesis_lab.runner import HypothesisExperimentRunner
+
+            engine = HypothesisLabEngine(self.config)
+            listing = engine.list(owner_id, limit=8)
+            runner = HypothesisExperimentRunner(
+                self.config, engine.store, engine.strategy_lab
+            )
+            runs = runner.list_runs(owner_id, limit=8)
+            return {
+                "registered": listing.get("summary", {}).get("total", 0),
+                "hypotheses": [
+                    {
+                        "hypothesis_id": item["hypothesis_id"],
+                        "title": item["title"],
+                        "objective": item["source"]["objective"],
+                        "created_at": item["created_at"],
+                    }
+                    for item in listing.get("hypotheses", [])
+                ],
+                "runs": runs.get("runs", []),
+            }
+
+        def sweeps() -> dict[str, Any]:
+            from ..hypothesis_lab.sweep import ParameterSweepEngine
+
+            listing = ParameterSweepEngine(self.config).list(owner_id, limit=5)
+            return {
+                "sweeps": listing.get("sweeps", []),
+                "total": listing.get("summary", {}).get("total", 0),
+            }
+
+        def sentiment() -> dict[str, Any]:
+            from ..data.sentiment import SentimentTiltEngine
+
+            latest = SentimentTiltEngine(self.config).latest()
+            return {
+                "trade_date": latest["trade_date"],
+                "tilt_score": latest["tilt_score"],
+                "tilt_label": latest["tilt_label"],
+                "available_components": latest["available_components"],
+            }
+
+        load("factors", factors)
+        load("models", models)
+        load("hypotheses", hypotheses)
+        load("sweeps", sweeps)
+        load("sentiment", sentiment)
+        return {
+            "schema_version": 1,
+            **sections,
+            "safety": {
+                "research_only": True,
+                "read_only": True,
+                "creates_no_signal": True,
+                "orders_created": False,
+            },
         }
 
     def research_archive(
@@ -1559,6 +1676,7 @@ class DashboardService:
                     }
                 )
         return {
+            "version": __version__,
             "generated_at": _now(),
             "errors": [market_issue] if market_issue else [],
             "diagnosis": diagnosis,

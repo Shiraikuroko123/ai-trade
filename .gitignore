@@ -22,3 +22,8 @@ build/
 beta-users*.json
 beta_users*.json
 *内测名单*.json
+.ruff_cache/
+test-results/
+dist-new/
+release-dist/
+qmt-release-dist/

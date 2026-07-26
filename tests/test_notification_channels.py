@@ -11,7 +11,9 @@ from ai_trade.notification_channels import (
     channel_delivery_status,
     deliver_channel_notifications,
     load_desktop_settings,
+    load_dingtalk_settings,
     load_email_settings,
+    load_pushplus_settings,
     verify_channel_records,
 )
 
@@ -212,3 +214,189 @@ class NotificationChannelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MobilePushChannelTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.profile = Path(self.temporary.name) / "p"
+        self.profile_id = sha256(b"alice").hexdigest()
+        self.notification = _notification()
+        self.email_off = load_email_settings({})
+        self.desktop_off = load_desktop_settings({})
+        self.pushplus = load_pushplus_settings(
+            {"AI_TRADE_PUSHPLUS_TOKEN": "abc12345TOKEN"}
+        )
+        self.dingtalk = load_dingtalk_settings(
+            {
+                "AI_TRADE_DINGTALK_WEBHOOK": (
+                    "https://oapi.dingtalk.com/robot/send?access_token=" + "f" * 32
+                ),
+                "AI_TRADE_DINGTALK_SECRET": "SECtestsecret",
+            }
+        )
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_unset_environments_stay_disabled_without_error(self):
+        pushplus = load_pushplus_settings({})
+        dingtalk = load_dingtalk_settings({})
+        self.assertFalse(pushplus.enabled)
+        self.assertFalse(dingtalk.enabled)
+        self.assertIsNone(pushplus.configuration_error)
+        self.assertIsNone(dingtalk.configuration_error)
+
+    def test_invalid_configuration_fails_closed_with_message(self):
+        bad_token = load_pushplus_settings({"AI_TRADE_PUSHPLUS_TOKEN": "no spaces!"})
+        self.assertFalse(bad_token.enabled)
+        self.assertIn("AI_TRADE_PUSHPLUS_TOKEN", bad_token.configuration_error)
+        http_url = load_dingtalk_settings(
+            {"AI_TRADE_DINGTALK_WEBHOOK": "http://oapi.dingtalk.com/robot/send?access_token=x"}
+        )
+        self.assertFalse(http_url.enabled)
+        self.assertIn("HTTPS", http_url.configuration_error)
+        wrong_host = load_dingtalk_settings(
+            {"AI_TRADE_DINGTALK_WEBHOOK": "https://evil.example.com/robot/send?access_token=x"}
+        )
+        self.assertFalse(wrong_host.enabled)
+
+    def test_pushplus_delivery_is_idempotent_and_audits_without_token(self):
+        with patch(
+            "ai_trade.notification_channels._post_json",
+            return_value={"code": 200},
+        ) as poster:
+            first = deliver_channel_notifications(
+                self.profile,
+                self.profile_id,
+                [self.notification],
+                email=self.email_off,
+                desktop=self.desktop_off,
+                pushplus=self.pushplus,
+                dingtalk=load_dingtalk_settings({}),
+            )
+            second = deliver_channel_notifications(
+                self.profile,
+                self.profile_id,
+                [self.notification],
+                email=self.email_off,
+                desktop=self.desktop_off,
+                pushplus=self.pushplus,
+                dingtalk=load_dingtalk_settings({}),
+            )
+        self.assertEqual(first["pushplus"]["status"], "succeeded")
+        self.assertEqual(second["pushplus"]["attempt_count"], 1)
+        self.assertEqual(poster.call_count, 1)
+        url, payload, _timeout = poster.call_args[0]
+        self.assertEqual(url, "https://www.pushplus.plus/send")
+        self.assertEqual(payload["token"], "abc12345TOKEN")
+        attempts = list((self.profile / "delivery_attempts").iterdir())
+        self.assertEqual(len(attempts), 1)
+        raw = attempts[0].read_text(encoding="utf-8")
+        self.assertNotIn("abc12345TOKEN", raw)
+        self.assertIn("pushplus", raw)
+
+    def test_pushplus_provider_error_is_recorded_and_retryable(self):
+        with patch(
+            "ai_trade.notification_channels._post_json",
+            side_effect=[{"code": 500, "msg": "limit"}, {"code": 200}],
+        ):
+            failed = deliver_channel_notifications(
+                self.profile,
+                self.profile_id,
+                [self.notification],
+                email=self.email_off,
+                desktop=self.desktop_off,
+                pushplus=self.pushplus,
+                dingtalk=load_dingtalk_settings({}),
+            )
+            succeeded = deliver_channel_notifications(
+                self.profile,
+                self.profile_id,
+                [self.notification],
+                email=self.email_off,
+                desktop=self.desktop_off,
+                pushplus=self.pushplus,
+                dingtalk=load_dingtalk_settings({}),
+            )
+        self.assertEqual(failed["pushplus"]["status"], "failed")
+        self.assertIn("code=500", failed["pushplus"]["last_error"])
+        self.assertEqual(succeeded["pushplus"]["status"], "succeeded")
+        self.assertEqual(succeeded["pushplus"]["attempt_count"], 2)
+
+    def test_dingtalk_signs_the_webhook_and_checks_errcode(self):
+        captured = {}
+
+        def poster(url, payload, timeout):
+            captured["url"] = url
+            captured["payload"] = payload
+            return {"errcode": 0}
+
+        with patch(
+            "ai_trade.notification_channels._post_json", side_effect=poster
+        ), patch("ai_trade.notification_channels.time.time", return_value=1_753_500_000.0):
+            result = deliver_channel_notifications(
+                self.profile,
+                self.profile_id,
+                [self.notification],
+                email=self.email_off,
+                desktop=self.desktop_off,
+                pushplus=load_pushplus_settings({}),
+                dingtalk=self.dingtalk,
+            )
+
+        self.assertEqual(result["dingtalk"]["status"], "succeeded")
+        self.assertIn("&timestamp=1753500000000&sign=", captured["url"])
+        import base64 as _b64
+        import hmac as _hmac
+        from hashlib import sha256 as _sha256
+        from urllib.parse import quote_plus as _quote
+
+        expected = _quote(
+            _b64.b64encode(
+                _hmac.new(
+                    b"SECtestsecret",
+                    b"1753500000000\nSECtestsecret",
+                    _sha256,
+                ).digest()
+            ).decode("ascii")
+        )
+        self.assertTrue(captured["url"].endswith(f"&sign={expected}"))
+        self.assertEqual(captured["payload"]["msgtype"], "text")
+        self.assertIn("[AI Trade]", captured["payload"]["text"]["content"])
+        self.assertIn("research_only", captured["payload"]["text"]["content"])
+
+    def test_combined_records_verify_across_all_channels(self):
+        with patch(
+            "ai_trade.notification_channels._post_json",
+            return_value={"code": 200, "errcode": 0},
+        ):
+            deliver_channel_notifications(
+                self.profile,
+                self.profile_id,
+                [self.notification],
+                email=self.email_off,
+                desktop=self.desktop_off,
+                pushplus=self.pushplus,
+                dingtalk=self.dingtalk,
+            )
+        records = verify_channel_records(
+            self.profile,
+            self.profile_id,
+            {self.notification["notification_id"]: self.notification},
+        )
+        self.assertEqual(
+            sorted(item["channel"] for item in records), ["dingtalk", "pushplus"]
+        )
+        status = channel_delivery_status(
+            self.profile,
+            self.profile_id,
+            [self.notification],
+            email=self.email_off,
+            desktop=self.desktop_off,
+            pushplus=self.pushplus,
+            dingtalk=self.dingtalk,
+        )
+        self.assertEqual(status["status"], "succeeded")
+        self.assertEqual(status["pushplus"]["succeeded_count"], 1)
+        self.assertEqual(status["dingtalk"]["succeeded_count"], 1)

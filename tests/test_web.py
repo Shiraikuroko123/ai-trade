@@ -48,6 +48,7 @@ class WebTests(unittest.TestCase):
             service = DashboardService(config)
 
             system = service.system()
+            self.assertEqual(system["version"], __version__)
             self.assertEqual(system["diagnosis"]["status"], "ERROR")
             self.assertEqual(
                 system["diagnosis"]["missing_cache_symbols"],
@@ -79,6 +80,7 @@ class WebTests(unittest.TestCase):
                 status, _, body = _request(server.server_port, "GET", "/api/system")
                 self.assertEqual(status, 200, body)
                 payload = json.loads(body)
+                self.assertEqual(payload["version"], __version__)
                 self.assertEqual(payload["diagnosis"]["status"], "ERROR")
                 self.assertEqual(
                     payload["errors"][0]["code"], "market_data_unavailable"

@@ -107,6 +107,84 @@ const MONITORING_NOTIFICATION_ACTION_LABELS = {
   dismiss: "归档通知",
 };
 
+const RELEASE_CAPABILITIES = [
+  {
+    name: "多数据源",
+    status: "partial",
+    progress: "已注册东方财富、腾讯、Yahoo、Tushare 四类日线来源；后两者仅作独立核对。AKShare、TDX、问财未接入。",
+  },
+  {
+    name: "批量筛选、监控",
+    status: "partial",
+    progress: "证券池、观察列表、定时扫描、规则告警、本地收件箱、HMAC Webhook、邮件和 Windows Toast 已完成；移动推送未完成。",
+  },
+  {
+    name: "K 线及技术指标",
+    status: "complete",
+    progress: "日、周、月 K 线、成交量和 MA、EMA、BOLL、MACD、KDJ、RSI、ATR 等均已完成。",
+  },
+  {
+    name: "板块、龙虎榜、资金流",
+    status: "bounded",
+    progress: "功能、页面、刷新接口及不可变修订均完成；来源仍主要位于东方财富这一公共数据边界内。",
+  },
+  {
+    name: "Docker、定时运行、部署",
+    status: "complete",
+    progress: "安全部署、持久化、健康检查和可选 Tushare 令牌均已完成。",
+  },
+  {
+    name: "日报、周报归档",
+    status: "complete",
+    progress: "不可变 digest、证据变更、定时生成、私有 R2 备份与只读旧账期浏览器均已完成；R2 恢复只写入新的暂存目录。",
+  },
+  {
+    name: "持仓与交易记录",
+    status: "partial",
+    progress: "研究日志、交易复盘、权威模拟账本和影子账户成交导入已完成；没有任意改写账本的编辑器，这是当前审计边界的有意限制。",
+  },
+  {
+    name: "历史复盘与归档",
+    status: "partial",
+    progress: "回测、样本外验证、监控、历史归档和旧账期只读复核已完成；签名、WORM 与长期压缩未完成。",
+  },
+  {
+    name: "分钟、盘口、估值水温",
+    status: "partial",
+    progress: "历史分钟证据、Level-1 五档和股票 PE、PB、现金流、PS 分位已完成；无实时分钟、Tick、Level-2，ETF 估值仍不可用。",
+  },
+  {
+    name: "新闻热榜与情绪",
+    status: "partial",
+    progress: "已有多源聚类、时间校准、热度衰减、修订链、官方事件分类和 PDF 响应哈希；完整热榜、PDF 正文归档和经验证情绪模型未完成。",
+  },
+  {
+    name: "多头、空头、裁判",
+    status: "complete",
+    progress: "三个逻辑角色分别调用、预算、重试、缓存、审计和失败隔离，并保存结构化引用。",
+  },
+  {
+    name: "真正多模型投票",
+    status: "partial",
+    progress: "治理、成本、失败记录和冲突审计基础已完成；当前三个角色仍使用同一配置模型，不是并行多模型、加权或投票。",
+  },
+  {
+    name: "基本面、技术、风险、情绪角色",
+    status: "partial",
+    progress: "基本面和估值已接入不可变证据，技术和风险视角可用；情绪仍严格保持 UNAVAILABLE。",
+  },
+  {
+    name: "人工确认与权限隔离",
+    status: "complete",
+    progress: "全部 AI 能力继续固定为 research_only，不能修改策略、仓位、订单或交易权限。",
+  },
+  {
+    name: "调用证据完整性",
+    status: "complete",
+    progress: "历史摘要与用户隔离的不可变调用证据会交叉校验；缺失、篡改或跨用户记录会被排除。",
+  },
+];
+
 const CHECK_LABELS = {
   broker_mode_live: "配置明确选择实盘模式",
   adapter_configured: "已选择券商适配器",
@@ -1282,6 +1360,7 @@ function enhanceRenderedUi() {
   bindUniverseFilterForm();
   syncJournalDecisionControl();
   syncMonitoringRuleControl();
+  enhanceLongPages();
 }
 
 function syncMonitoringRuleControl() {
@@ -3272,6 +3351,224 @@ function archivePositionSnapshot(snapshot) {
     </details>`;
 }
 
+const LAB_MODE_LABELS = {
+  same_snapshot: "同快照",
+  independent_replication: "独立复现",
+};
+
+const LAB_OBJECTIVE_LABELS = {
+  balanced: "平衡",
+  drawdown: "回撤",
+  turnover: "换手",
+};
+
+const LAB_TILT_LABELS = {
+  RISK_ON_TILT: "偏多倾斜",
+  RISK_OFF_TILT: "偏空倾斜",
+  NEUTRAL: "中性",
+};
+
+function labSignedNumber(value, digits = 4) {
+  const parsed = finite(value);
+  if (parsed === null) return "—";
+  return `${parsed > 0 ? "+" : ""}${formatNumber(parsed, digits)}`;
+}
+
+function labSection(id, title, subtitle, section, unavailableMessage, body, wide = false) {
+  const available = section && section.available !== false;
+  const content = available
+    ? body
+    : `<div class="empty-state lab-empty">
+        <p>${escapeHtml(unavailableMessage)}</p>
+        ${section?.error ? `<p class="table-subtext">${escapeHtml(section.error)}</p>` : ""}
+      </div>`;
+  return `
+    <section class="archive-section${wide ? " archive-section-wide" : ""}" aria-labelledby="${id}">
+      <div class="archive-section-title"><h3 id="${id}">${escapeHtml(title)}</h3><span>${escapeHtml(subtitle)}</span></div>
+      ${content}
+    </section>`;
+}
+
+function labFactorRow(item) {
+  const results = Array.isArray(item.results) ? item.results : [];
+  const best = results
+    .slice()
+    .sort((a, b) => Math.abs(finite(b.mean_ic) ?? 0) - Math.abs(finite(a.mean_ic) ?? 0))[0] || {};
+  return `<tr>
+    <td><strong>${escapeHtml(item.factor_id || "—")}</strong><span class="table-subtext">证据截至 ${escapeHtml(item.as_of || "—")}</span></td>
+    <td class="numeric">${best.horizon === undefined ? "—" : `${formatInteger(best.horizon)}日`}</td>
+    <td class="numeric ${tone(best.mean_ic)}">${formatNumber(best.mean_ic, 4)}</td>
+    <td class="numeric">${formatNumber(best.ic_ir, 2)}</td>
+    <td class="numeric">${formatPercent(best.direction_hit_rate)}</td>
+  </tr>`;
+}
+
+function labFactorSection(section) {
+  const evaluations = Array.isArray(section?.evaluations) ? section.evaluations : [];
+  const custom = Array.isArray(section?.custom_factors) ? section.custom_factors : [];
+  const subtitle = section?.available === false
+    ? "读取失败"
+    : `${formatInteger(section?.total || 0)} 次评估 · ${formatInteger(custom.length)} 个自定义因子`;
+  const body = `
+    <div class="table-wrap" tabindex="0" role="region" aria-label="因子评估表，可横向滚动">
+      <table class="dense-table archive-table">
+        <thead><tr><th>因子</th><th class="numeric">最优周期</th><th class="numeric">IC 均值</th><th class="numeric">IC IR</th><th class="numeric">方向命中</th></tr></thead>
+        <tbody>${evaluations.length ? evaluations.map(labFactorRow).join("") : emptyRow(5, "尚无因子评估证据；可用 factor-evaluate 生成")}</tbody>
+      </table>
+    </div>
+    ${custom.length ? `<p class="table-subtext lab-custom-list">自定义表达式：${custom.map((item) => `<code>${escapeHtml(item.name)} = ${escapeHtml(item.expression)}</code>`).join(" · ")}</p>` : ""}`;
+  return labSection(
+    "lab-factors-heading",
+    "因子实验室",
+    subtitle,
+    section,
+    "因子实验室暂时不可读。",
+    body
+  );
+}
+
+function labModelRow(item) {
+  return `<tr>
+    <td><strong>${escapeHtml(item.model_id || "—")}</strong><span class="table-subtext">证据截至 ${escapeHtml(item.as_of || "—")}</span></td>
+    <td class="numeric">${item.horizon === undefined ? "—" : `${formatInteger(item.horizon)}日`}</td>
+    <td class="numeric ${tone(item.mean_ic)}">${formatNumber(item.mean_ic, 4)}</td>
+    <td class="numeric">${formatNumber(item.ic_ir, 2)}</td>
+    <td class="numeric ${tone(item.model_minus_best_factor_ic)}">${labSignedNumber(item.model_minus_best_factor_ic)}</td>
+  </tr>`;
+}
+
+function labModelSection(section) {
+  const evaluations = Array.isArray(section?.evaluations) ? section.evaluations : [];
+  const subtitle = section?.available === false
+    ? "读取失败"
+    : `${formatInteger(section?.total || 0)} 次滚动评估`;
+  const body = `
+    <div class="table-wrap" tabindex="0" role="region" aria-label="模型评估表，可横向滚动">
+      <table class="dense-table archive-table">
+        <thead><tr><th>模型</th><th class="numeric">周期</th><th class="numeric">IC 均值</th><th class="numeric">IC IR</th><th class="numeric">对最优单因子</th></tr></thead>
+        <tbody>${evaluations.length ? evaluations.map(labModelRow).join("") : emptyRow(5, "尚无模型评估证据；可用 model-evaluate 生成")}</tbody>
+      </table>
+    </div>`;
+  return labSection(
+    "lab-models-heading",
+    "模型实验室",
+    subtitle,
+    section,
+    "模型实验室暂时不可读。",
+    body
+  );
+}
+
+function labRunRow(item, titles) {
+  const verdict = item.verdict || {};
+  const supported = verdict.status === "SUPPORTED";
+  const title = titles[item.hypothesis_id] || item.hypothesis_id || "—";
+  return `<tr>
+    <td><strong>${escapeHtml(title)}</strong><span class="table-subtext">${escapeHtml(LAB_MODE_LABELS[item.mode] || item.mode || "—")} · 证据截至 ${escapeHtml(item.executed_as_of || "—")}</span></td>
+    <td>${statusChip(supported ? "支持" : "证伪", supported ? "success" : "danger")}</td>
+    <td class="numeric">${formatInteger(verdict.predictions_supported)} / ${formatInteger(verdict.predictions_total)}</td>
+  </tr>`;
+}
+
+function labHypothesisSection(section) {
+  const runs = Array.isArray(section?.runs) ? section.runs : [];
+  const registered = Array.isArray(section?.hypotheses) ? section.hypotheses : [];
+  const titles = {};
+  registered.forEach((item) => {
+    titles[item.hypothesis_id] = item.title;
+  });
+  const subtitle = section?.available === false
+    ? "读取失败"
+    : `${formatInteger(section?.registered || 0)} 个已登记假设 · ${formatInteger(runs.length)} 次实验`;
+  const emptyMessage = registered.length
+    ? "假设已登记，尚未执行实验；可用 hypothesis-run 生成判定"
+    : "尚无预注册假设；可用 hypothesis-register 登记";
+  const body = `
+    <div class="table-wrap" tabindex="0" role="region" aria-label="假设实验判定表，可横向滚动">
+      <table class="dense-table archive-table">
+        <thead><tr><th>假设与模式</th><th>判定</th><th class="numeric">支持预测</th></tr></thead>
+        <tbody>${runs.length ? runs.map((item) => labRunRow(item, titles)).join("") : emptyRow(3, emptyMessage)}</tbody>
+      </table>
+    </div>`;
+  return labSection(
+    "lab-hypotheses-heading",
+    "假设实验",
+    subtitle,
+    section,
+    "假设实验室暂时不可读。",
+    body
+  );
+}
+
+function labSweepRow(item) {
+  const top = Array.isArray(item.top) ? item.top[0] : null;
+  return `<tr>
+    <td><strong>${escapeHtml(LAB_OBJECTIVE_LABELS[item.objective] || item.objective || "—")}</strong><span class="table-subtext">证据截至 ${escapeHtml(item.as_of || "—")}</span></td>
+    <td class="numeric">${formatInteger(item.parameters)} 参数 / ${formatInteger(item.variants)} 变体</td>
+    <td>${top ? `<code>${escapeHtml(top.parameter)} → ${formatNumber(top.value, 4)}</code>` : "—"}</td>
+    <td class="numeric ${tone(top?.objective_delta)}">${labSignedNumber(top?.objective_delta)}</td>
+  </tr>`;
+}
+
+function labSweepSection(section) {
+  const sweeps = Array.isArray(section?.sweeps) ? section.sweeps : [];
+  const subtitle = section?.available === false
+    ? "读取失败"
+    : `${formatInteger(section?.total || 0)} 次单变量扫描 · 探索性证据`;
+  const body = `
+    <div class="table-wrap" tabindex="0" role="region" aria-label="参数扫描表，可横向滚动">
+      <table class="dense-table archive-table">
+        <thead><tr><th>目标</th><th class="numeric">规模</th><th>最优改动</th><th class="numeric">目标增量</th></tr></thead>
+        <tbody>${sweeps.length ? sweeps.map(labSweepRow).join("") : emptyRow(4, "尚无参数扫描证据；可用 parameter-sweep 生成")}</tbody>
+      </table>
+    </div>`;
+  return labSection(
+    "lab-sweeps-heading",
+    "参数扫描",
+    subtitle,
+    section,
+    "参数扫描存储暂时不可读。",
+    body
+  );
+}
+
+function labSentimentChip(section) {
+  if (!section || section.available === false) {
+    return statusChip("情绪证据未合成", "neutral");
+  }
+  const label = LAB_TILT_LABELS[section.tilt_label] || section.tilt_label || "—";
+  const kind = {
+    RISK_ON_TILT: "info",
+    RISK_OFF_TILT: "warning",
+    NEUTRAL: "neutral",
+  }[section.tilt_label] || "neutral";
+  const score = labSignedNumber(section.tilt_score, 2);
+  return `${statusChip(`情绪 ${label} ${score}`, kind)}<span>${escapeHtml(section.trade_date || "—")} · ${formatInteger(section.available_components)} 个来源</span>`;
+}
+
+function researchLabs(labs) {
+  if (!labs) return "";
+  return `
+    <section class="archive-panel lab-panel" aria-labelledby="research-labs-heading">
+      <header class="archive-heading">
+        <div>
+          <h2 id="research-labs-heading">确定性研究实验室</h2>
+          <p>因子、模型、假设实验、参数扫描与情绪证据的只读投影；全部读取不可变记录，不刷新数据也不产生信号</p>
+        </div>
+        <div class="archive-heading-status">
+          ${labSentimentChip(labs.sentiment)}
+        </div>
+      </header>
+      <div class="archive-layout">
+        ${labFactorSection(labs.factors)}
+        ${labModelSection(labs.models)}
+        ${labHypothesisSection(labs.hypotheses)}
+        ${labSweepSection(labs.sweeps)}
+      </div>
+      <p class="archive-boundary"><strong>权限边界：</strong>实验室结论只是研究证据；SUPPORTED 判定与扫描排名不授予任何自动权限，改动策略仍需走候选审批流程。</p>
+    </section>`;
+}
+
 function renderResearch(data) {
   const metrics = data.backtest?.metrics || {};
   const benchmark = data.backtest?.benchmark || {};
@@ -3291,6 +3588,8 @@ function renderResearch(data) {
       ${researchDigests(data.digests)}
 
       ${researchJournal(data.journal)}
+
+      ${researchLabs(data.labs)}
 
       <section class="metric-strip" aria-label="研究指标">
         ${metric("策略年化收益", formatPercent(metrics.cagr), `基准 ${formatPercent(benchmark.cagr)}`, tone(metrics.cagr))}
@@ -7353,6 +7652,8 @@ function renderSystem(payload) {
         ${metric("券商模式", brokerModeLabel(data.broker?.mode), data.broker?.adapter ? `适配器 ${data.broker.adapter}` : "未安装真实交易适配器")}
       </section>
 
+      ${releaseCapabilityMatrix(data.version || payload.version)}
+
       ${crossSourceAuditMarkup(data.cross_source_check || {}, true)}
 
       <section class="split-layout">
@@ -7379,6 +7680,53 @@ function renderSystem(payload) {
 
       ${diagnosis.research_warnings?.length ? `<aside class="callout warning"><strong>诊断提示</strong><ul>${diagnosis.research_warnings.map((item) => `<li>${escapeHtml(translateWarning(item))}</li>`).join("")}</ul></aside>` : ""}
     </div>`;
+}
+
+function releaseCapabilityStatus(status) {
+  return {
+    complete: { label: "✓ 已完成", tone: "success" },
+    bounded: { label: "✓/◐ 完成 / 有边界", tone: "info" },
+    partial: { label: "◐ 部分完成", tone: "warning" },
+  }[status] || { label: "状态未确认", tone: "neutral" };
+}
+
+function releaseCapabilityMatrix(version) {
+  const release = String(version || "当前版本");
+  const releaseLabel = release.startsWith("v") || release === "当前版本" ? release : `v${release}`;
+  const counts = RELEASE_CAPABILITIES.reduce((summary, item) => {
+    summary[item.status] = (summary[item.status] || 0) + 1;
+    return summary;
+  }, {});
+  const rows = RELEASE_CAPABILITIES.map((item) => {
+    const status = releaseCapabilityStatus(item.status);
+    return `<tr>
+      <th scope="row" class="capability-name">${escapeHtml(item.name)}</th>
+      <td class="capability-status">${statusChip(status.label, status.tone)}</td>
+      <td class="capability-progress">${escapeHtml(item.progress)}</td>
+    </tr>`;
+  }).join("");
+  return `<section class="release-capability-panel" aria-labelledby="release-capability-title">
+    <header class="release-capability-heading">
+      <div>
+        <h2 id="release-capability-title">版本能力矩阵</h2>
+        <p>按实际可用范围说明能力、证据边界与仍未完成的部分。</p>
+      </div>
+      <div class="release-capability-summary" aria-label="能力状态汇总">
+        ${statusChip(`${formatInteger(counts.complete)} 项已完成`, "success")}
+        ${statusChip(`${formatInteger(counts.bounded)} 项完成但有边界`, "info")}
+        ${statusChip(`${formatInteger(counts.partial)} 项部分完成`, "warning")}
+      </div>
+    </header>
+    <div class="table-wrap release-capability-table-wrap" role="region" aria-label="${escapeHtml(releaseLabel)} 能力矩阵，可横向滚动" tabindex="0">
+      <table class="data-table release-capability-table">
+        <caption class="sr-only">${escapeHtml(releaseLabel)} 能力、当前状态与实际进展</caption>
+        <colgroup><col class="capability-col-name"><col class="capability-col-status"><col class="capability-col-progress"></colgroup>
+        <thead><tr><th scope="col">能力</th><th scope="col">当前状态</th><th scope="col"><code>${escapeHtml(releaseLabel)}</code> 实际进展</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="release-capability-note">“完成”只表示当前版本已有经过测试的本地能力，不代表交易所认证、实时数据、模型投票或真实交易授权。</p>
+  </section>`;
 }
 
 function brokerModeLabel(value) {
@@ -8545,3 +8893,221 @@ if (location.protocol === "file:") {
 } else {
   bootstrap();
 }
+
+/* ---------------------------------------------------------------------------
+ * Readability update (v1.0.0-readability)
+ * Font-size scaling, back-to-top, and long-page quick navigation with
+ * per-panel collapse. All state is browser-view state only: it never calls
+ * the API, never changes strategy or accounting data, and is stored purely
+ * in this browser's localStorage.
+ * ------------------------------------------------------------------------ */
+
+const FONT_SCALES = [
+  { id: "standard", label: "标准" },
+  { id: "large", label: "大" },
+  { id: "x-large", label: "特大" },
+];
+const FONT_SCALE_KEY = "ai-trade-font-scale";
+const COLLAPSE_KEY = "ai-trade-collapsed-panels-v1";
+const QUICK_NAV_MINIMUM_PANELS = 4;
+
+function readLocalPreference(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeLocalPreference(key, value) {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch (error) {
+    /* Private-mode browsers may reject storage; the control still works. */
+  }
+}
+
+function applyFontScale(scaleId) {
+  const known = FONT_SCALES.find((item) => item.id === scaleId) || FONT_SCALES[0];
+  if (known.id === "standard") {
+    delete document.documentElement.dataset.fontScale;
+  } else {
+    document.documentElement.dataset.fontScale = known.id;
+  }
+  const button = document.getElementById("font-scale");
+  if (button) {
+    button.textContent = `字号 ${known.label}`;
+    button.setAttribute("aria-label", `切换界面字号，当前${known.label}`);
+  }
+  return known.id;
+}
+
+function initFontScale() {
+  const stored = readLocalPreference(FONT_SCALE_KEY);
+  applyFontScale(stored || "standard");
+  const button = document.getElementById("font-scale");
+  if (!button) return;
+  button.addEventListener("click", () => {
+    const current = document.documentElement.dataset.fontScale || "standard";
+    const index = FONT_SCALES.findIndex((item) => item.id === current);
+    const next = FONT_SCALES[(index + 1) % FONT_SCALES.length];
+    applyFontScale(next.id);
+    writeLocalPreference(FONT_SCALE_KEY, next.id);
+  });
+}
+
+function preferredScrollBehavior() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? "auto"
+    : "smooth";
+}
+
+function initBackToTop() {
+  const button = document.getElementById("back-to-top");
+  if (!button) return;
+  const sync = () => {
+    button.hidden = window.scrollY < 480;
+  };
+  window.addEventListener("scroll", sync, { passive: true });
+  sync();
+  button.addEventListener("click", () => {
+    window.scrollTo({ top: 0, behavior: preferredScrollBehavior() });
+    document.getElementById("main-content")?.focus({ preventScroll: true });
+  });
+}
+
+function readCollapsedHeadings(route) {
+  try {
+    const raw = readLocalPreference(COLLAPSE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const values = parsed && typeof parsed === "object" ? parsed[route] : null;
+    return new Set(Array.isArray(values) ? values.map(String) : []);
+  } catch (error) {
+    return new Set();
+  }
+}
+
+function writeCollapsedHeadings(route, headings) {
+  let parsed = {};
+  try {
+    const raw = readLocalPreference(COLLAPSE_KEY);
+    parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object") parsed = {};
+  } catch (error) {
+    parsed = {};
+  }
+  parsed[route] = Array.from(headings).slice(0, 80);
+  writeLocalPreference(COLLAPSE_KEY, JSON.stringify(parsed));
+}
+
+function panelHeadingElement(panel) {
+  return panel.querySelector(
+    ":scope > .panel-header h2, :scope > header h2, :scope > h2, :scope > h3"
+  );
+}
+
+function setPanelCollapsed(panel, collapsed) {
+  panel.classList.toggle("is-collapsed", collapsed);
+  const toggle = panel.querySelector(":scope .panel-collapse-toggle");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    toggle.textContent = collapsed ? "展开" : "收起";
+  }
+}
+
+function enhanceLongPages() {
+  const panels = Array.from(main.querySelectorAll("section.panel"));
+  if (panels.length < QUICK_NAV_MINIMUM_PANELS) return;
+  const route = state.route;
+  const collapsed = readCollapsedHeadings(route);
+  const entries = [];
+
+  panels.forEach((panel, index) => {
+    const heading = panelHeadingElement(panel);
+    if (!heading) return;
+    const title = heading.textContent.trim();
+    if (!title) return;
+    if (!panel.id) panel.id = `panel-${route}-${index}`;
+    const keeper = heading.closest(".panel-header")
+      || heading.closest("header")
+      || heading;
+    if (keeper.parentElement === panel) keeper.classList.add("panel-collapse-keep");
+    if (!panel.querySelector(":scope .panel-collapse-toggle")) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "panel-collapse-toggle";
+      toggle.setAttribute("aria-controls", panel.id);
+      keeper.appendChild(toggle);
+      toggle.addEventListener("click", () => {
+        const next = !panel.classList.contains("is-collapsed");
+        setPanelCollapsed(panel, next);
+        const current = readCollapsedHeadings(route);
+        if (next) current.add(title);
+        else current.delete(title);
+        writeCollapsedHeadings(route, current);
+      });
+    }
+    setPanelCollapsed(panel, collapsed.has(title));
+    entries.push({ id: panel.id, title, panel });
+  });
+  if (entries.length < QUICK_NAV_MINIMUM_PANELS) return;
+
+  const nav = document.createElement("nav");
+  nav.className = "page-quick-nav";
+  nav.setAttribute("aria-label", "本页分节导航");
+  const label = document.createElement("span");
+  label.className = "quick-nav-label";
+  label.textContent = `本页 ${entries.length} 节`;
+  nav.appendChild(label);
+  for (const entry of entries) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "quick-nav-chip";
+    chip.textContent = entry.title.length > 18 ? `${entry.title.slice(0, 17)}…` : entry.title;
+    chip.title = entry.title;
+    chip.addEventListener("click", () => {
+      if (entry.panel.classList.contains("is-collapsed")) {
+        setPanelCollapsed(entry.panel, false);
+        const current = readCollapsedHeadings(route);
+        current.delete(entry.title);
+        writeCollapsedHeadings(route, current);
+      }
+      entry.panel.scrollIntoView({ behavior: preferredScrollBehavior(), block: "start" });
+      const heading = panelHeadingElement(entry.panel);
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+    });
+    nav.appendChild(chip);
+  }
+  const collapseAll = document.createElement("button");
+  collapseAll.type = "button";
+  collapseAll.className = "quick-nav-collapse";
+  const syncCollapseAllLabel = () => {
+    const anyOpen = entries.some((entry) => !entry.panel.classList.contains("is-collapsed"));
+    collapseAll.textContent = anyOpen ? "全部收起" : "全部展开";
+  };
+  collapseAll.addEventListener("click", () => {
+    const anyOpen = entries.some((entry) => !entry.panel.classList.contains("is-collapsed"));
+    const current = readCollapsedHeadings(route);
+    for (const entry of entries) {
+      setPanelCollapsed(entry.panel, anyOpen);
+      if (anyOpen) current.add(entry.title);
+      else current.delete(entry.title);
+    }
+    writeCollapsedHeadings(route, current);
+    syncCollapseAllLabel();
+  });
+  nav.addEventListener("click", () => syncCollapseAllLabel());
+  syncCollapseAllLabel();
+  nav.appendChild(collapseAll);
+
+  const intro = main.querySelector(".page-intro");
+  if (intro) intro.after(nav);
+  else main.prepend(nav);
+}
+
+initFontScale();
+initBackToTop();

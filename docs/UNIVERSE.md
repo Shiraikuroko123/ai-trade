@@ -37,3 +37,32 @@ The engine can load hundreds or thousands of records, but a credible stock expan
 8. Independent provider reconciliation and future broker-sandbox fills.
 
 Until those data contracts exist, adding today's CSI 300 constituents would increase the symbol count while reducing the credibility of the result. The next data milestone is therefore a point-in-time stock dataset, not a larger hard-coded list.
+
+## Verifying master-data dates against provider evidence
+
+`universe-verify` binds the curated dates to the same trust boundary the rest
+of the system uses — the verified local cache:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli universe-verify
+```
+
+For every configured instrument it reads the first and last cached bars and
+reports one row with the configured listing date and membership windows. A
+membership window that starts materially before the first cached bar (beyond
+the configured data-window start plus a small holiday tolerance) is the
+dangerous direction — the instrument would be visible in the historical
+universe before any data exists — and is reported as an issue with a non-zero
+exit code. Everything else is disclosure: history truncated at the data-window
+start, provider history beginning after a lower-bound listing date, or a
+listing date later than the first bar. Missing caches are counted separately
+so the command is also useful before the first full `download`. The check is
+read-only and `research_only`; it never edits the master, refreshes a
+provider, or changes any permission.
+
+The 2026-07-26 expansion's provenance: membership start dates are
+conservative (at or after the believed listing date, never before), the
+twelve highest-risk post-2016 entries were cross-checked against Eastmoney
+fund establishment dates (establishment is a strict lower bound on the
+exchange listing date; one correction resulted, 512720), and the first cached
+bar remains the authoritative first completed session.

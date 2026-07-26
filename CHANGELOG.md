@@ -5,6 +5,72 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Added deterministic sentiment tilt evidence (`sentiment-compose`,
+  `sentiment-show`, `sentiment-list`). One bounded `[-1, +1]` daily tilt is
+  composed from the already-validated local breadth, capital-flow, and
+  news-lexicon stores with disclosed per-component formulas; mismatched-date
+  components are excluded with reasons, a single remaining source fails
+  closed (单一来源不合成), and wide ±0.2 label bands keep noise out of the
+  label. Records are create-once revisions with a `supersedes` fingerprint
+  chain and are display-and-journal evidence only — the assistant coverage
+  contract and all strategy inputs are unchanged.
+- Projected every deterministic research lab into the workstation's research
+  page. The `/api/research` payload gains a read-only `labs` block (factor
+  evaluations and custom factors, model evaluations, registered hypotheses
+  and run verdicts, parameter sweeps, latest sentiment tilt) in which each
+  section fails soft with its own error so one unavailable store cannot hide
+  the others, and the page renders it as a 确定性研究实验室 panel with an
+  explicit authority boundary. Asset version moves to `1.0.0-labs`.
+- Added `factor-define`: immutable, owner-isolated custom research factors
+  compiled from a safe allowlisted expression language (bar series,
+  arithmetic, and `sma/std/ts_max/ts_min/delay/ret`; no eval, no name
+  lookup, hard caps on length, tokens, depth, and windows). The canonical
+  whitespace-free source is stored; same-content redefinition is idempotent
+  and different-content redefinition fails closed. `factor-evaluate` and
+  model factor selection resolve built-ins first, then the owner's custom
+  store, with the same point-in-time warm-up honesty.
+- Added `gbdt_v1` to the model lab: pure-standard-library least-squares
+  gradient boosting over depth-2 trees with fixed pre-registered
+  hyperparameters, boundary-snapped quantile split candidates, pre-registered
+  `refit_interval`/`max_train_rows` cost controls that never train on data at
+  or after the evaluated date, and normalized split-gain importance
+  disclosure instead of coefficients.
+- Added the sandbox broker drill (`sandbox-cycle`, `sandbox-status`,
+  `sandbox-drills`): a deterministic in-process broker replays one cached
+  session bar (BUY fills iff limit ≥ session low, SELL iff limit ≤ session
+  high, at the limit price with configured costs) while the drill exercises
+  capability declaration, mandate enforcement, batch fingerprinting, durable
+  intent reservation, and two reconciled lifecycle observations under an
+  isolated `state/sandbox/` scope. Every drill record carries a
+  before/after SHA-256 attestation that the live broker ledgers and the
+  promotion-countable reconciliation evidence were untouched, plus
+  `qualifying_evidence`/`promotion_countable`/`execution_enabled` fixed to
+  false.
+- Added `universe-verify`, a read-only master-data audit that binds every
+  configured instrument's listing date and membership windows to the first
+  and last cached bars from the configured provider. Membership that starts
+  materially before the first cached bar (beyond the data-window start plus a
+  holiday tolerance) is reported as a dangerous issue with a non-zero exit
+  code; window truncation and lower-bound listing gaps are explicit
+  disclosures. The 2026-07-26 expansion's twelve highest-risk post-2016
+  entries were additionally cross-checked against Eastmoney fund
+  establishment dates, correcting one listing/membership pair (512720) and
+  recording the method in the security-master provenance.
+- Expanded the curated ETF security master from 8 to 47 liquid instruments
+  across broad-market, dividend, sector, cross-border, bond, and commodity
+  exposures. Membership start dates are conservative (at or after the believed
+  listing date, never before) and the provenance note says so explicitly.
+  Strategy, risk, and cost parameters are unchanged; a full
+  `ai-trade download --force` is required before the workstation, backtests,
+  or research labs can use the new members, and research records registered
+  under the old configuration context remain readable but fail closed for new
+  executions by design.
+- Improved workstation readability. A topbar font-size control cycles
+  标准/大/特大 by scaling the rem-based root font (persisted per browser); a
+  back-to-top button appears on long scrolls; and routes with four or more
+  panels gain a "本页 N 节" quick-navigation row with per-panel 收起/展开
+  toggles, remembered per route in the browser only. All of it is view state:
+  no API call, strategy, ledger, or permission is touched.
 - Began the `v2.0.0` research line with a deterministic, low-compute
   hypothesis lab. It binds every pre-registered hypothesis to the current
   Strategy Lab baseline and immutable market-snapshot fingerprints, and
@@ -20,6 +86,71 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
   provider call. Materialization can create only one fingerprint-bound Strategy
   Lab `DRAFT`; it cannot validate, approve, activate, change broker
   configuration, or submit an order.
+- Added an exploratory one-at-a-time parameter sweep (`parameter-sweep`,
+  `parameter-sweeps`, `parameter-sweep-show`) over every allowlisted numeric
+  parameter around the active Strategy Lab baseline, bounded to 200 variants
+  and ranked by a declared sharpe/drawdown/turnover objective. Records are
+  immutable, owner-isolated, idempotent per sweep fingerprint, and carry a
+  fixed disclosure plus `exploratory_not_confirmatory` safety: no ranking can
+  register a hypothesis, create a candidate, or change authority — the
+  confirmatory path remains hypothesis pre-registration and the deterministic
+  experiment runner.
+- Added a deterministic consolidated research report (`research-report`) that
+  projects the market snapshot, backtest, walk-forward, robustness gates,
+  paper account, and the latest factor/model/hypothesis evidence into one
+  Markdown document with a stable content fingerprint. Missing or malformed
+  evidence renders as an explicit unavailable section with a bounded reason;
+  the output path must stay inside the workspace; no model call or provider
+  refresh occurs. See docs/RESEARCH_REPORT.md.
+- Added a condensed English overview README (`README.en.md`) linking back to
+  the authoritative Chinese documentation.
+- Added a pure-standard-library model lab with `model-list`, `model-evaluate`,
+  `model-evaluations`, and `model-show`. A fixed-hyperparameter registry
+  (ridge on train-window z-scored factors with per-date demeaned forward
+  returns, plus an untrained equal-weight direction baseline) is evaluated
+  walk-forward with strict leakage guards: training uses only fully completed
+  forward windows, warm-up dates are reported rather than backfilled, and
+  every input factor is scored on identical dates under the identical
+  protocol so `model_minus_best_factor_ic` states plainly whether the model
+  beat its best single input. Records disclose per-factor coefficients, are
+  immutable, owner-isolated, capacity-bounded, idempotent per evaluation
+  fingerprint, and `research_only` with `creates_no_signal`. See
+  docs/MODEL_LAB.md.
+- Added PushPlus WeChat push and DingTalk group-robot delivery as optional
+  mobile notification channels beside Webhook, SMTP email, and Windows Toast.
+  Both reuse the immutable owner-local delivery-attempt audit, idempotent
+  per-notification/target sequencing, bounded retries, and isolated failures.
+  Configuration is environment-only via `configure_notifications.ps1`
+  (`-PushPlus` / `-DingTalk`): PushPlus validates its token format, DingTalk
+  accepts only the official HTTPS robot origin and signs requests with the
+  optional secret; tokens, URLs, and secrets never enter delivery records,
+  state, or backups, and a succeeded attempt proves an accepted HTTPS request
+  rather than a read message.
+- Added a deterministic, zero-dependency factor lab with `factor-list`,
+  `factor-evaluate`, `factor-evaluations`, and `factor-show`. A versioned
+  code-defined registry (momentum, trend gap, volatility, short-term reversal,
+  amount surge, distance-from-high) declares formulas, minimum history, and a
+  registered direction hypothesis. Point-in-time evaluation samples the
+  verified cache with a listing/delisting-aware universe, requires exact
+  completed bars for entry and horizon exit, and reports per-horizon Spearman
+  rank IC, ICIR, positive share, direction hit rate, and half-split spread as
+  a decay curve. Records are immutable, owner-isolated, capacity-bounded,
+  idempotent per evaluation fingerprint, and `research_only` with
+  `creates_no_signal`: no IC can create a candidate, signal, order, or any
+  authority. See docs/FACTOR_LAB.md.
+- Added a deterministic hypothesis experiment runner with `hypothesis-run`,
+  `hypothesis-runs`, and `hypothesis-run-show`. Execution re-verifies the
+  registered configuration context, baseline, and candidate fingerprints, then
+  runs the pre-registered full-window, holdout, cost-stress, rolling-fold, and
+  parameter-sensitivity comparisons on the verified local cache in
+  `same_snapshot` mode, or on a later verified cache in
+  `independent_replication` mode. Every pre-registered prediction is judged
+  against its exact falsification criterion with disclosed formulas and no
+  p-value claim; falsified runs are published as evidence rather than errors.
+  Run records are immutable, owner-isolated, capacity-bounded, idempotent per
+  execution fingerprint, and carry `verdict_grants_no_authority`: no verdict
+  can create, validate, approve, or activate a candidate, change accounting or
+  broker configuration, or advance any live-trading gate.
 
 ## 1.0.0 - 2026-07-24
 

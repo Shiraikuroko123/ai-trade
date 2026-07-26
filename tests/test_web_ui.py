@@ -73,8 +73,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("与当前行情快照分开审阅", self.javascript)
 
     def test_overview_and_portfolio_surface_freshness_and_unavailable_valuation(self):
-        self.assertIn("app.css?v=1.0.0-personal-workstation", self.html)
-        self.assertIn("app.js?v=1.0.0-personal-workstation", self.html)
+        self.assertIn("app.css?v=1.0.0-labs", self.html)
+        self.assertIn("app.js?v=1.0.0-labs", self.html)
         self.assertIn("data.market?.freshness", self.javascript)
         self.assertIn("共同最新", self.javascript)
         self.assertIn("行情估值暂不可用", self.javascript)
@@ -98,6 +98,24 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("state.pendingActions.add(action)", self.javascript)
         self.assertIn("任务日志", self.javascript)
         self.assertIn("summary:focus-visible", self.css)
+
+    def test_system_shows_current_release_capability_matrix(self):
+        self.assertIn("const RELEASE_CAPABILITIES = [", self.javascript)
+        self.assertIn("function releaseCapabilityMatrix", self.javascript)
+        self.assertIn("版本能力矩阵", self.javascript)
+        self.assertIn("当前状态", self.javascript)
+        self.assertIn("真正多模型投票", self.javascript)
+        self.assertIn("移动推送未完成", self.javascript)
+        self.assertIn("私有 R2 备份与只读旧账期浏览器均已完成", self.javascript)
+        self.assertIn("情绪仍严格保持 UNAVAILABLE", self.javascript)
+        self.assertIn("缺失、篡改或跨用户记录会被排除", self.javascript)
+        self.assertIn("releaseCapabilityMatrix(data.version || payload.version)", self.javascript)
+        self.assertIn("release-capability-table", self.css)
+        self.assertIn("min-width: 900px", self.css)
+        mobile_start = self.css.index("@media (max-width: 820px)")
+        narrow_start = self.css.index("@media (max-width: 560px)")
+        self.assertIn(".release-capability-heading", self.css[mobile_start:narrow_start])
+        self.assertIn(".release-capability-table", self.css[narrow_start:])
 
     def test_market_pulse_is_compact_auditable_and_keyboard_scannable(self):
         self.assertIn('id="market-pulse"', self.html)

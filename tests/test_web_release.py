@@ -187,14 +187,15 @@ class WebReleaseTests(unittest.TestCase):
     def test_universe_api_is_dynamic_and_works_without_market_cache(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            config_path = _write_nine_instrument_config(root)
+            config_path = _write_extra_instrument_config(root)
             config = load_config(config_path)
+            expected = len(config.instruments)
 
             result = DashboardService(config).universe(date(2026, 7, 10))
 
             self.assertFalse(result["market_available"])
-            self.assertEqual(result["candidate_records"], 9)
-            self.assertEqual(len(result["instruments"]), 9)
+            self.assertEqual(result["candidate_records"], expected)
+            self.assertEqual(len(result["instruments"]), expected)
             self.assertEqual(
                 {item["symbol"] for item in result["instruments"]},
                 {item.symbol for item in config.instruments},
@@ -391,23 +392,27 @@ class _DiagnosticMarket:
         return self._latest
 
 
-def _write_nine_instrument_config(root: Path) -> Path:
+def _write_extra_instrument_config(root: Path) -> Path:
+    """Repo security master plus one synthetic member the master lacks."""
     config = json.loads(
         (REPOSITORY_ROOT / "config/default.json").read_text(encoding="utf-8")
     )
     master = json.loads(
         (REPOSITORY_ROOT / "config/security_master.json").read_text(encoding="utf-8")
     )
+    existing = {item["symbol"] for item in master["instruments"]}
     extra = dict(master["instruments"][0])
     extra.update(
         {
-            "symbol": "588000",
-            "name": "科创50ETF",
+            "symbol": "510990",
+            "name": "测试用ETF",
             "asset": "China technology",
             "sector": "china_technology",
             "listing_date": "2020-11-16",
         }
     )
+    if extra["symbol"] in existing:
+        raise AssertionError("Synthetic test symbol collides with the master")
     master["instruments"].append(extra)
     master["universes"]["core_etf"].append(
         {"symbol": extra["symbol"], "start": extra["listing_date"], "end": None}

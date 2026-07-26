@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 from getpass import getpass
 from pathlib import Path
 
@@ -22,10 +22,14 @@ from .broker.probe import (
     probe_configured_broker,
 )
 from .config import AppConfig, load_config
-from .data.eastmoney import download_universe
+from .data.eastmoney import download_universe, load_cached_bars
 from .data.market import MarketData
 from .diagnostics import diagnose
-from .hypothesis_lab import HypothesisLabEngine
+from .factor_lab import CustomFactorStore, FactorLabEngine
+from .hypothesis_lab import HypothesisExperimentRunner, HypothesisLabEngine
+from .hypothesis_lab.sweep import ParameterSweepEngine
+from .model_lab import ModelLabEngine
+from .research_report import write_research_report
 from .monitoring import MonitoringEngine
 from .report import save_backtest_report
 from .strategy import MomentumTrendStrategy
@@ -276,6 +280,170 @@ def build_parser() -> argparse.ArgumentParser:
         "hypothesis-show", help="Show and verify one immutable hypothesis record"
     )
     hypothesis_show.add_argument("hypothesis_id")
+    hypothesis_run = subparsers.add_parser(
+        "hypothesis-run",
+        help=(
+            "Execute one pre-registered hypothesis plan on the verified local "
+            "cache and append an immutable run record"
+        ),
+    )
+    hypothesis_run.add_argument("hypothesis_id")
+    hypothesis_runs = subparsers.add_parser(
+        "hypothesis-runs", help="List owner-isolated hypothesis experiment runs"
+    )
+    hypothesis_runs.add_argument("--hypothesis", default=None)
+    hypothesis_runs.add_argument("--limit", type=int, default=50)
+    hypothesis_run_show = subparsers.add_parser(
+        "hypothesis-run-show",
+        help="Show and verify one immutable hypothesis run record",
+    )
+    hypothesis_run_show.add_argument("run_id")
+    subparsers.add_parser(
+        "factor-list",
+        help="List the deterministic research factor registry",
+    )
+    factor_evaluate = subparsers.add_parser(
+        "factor-evaluate",
+        help=(
+            "Evaluate one registered factor point-in-time on the verified "
+            "local cache and append an immutable evidence record"
+        ),
+    )
+    factor_evaluate.add_argument("--factor", required=True)
+    factor_evaluate.add_argument(
+        "--horizons",
+        default="5,20,60",
+        help="Comma-separated forward horizons in sessions (ascending)",
+    )
+    factor_evaluate.add_argument("--step", type=int, default=5)
+    factor_define = subparsers.add_parser(
+        "factor-define",
+        help=(
+            "Register one immutable custom research factor from a safe "
+            "allowlisted expression"
+        ),
+    )
+    factor_define.add_argument("--name", required=True)
+    factor_define.add_argument("--expression", required=True)
+    factor_define.add_argument("--direction", type=int, default=1, choices=[1, -1])
+    factor_define.add_argument("--label", default=None)
+    factor_evaluations = subparsers.add_parser(
+        "factor-evaluations",
+        help="List owner-isolated factor evaluation records",
+    )
+    factor_evaluations.add_argument("--factor", default=None)
+    factor_evaluations.add_argument("--limit", type=int, default=50)
+    factor_show = subparsers.add_parser(
+        "factor-show",
+        help="Show and verify one immutable factor evaluation record",
+    )
+    factor_show.add_argument("evaluation_id")
+    subparsers.add_parser(
+        "model-list",
+        help="List the deterministic research model registry",
+    )
+    model_evaluate = subparsers.add_parser(
+        "model-evaluate",
+        help=(
+            "Evaluate one registered model walk-forward over the factor "
+            "registry on the verified local cache"
+        ),
+    )
+    model_evaluate.add_argument("--model", default="ridge_v1")
+    model_evaluate.add_argument(
+        "--factors",
+        default=None,
+        help="Comma-separated factor ids (default: the whole registry)",
+    )
+    model_evaluate.add_argument("--horizon", type=int, default=20)
+    model_evaluate.add_argument("--step", type=int, default=5)
+    model_evaluations = subparsers.add_parser(
+        "model-evaluations",
+        help="List owner-isolated model evaluation records",
+    )
+    model_evaluations.add_argument("--model", default=None)
+    model_evaluations.add_argument("--limit", type=int, default=50)
+    model_show = subparsers.add_parser(
+        "model-show",
+        help="Show and verify one immutable model evaluation record",
+    )
+    model_show.add_argument("evaluation_id")
+    parameter_sweep = subparsers.add_parser(
+        "parameter-sweep",
+        help=(
+            "Run an exploratory one-at-a-time parameter neighborhood sweep "
+            "on the verified local cache"
+        ),
+    )
+    parameter_sweep.add_argument(
+        "--objective", default="sharpe", choices=["sharpe", "max_drawdown", "turnover"]
+    )
+    parameter_sweep.add_argument(
+        "--parameters",
+        default=None,
+        help="Comma-separated scope.name keys (default: every numeric parameter)",
+    )
+    parameter_sweep.add_argument("--points", type=int, default=4)
+    parameter_sweeps = subparsers.add_parser(
+        "parameter-sweeps", help="List owner-isolated parameter sweep records"
+    )
+    parameter_sweeps.add_argument("--limit", type=int, default=50)
+    parameter_sweep_show = subparsers.add_parser(
+        "parameter-sweep-show",
+        help="Show and verify one immutable parameter sweep record",
+    )
+    parameter_sweep_show.add_argument("sweep_id")
+    sentiment_compose = subparsers.add_parser(
+        "sentiment-compose",
+        help=(
+            "Compose one market-tilt evidence revision from already validated "
+            "local breadth, capital-flow, and news stores (no network)"
+        ),
+    )
+    sentiment_compose.add_argument("--date", default=None)
+    sentiment_show = subparsers.add_parser(
+        "sentiment-show", help="Show the latest market-tilt evidence revision"
+    )
+    sentiment_show.add_argument("--date", default=None)
+    sentiment_list = subparsers.add_parser(
+        "sentiment-list", help="List market-tilt evidence by trade date"
+    )
+    sentiment_list.add_argument("--limit", type=int, default=30)
+    sandbox_cycle = subparsers.add_parser(
+        "sandbox-cycle",
+        help=(
+            "Run one isolated broker order-lifecycle drill against cached "
+            "bars (sandbox scope only; grants no live authority)"
+        ),
+    )
+    sandbox_cycle.add_argument("--symbol", required=True)
+    sandbox_cycle.add_argument("--side", default="BUY", choices=["BUY", "SELL"])
+    sandbox_cycle.add_argument("--quantity", type=int, default=None)
+    sandbox_cycle.add_argument("--date", default=None)
+    sandbox_cycle.add_argument("--limit-price", type=float, default=None)
+    subparsers.add_parser(
+        "sandbox-status",
+        help="Verify the sandbox ledger scope and recover its order lifecycle",
+    )
+    sandbox_drills = subparsers.add_parser(
+        "sandbox-drills", help="List immutable sandbox drill records"
+    )
+    sandbox_drills.add_argument("--limit", type=int, default=50)
+    subparsers.add_parser(
+        "universe-verify",
+        help=(
+            "Cross-check configured listing and membership dates against the "
+            "first cached bar of every instrument"
+        ),
+    )
+    research_report = subparsers.add_parser(
+        "research-report",
+        help=(
+            "Project existing local evidence into one deterministic Markdown "
+            "research report"
+        ),
+    )
+    research_report.add_argument("--output", default=None)
     hypothesis_materialize = subparsers.add_parser(
         "hypothesis-materialize",
         help="Explicitly create one Strategy Lab draft from a registered hypothesis",
@@ -893,6 +1061,186 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
+        if args.command == "hypothesis-run":
+            market = MarketData(config, recover_snapshot=False)
+            result = HypothesisExperimentRunner(config).execute(
+                "local-owner", args.hypothesis_id, market
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "hypothesis-runs":
+            result = HypothesisExperimentRunner(config).list_runs(
+                "local-owner", limit=args.limit, hypothesis_id=args.hypothesis
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "hypothesis-run-show":
+            result = HypothesisExperimentRunner(config).get_run(
+                "local-owner", args.run_id
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "factor-list":
+            registry = FactorLabEngine(config).registry()
+            registry["custom_factors"] = CustomFactorStore(config).list(
+                "local-owner"
+            )
+            print(json.dumps(registry, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "factor-define":
+            result = CustomFactorStore(config).define(
+                "local-owner",
+                args.name,
+                args.expression,
+                args.direction,
+                label=args.label,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "factor-evaluate":
+            market = MarketData(config, recover_snapshot=False)
+            result = FactorLabEngine(config).evaluate(
+                "local-owner",
+                market,
+                args.factor,
+                horizons=_parse_horizons(args.horizons),
+                step=args.step,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "factor-evaluations":
+            result = FactorLabEngine(config).list(
+                "local-owner", limit=args.limit, factor_id=args.factor
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "factor-show":
+            result = FactorLabEngine(config).get(
+                "local-owner", args.evaluation_id
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "model-list":
+            print(
+                json.dumps(
+                    ModelLabEngine(config).registry(),
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            )
+            return 0
+        if args.command == "model-evaluate":
+            market = MarketData(config, recover_snapshot=False)
+            factor_ids = (
+                None
+                if args.factors is None
+                else [part.strip() for part in str(args.factors).split(",") if part.strip()]
+            )
+            result = ModelLabEngine(config).evaluate(
+                "local-owner",
+                market,
+                args.model,
+                factor_ids=factor_ids,
+                horizon=args.horizon,
+                step=args.step,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "model-evaluations":
+            result = ModelLabEngine(config).list(
+                "local-owner", limit=args.limit, model_id=args.model
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "model-show":
+            result = ModelLabEngine(config).get(
+                "local-owner", args.evaluation_id
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "parameter-sweep":
+            market = MarketData(config, recover_snapshot=False)
+            selected = (
+                None
+                if args.parameters is None
+                else [
+                    part.strip()
+                    for part in str(args.parameters).split(",")
+                    if part.strip()
+                ]
+            )
+            result = ParameterSweepEngine(config).execute(
+                "local-owner",
+                market,
+                objective=args.objective,
+                parameters=selected,
+                points=args.points,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "parameter-sweeps":
+            result = ParameterSweepEngine(config).list(
+                "local-owner", limit=args.limit
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "parameter-sweep-show":
+            result = ParameterSweepEngine(config).get("local-owner", args.sweep_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "sentiment-compose":
+            from .data.sentiment import SentimentTiltEngine
+
+            target = date.fromisoformat(args.date) if args.date else None
+            result = SentimentTiltEngine(config).compose(target)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "sentiment-show":
+            from .data.sentiment import SentimentTiltEngine
+
+            target = date.fromisoformat(args.date) if args.date else None
+            result = SentimentTiltEngine(config).latest(target)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "sentiment-list":
+            from .data.sentiment import SentimentTiltEngine
+
+            result = SentimentTiltEngine(config).list(limit=args.limit)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "sandbox-cycle":
+            from .broker.sandbox import SandboxCycleEngine
+
+            result = SandboxCycleEngine(config).cycle(
+                args.symbol,
+                side=args.side,
+                quantity=args.quantity,
+                session=date.fromisoformat(args.date) if args.date else None,
+                limit_price=args.limit_price,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "sandbox-status":
+            from .broker.sandbox import SandboxCycleEngine
+
+            result = SandboxCycleEngine(config).status()
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "sandbox-drills":
+            from .broker.sandbox import SandboxCycleEngine
+
+            result = SandboxCycleEngine(config).list_drills(limit=args.limit)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "universe-verify":
+            result = _universe_verify(config)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0 if result["summary"]["dangerous_issues"] == 0 else 1
+        if args.command == "research-report":
+            result = write_research_report(config, output=args.output)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
         if args.command == "hypothesis-materialize":
             if not args.yes:
                 raise ValueError(
@@ -1274,6 +1622,133 @@ def _emit_cloud_backup_event(status: str) -> None:
     print(f"{_CLOUD_BACKUP_EVENT_PREFIX}{payload}", file=sys.stderr, flush=True)
 
 
+def _universe_verify(config: AppConfig) -> dict:
+    """Bind configured master-data dates to the cached provider evidence.
+
+    The first cached bar of a symbol is the authoritative first completed
+    session from the configured provider. A membership window that starts
+    before that bar is the dangerous direction (the instrument would appear
+    in the historical universe before any data exists) and is reported as an
+    issue; everything else is disclosure. The check is read-only.
+    """
+    members: list[dict] = []
+    dangerous = 0
+    missing = 0
+    memberships: dict[str, list] = {}
+    for name, values in config.security_master.universes.items():
+        for membership in values:
+            memberships.setdefault(membership.symbol, []).append(
+                (name, membership.start, membership.end)
+            )
+    for instrument in config.instruments:
+        symbol = instrument.symbol
+        row: dict = {
+            "symbol": symbol,
+            "name": instrument.name,
+            "listing_date": (
+                instrument.listing_date.isoformat()
+                if instrument.listing_date
+                else None
+            ),
+            "memberships": [
+                {
+                    "universe": name,
+                    "start": start.isoformat(),
+                    "end": end.isoformat() if end else None,
+                }
+                for name, start, end in memberships.get(symbol, [])
+            ],
+            "first_bar": None,
+            "last_bar": None,
+            "status": "ok",
+            "notes": [],
+        }
+        path = config.cache_dir / f"{symbol}.csv"
+        if not path.is_file():
+            row["status"] = "missing_cache"
+            row["notes"].append("尚无本地缓存；先运行 download")
+            missing += 1
+            members.append(row)
+            continue
+        try:
+            bars = load_cached_bars(path)
+        except (OSError, ValueError, RuntimeError) as exc:
+            row["status"] = "invalid_cache"
+            row["notes"].append(f"缓存无法读取: {str(exc)[:160]}")
+            dangerous += 1
+            members.append(row)
+            continue
+        if not bars:
+            row["status"] = "invalid_cache"
+            row["notes"].append("缓存为空")
+            dangerous += 1
+            members.append(row)
+            continue
+        first = bars[0].date
+        row["first_bar"] = first.isoformat()
+        row["last_bar"] = bars[-1].date.isoformat()
+        window_start = date.fromisoformat(str(config.raw["data"]["start"]))
+        tolerance = timedelta(days=10)
+        for name, start, _end in memberships.get(symbol, []):
+            expected = max(start, window_start)
+            if first > expected + tolerance:
+                gap = (first - expected).days
+                row["status"] = "membership_before_first_bar"
+                row["notes"].append(
+                    f"{name} 成分自 {start.isoformat()} 起（数据窗口起点 "
+                    f"{window_start.isoformat()}），但首根缓存 K 线是 "
+                    f"{first.isoformat()}（晚 {gap} 天）；应把成分起始日推迟到"
+                    "不早于首根 K 线"
+                )
+                dangerous += 1
+            elif start < window_start:
+                row["notes"].append(
+                    f"{name} 成分起始 {start.isoformat()} 早于数据窗口起点，"
+                    "历史仅自窗口起点可用（仅披露）"
+                )
+        listing = instrument.listing_date
+        if listing is not None and row["status"] == "ok":
+            if listing > first:
+                row["notes"].append(
+                    "配置上市日晚于首根缓存 K 线；实际上市更早（保守方向，仅披露）"
+                )
+            elif first > listing and listing >= window_start:
+                row["notes"].append(
+                    f"提供方历史自 {first.isoformat()} 开始，晚于配置上市日 "
+                    f"{(first - listing).days} 天（下界口径或提供方截断，仅披露）"
+                )
+        members.append(row)
+    return {
+        "schema_version": 1,
+        "master_as_of": str(config.security_master.metadata.get("as_of") or ""),
+        "summary": {
+            "instruments": len(members),
+            "verified": len(members) - missing,
+            "missing_cache": missing,
+            "dangerous_issues": dangerous,
+        },
+        "members": members,
+        "safety": {
+            "research_only": True,
+            "read_only": True,
+            "strategy_changed": False,
+            "orders_created": False,
+        },
+    }
+
+
+def _parse_horizons(value: str) -> tuple[int, ...]:
+    try:
+        items = tuple(int(part.strip()) for part in str(value).split(",") if part.strip())
+    except ValueError as exc:
+        raise ValueError(
+            "--horizons must be comma-separated integers, e.g. 5,20,60"
+        ) from exc
+    if not items:
+        raise ValueError("--horizons must contain at least one horizon")
+    return items
+
+
 def _ensure_cache(config: AppConfig) -> None:
     missing = [
         item.symbol
@@ -1316,6 +1791,10 @@ def _initialize_workspace(directory: Path) -> int:
 
 def _configure_logging(config: AppConfig) -> None:
     config.logs_dir.mkdir(parents=True, exist_ok=True)
+    # force=True closes and detaches any handlers from a previous invocation
+    # in the same process, so repeated CLI calls (and the test suite) bind the
+    # log file to the *current* configuration and never leak open handles —
+    # on Windows an open ai_trade.log would block temporary-directory cleanup.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -1323,6 +1802,7 @@ def _configure_logging(config: AppConfig) -> None:
             logging.FileHandler(config.logs_dir / "ai_trade.log", encoding="utf-8"),
             logging.StreamHandler(),
         ],
+        force=True,
     )
 
 

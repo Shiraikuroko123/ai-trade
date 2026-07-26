@@ -480,6 +480,13 @@ verified local market snapshot + active Strategy Lab baseline
      mechanism + predictions + exact falsification rules
       alternatives + confounds + experiment pre-registration
                          |
+          deterministic experiment runner (hypothesis-run)
+     same-snapshot or later-snapshot replication, judged against
+        the pre-registered falsification criteria only
+                         |
+      immutable run record: SUPPORTED / FALSIFIED / (NOT_)REPLICATED
+        X verdict grants no authority of any kind
+                         |
         X no automatic candidate, approval, activation, or order
                          |
          explicit human materialization boundary
@@ -508,7 +515,20 @@ approval, activation, trading, broker changes, and gate weakening. A separate
 `hypothesis-materialize --yes` command lets a human create one deterministic,
 fingerprint-bound Strategy Lab `DRAFT`. The candidate ID is derived from owner
 and hypothesis identity, so repeat or concurrent confirmation cannot create a
-second draft. Experiment execution remains intentionally outside this layer.
+second draft.
+
+`hypothesis-run` executes the pre-registered plan deterministically on the
+verified local cache. It fails closed on any configuration-context, baseline,
+or candidate-fingerprint drift, runs the registered full-window, holdout,
+cost-stress, rolling-fold, and sensitivity comparisons, and judges each
+prediction only against its exact pre-registered falsification criterion with
+disclosed formulas and no p-value claim. A matching cache runs in
+`same_snapshot` mode; a later verified cache runs the same computations as
+`independent_replication` and discloses how many sessions postdate the
+registration. Run records are create-once, owner-isolated, capacity-bounded,
+idempotent per execution fingerprint, and carry `verdict_grants_no_authority`:
+a supported or replicated verdict is research evidence that still requires the
+human materialization, validation, and approval chain to have any effect.
 
 ## Strategy Lab Boundary
 
