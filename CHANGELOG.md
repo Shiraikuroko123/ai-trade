@@ -5,6 +5,11 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Fixed the download pipeline's last-resort local fallback for never-cached
+  instruments: when both network providers fail for a universe member that
+  has no cache file yet (first 47-symbol rollout), the staging path now
+  fails closed with the same actionable RuntimeError wording as the
+  staleness guard instead of leaking a raw FileNotFoundError traceback.
 - Added the nested walk-forward confirmatory tuning protocol
   (`nested-walk-forward`, `nested-walk-forwards`,
   `nested-walk-forward-show`): every outer fold selects at most one
