@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 import math
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, List, Mapping, Sequence
 from uuid import uuid4
 
 from ..backtest import BacktestEngine
@@ -138,8 +138,8 @@ class ParameterSweepEngine:
             )
 
         baseline_metrics = self._run(market, baseline_snapshot)
-        variants: list[dict[str, Any]] = []
-        swept: list[str] = []
+        variants: List[dict[str, Any]] = []
+        swept: List[str] = []
         for spec in specs:
             original = baseline_snapshot[spec.scope][spec.name]
             values = _candidate_values(spec, float(original), points)
@@ -314,13 +314,13 @@ class ParameterSweepEngine:
         stored["reused"] = False
         return stored
 
-    def _records(self, owner: str) -> list[dict[str, Any]]:
+    def _records(self, owner: str) -> List[dict[str, Any]]:
         directory = self.owner_directory(owner) / "sweeps"
         if not directory.exists():
             return []
         if directory.is_symlink() or not directory.is_dir():
             raise RuntimeError("Sweep owner directory is invalid")
-        records: list[dict[str, Any]] = []
+        records: List[dict[str, Any]] = []
         for path in directory.iterdir():
             if (
                 path.is_symlink()

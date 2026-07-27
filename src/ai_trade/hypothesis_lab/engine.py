@@ -38,7 +38,7 @@ _MODEL_TITLES = {
 # to which objective. Defensive families argue for loss control; everything
 # else (momentum, trend, liquidity, custom expressions) stays balanced. The
 # bridge never selects the turnover objective on its own.
-MODEL_EVIDENCE_RULE_VERSION = "model-evidence-derivation-v1"
+MODEL_EVIDENCE_RULE_VERSION = "model-evidence-derivation-v2"
 MINIMUM_MODEL_EVIDENCE_DATES = 24
 _DEFENSIVE_FACTORS = frozenset(
     {"volatility_60", "reversal_5", "drawdown_from_high_120"}
@@ -417,6 +417,12 @@ def _model_evidence_case(
             f"({results['best_factor_id']}，差值 {delta:.4f})；"
             "诚实的结论是单因子占优，请改用 hypothesis-generate"
         )
+    model_adjusted_p, comparison_adjusted_p = _model_statistical_gates(
+        results,
+        mean_ic=mean_ic,
+        delta=delta,
+        best_factor_id=str(results["best_factor_id"]),
+    )
     coefficients = sorted(
         (
             item
@@ -438,7 +444,10 @@ def _model_evidence_case(
         f"{evaluation['evaluation_id']} shows {model_id} out-of-sample mean "
         f"rank IC {mean_ic:.4f} over {dates} dates at horizon {horizon}, "
         f"beating its best single factor {results['best_factor_id']} by "
-        f"{delta:.4f}; dominant disclosed factor {dominant} "
+        f"{delta:.4f}; Holm-adjusted p-values are {model_adjusted_p:.4f} "
+        f"and {comparison_adjusted_p:.4f}, respectively, with positive 95% "
+        f"confidence-interval lower bounds and all three chronological "
+        f"subperiods positive; dominant disclosed factor {dominant} "
         f"({'defensive' if defensive else 'trend/liquidity'} family) selects "
         f"the {objective} objective."
     )
@@ -455,6 +464,96 @@ def _model_evidence_case(
         _MODEL_MECHANISM_SUFFIX,
         _MODEL_LIMITATION,
     )
+
+
+def _model_statistical_gates(
+    results: Mapping[str, Any],
+    *,
+    mean_ic: float,
+    delta: float,
+    best_factor_id: str,
+) -> tuple[float, float]:
+    statistical = results.get("statistical_validation")
+    if not isinstance(statistical, Mapping):
+        raise ValueError(
+            "Model evidence lacks statistical validation; rerun model-evaluate "
+            "with the current engine before deriving a hypothesis"
+        )
+    model_adjusted = _positive_statistical_gate(
+        statistical.get("model_ic"),
+        expected_effect=mean_ic,
+        label="model out-of-sample IC",
+    )
+    comparisons = statistical.get("factor_comparisons")
+    if not isinstance(comparisons, list):
+        raise ValueError("Model evidence lacks factor-comparison validation")
+    comparison = next(
+        (
+            item
+            for item in comparisons
+            if isinstance(item, Mapping)
+            and item.get("factor_id") == best_factor_id
+        ),
+        None,
+    )
+    if not isinstance(comparison, Mapping):
+        raise ValueError(
+            "Model evidence lacks validation against its selected best factor"
+        )
+    comparison_adjusted = _positive_statistical_gate(
+        comparison.get("validation"),
+        expected_effect=delta,
+        label="model-minus-best-factor IC",
+    )
+    return model_adjusted, comparison_adjusted
+
+
+def _positive_statistical_gate(
+    value: Any, *, expected_effect: float, label: str
+) -> float:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"Model evidence lacks {label} statistical validation")
+    numeric: dict[str, float] = {}
+    for field in (
+        "effect_size",
+        "ci_low",
+        "p_value",
+        "adjusted_p_value",
+        "alpha",
+        "minimum_subperiod_mean",
+    ):
+        item = value.get(field)
+        if (
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+        ):
+            raise ValueError(f"Model evidence {label} {field} is invalid")
+        numeric[field] = float(item)
+    if abs(numeric["effect_size"] - expected_effect) > 1e-9:
+        raise ValueError(f"Model evidence {label} effect size is inconsistent")
+    if numeric["ci_low"] <= 0:
+        raise ValueError(
+            f"Model evidence {label} 95% confidence interval is not positive"
+        )
+    if (
+        value.get("correction") != "holm"
+        or type(value.get("reject_null")) is not bool
+        or not value["reject_null"]
+        or numeric["adjusted_p_value"] > numeric["alpha"]
+    ):
+        raise ValueError(
+            f"Model evidence {label} does not pass the Holm-corrected test"
+        )
+    if (
+        value.get("subperiods") != 3
+        or value.get("positive_subperiods") != 3
+        or numeric["minimum_subperiod_mean"] <= 0
+    ):
+        raise ValueError(
+            f"Model evidence {label} is not positive in all three subperiods"
+        )
+    return numeric["adjusted_p_value"]
 
 
 def _resolve_objective(

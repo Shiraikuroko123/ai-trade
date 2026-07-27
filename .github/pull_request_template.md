@@ -14,7 +14,9 @@
 
 - [ ] `python -m compileall -q src tests`
 - [ ] `python -m unittest discover -s tests -v`
-- [ ] `ruff check .` and `node --check src/ai_trade/web/assets/app.js`
+- [ ] `python -m ruff check src tests scripts adapters/qmt/src`
+- [ ] `python -m mypy` and `python -m coverage report`
+- [ ] `node --check src/ai_trade/web/assets/app.js`
 - [ ] Full-history result reviewed
 - [ ] Walk-forward result reviewed
 - [ ] Desktop/mobile workstation behavior reviewed when UI code changes

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, timezone
 import math
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 from ..backtest import BacktestEngine
@@ -554,9 +554,9 @@ def _observe(metric: str, results: Mapping[str, Any]) -> float:
 
 
 def _judgments(
-    predictions: list[Mapping[str, Any]],
-    criteria: list[Mapping[str, Any]],
-    observations: list[Mapping[str, Any]],
+    predictions: Sequence[Mapping[str, Any]],
+    criteria: Sequence[Mapping[str, Any]],
+    observations: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     observed = {str(item["metric"]): float(item["value"]) for item in observations}
     criterion_by_prediction = {

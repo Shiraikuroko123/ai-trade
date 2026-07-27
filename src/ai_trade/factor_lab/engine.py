@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import math
 import statistics
 from typing import Any, Mapping
 from uuid import uuid4
@@ -8,6 +9,11 @@ from uuid import uuid4
 from .. import __version__
 from ..config import AppConfig
 from ..data.market import MarketData
+from ..research_statistics import (
+    apply_holm_correction,
+    deterministic_seed,
+    moving_block_bootstrap_mean,
+)
 from .custom import resolve_factor
 from .library import LIBRARY_VERSION, factor_registry
 from .schema import (
@@ -156,7 +162,8 @@ class FactorLabEngine:
                 f"{MINIMUM_EVALUATED_DATES} valid cross-section dates"
             )
 
-        results = []
+        results: list[dict[str, Any]] = []
+        validations: list[dict[str, Any]] = []
         for horizon in horizons:
             ics = per_horizon[horizon]["ic"]
             spreads = per_horizon[horizon]["spread"]
@@ -191,6 +198,28 @@ class FactorLabEngine:
                     ),
                 }
             )
+            validations.append(
+                moving_block_bootstrap_mean(
+                    [value * definition.direction for value in ics],
+                    block_size=min(
+                        len(ics), max(1, math.ceil(horizon / step))
+                    ),
+                    seed=deterministic_seed(
+                        "factor-ic",
+                        snapshot_fingerprint,
+                        definition.factor_id,
+                        horizon,
+                        step,
+                        SCHEMA_VERSION,
+                        ENGINE_VERSION,
+                    ),
+                )
+            )
+
+        for result, validation in zip(
+            results, apply_holm_correction(validations)
+        ):
+            result["statistical_validation"] = validation
 
         metadata_after = _metadata(market)
         if json_fingerprint(metadata_after) != snapshot_fingerprint:

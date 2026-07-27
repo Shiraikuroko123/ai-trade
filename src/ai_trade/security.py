@@ -76,7 +76,9 @@ class SecurityMaster:
     ) -> "SecurityMaster":
         if int(raw.get("schema_version", 0)) != 1:
             raise ValueError("security master schema_version must be 1")
-        instruments = tuple(_parse_instrument(value) for value in raw.get("instruments", []))
+        instruments = tuple(
+            _parse_instrument(value) for value in raw.get("instruments", [])
+        )
         universes = {
             name: tuple(_parse_membership(value) for value in values)
             for name, values in dict(raw.get("universes", {})).items()
@@ -95,7 +97,9 @@ class SecurityMaster:
     def from_legacy(cls, values: Iterable[dict[str, Any]]) -> "SecurityMaster":
         instruments = tuple(_parse_instrument(value) for value in values)
         memberships = tuple(
-            UniverseMembership(item.symbol, item.listing_date or date.min, item.delisting_date)
+            UniverseMembership(
+                item.symbol, item.listing_date or date.min, item.delisting_date
+            )
             for item in instruments
         )
         return cls(
@@ -108,7 +112,9 @@ class SecurityMaster:
             },
         )
 
-    def required_instruments(self, universe: str, benchmark: str) -> tuple[Instrument, ...]:
+    def required_instruments(
+        self, universe: str, benchmark: str
+    ) -> tuple[Instrument, ...]:
         symbols = {item.symbol for item in self._memberships(universe)} | {benchmark}
         missing = sorted(symbol for symbol in symbols if symbol not in self.instruments)
         if missing:
@@ -180,7 +186,9 @@ class SecurityMaster:
         )
         return TradingStatus(value.status, value.tradable, limit)
 
-    def snapshot(self, universe: str, on_date: date, minimum_listing_days: int) -> dict[str, Any]:
+    def snapshot(
+        self, universe: str, on_date: date, minimum_listing_days: int
+    ) -> dict[str, Any]:
         members = {item.symbol for item in self._memberships(universe)}
         rows = []
         for symbol in sorted(members):
@@ -197,10 +205,14 @@ class SecurityMaster:
                     "asset_class": instrument.asset_class,
                     "sector": instrument.sector,
                     "listing_date": (
-                        instrument.listing_date.isoformat() if instrument.listing_date else None
+                        instrument.listing_date.isoformat()
+                        if instrument.listing_date
+                        else None
                     ),
                     "delisting_date": (
-                        instrument.delisting_date.isoformat() if instrument.delisting_date else None
+                        instrument.delisting_date.isoformat()
+                        if instrument.delisting_date
+                        else None
                     ),
                     "active": not reasons,
                     "eligibility_reasons": list(reasons),
@@ -222,7 +234,9 @@ class SecurityMaster:
 
     def fingerprint(self) -> str:
         payload = {
-            "instruments": [_instrument_payload(value) for value in self.instruments.values()],
+            "instruments": [
+                _instrument_payload(value) for value in self.instruments.values()
+            ],
             "universes": {
                 key: [_dated_payload(value) for value in values]
                 for key, values in sorted(self.universes.items())
@@ -234,6 +248,24 @@ class SecurityMaster:
             payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
         ).encode("ascii")
         return sha256(encoded).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the canonical v1 business-time payload for versioned storage."""
+
+        return {
+            "schema_version": 1,
+            "as_of": self.metadata.get("as_of"),
+            "selection_method": self.metadata.get("selection_method", "unspecified"),
+            "provenance": self.metadata.get("provenance", "unspecified"),
+            "instruments": [
+                _instrument_payload(value) for value in self.instruments.values()
+            ],
+            "universes": {
+                key: [_dated_payload(value) for value in values]
+                for key, values in self.universes.items()
+            },
+            "status_periods": [_dated_payload(value) for value in self.status_periods],
+        }
 
     def _memberships(self, universe: str) -> tuple[UniverseMembership, ...]:
         if universe not in self.universes:
@@ -254,13 +286,17 @@ class SecurityMaster:
                         f"Universe {name!r} references unknown symbol {value.symbol!r}"
                     )
                 if value.end and value.end < value.start:
-                    raise ValueError(f"Membership end precedes start for {value.symbol}")
+                    raise ValueError(
+                        f"Membership end precedes start for {value.symbol}"
+                    )
             _validate_non_overlapping_periods(
                 memberships, f"universe {name!r} membership"
             )
         for value in self.status_periods:
             if value.symbol not in self.instruments:
-                raise ValueError(f"Status period references unknown symbol {value.symbol!r}")
+                raise ValueError(
+                    f"Status period references unknown symbol {value.symbol!r}"
+                )
             if value.end and value.end < value.start:
                 raise ValueError(f"Status end precedes start for {value.symbol}")
             if value.price_limit_pct is not None and not 0 < value.price_limit_pct < 1:

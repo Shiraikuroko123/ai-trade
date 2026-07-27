@@ -20,11 +20,18 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 class DistributionVerificationTests(unittest.TestCase):
     def test_market_refresh_modules_are_required_in_both_artifacts(self):
-        for module in ("cache_snapshot.py", "cross_check.py", "tencent.py", "yahoo.py"):
+        for module in (
+            "baostock.py",
+            "cache_snapshot.py",
+            "cross_check.py",
+            "tencent.py",
+            "yahoo.py",
+        ):
             with self.subTest(module=module):
                 self.assertIn(f"ai_trade/data/{module}", WHEEL_REQUIRED)
                 self.assertIn(f"src/ai_trade/data/{module}", SDIST_REQUIRED)
         self.assertIn("docs/CROSS_SOURCE_AUDIT.md", SDIST_REQUIRED)
+        self.assertIn("docs/JQDATA.md", SDIST_REQUIRED)
 
     def test_docker_deployment_surface_is_required_in_source_artifact(self):
         for name in (
@@ -132,6 +139,25 @@ class DistributionVerificationTests(unittest.TestCase):
                     f"src/ai_trade/hypothesis_lab/{module}", SDIST_REQUIRED
                 )
         self.assertIn("docs/HYPOTHESIS_LAB.md", SDIST_REQUIRED)
+
+    def test_feature_store_forward_surface_is_required_in_both_artifacts(self):
+        for module in (
+            "__init__.py",
+            "builder.py",
+            "forward.py",
+            "labels.py",
+            "provenance.py",
+            "schema.py",
+            "store.py",
+        ):
+            with self.subTest(module=module):
+                self.assertIn(f"ai_trade/feature_store/{module}", WHEEL_REQUIRED)
+                self.assertIn(
+                    f"src/ai_trade/feature_store/{module}", SDIST_REQUIRED
+                )
+        self.assertIn("ai_trade/pipeline_cli.py", WHEEL_REQUIRED)
+        self.assertIn("src/ai_trade/pipeline_cli.py", SDIST_REQUIRED)
+        self.assertIn("docs/FORWARD_EVIDENCE.md", SDIST_REQUIRED)
 
     def test_broker_safety_surface_is_required_in_both_artifacts(self):
         for module in (

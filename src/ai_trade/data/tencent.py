@@ -97,7 +97,13 @@ def download_instrument(
     )
     source_mode = "incremental" if cached else "full_history"
     try:
-        bars, exact_override, pages, overlap_rows = _download_range(
+        (
+            bars,
+            exact_override,
+            pages,
+            overlap_rows,
+            adjustment_metadata,
+        ) = _download_range(
             instrument,
             start,
             end,
@@ -113,7 +119,13 @@ def download_instrument(
             request_interval=request_interval,
         )
     except TencentOverlapError:
-        bars, exact_override, pages, overlap_rows = _download_range(
+        (
+            bars,
+            exact_override,
+            pages,
+            overlap_rows,
+            adjustment_metadata,
+        ) = _download_range(
             instrument,
             start,
             end,
@@ -142,6 +154,7 @@ def download_instrument(
             "amount_resolution_cny": 100,
             "amount_max_rounding_error_cny": 50,
             "latest_amount_exact_override": exact_override,
+            **adjustment_metadata,
         }
         if source_mode == "incremental":
             metadata.update(cache_provenance)
@@ -165,7 +178,7 @@ def _download_range(
     retry_max: float,
     retry_jitter: float,
     request_interval: float,
-) -> tuple[list[Bar], bool, int, int]:
+) -> tuple[list[Bar], bool, int, int, dict[str, object]]:
     overlap = cached[-min(YEARLY_LIMIT, len(cached)) :] if cached else []
     request_start = overlap[0].date if overlap else start
     ranges = [
@@ -179,8 +192,9 @@ def _download_range(
     matched_overlap: set[date] = set()
     latest_exact_override = False
     downloaded_dates: set[date] = set()
+    used_unadjusted_equivalent = False
     for index, (year_start, year_end) in enumerate(ranges):
-        rows, exact_override_date = _download_year(
+        rows, exact_override_date, used_unadjusted_page = _download_year(
             instrument,
             year_start,
             year_end,
@@ -193,6 +207,9 @@ def _download_range(
             retry_base=retry_base,
             retry_max=retry_max,
             retry_jitter=retry_jitter,
+        )
+        used_unadjusted_equivalent = (
+            used_unadjusted_equivalent or used_unadjusted_page
         )
         for bar in rows:
             if bar.date in downloaded_dates:
@@ -227,7 +244,32 @@ def _download_range(
         raise RuntimeError(
             f"Tencent returned no completed bars for {instrument.symbol}"
         )
-    return bars, latest_exact_override, len(ranges), len(matched_overlap)
+    adjustment_metadata: dict[str, object] = {}
+    if used_unadjusted_equivalent:
+        from .sina import verify_forward_adjustment_identity
+
+        adjustment_metadata = verify_forward_adjustment_identity(
+            instrument,
+            bars,
+            start=start,
+            end=end,
+            cutoff=end,
+            timeout=timeout,
+            proxy_mode=proxy_mode,
+            max_attempts=max_attempts,
+            retry_base=retry_base,
+            retry_max=retry_max,
+            retry_jitter=retry_jitter,
+        )
+        adjustment_metadata["tencent_response_series"] = "day"
+        adjustment_metadata["requested_adjustment_series"] = response_key
+    return (
+        bars,
+        latest_exact_override,
+        len(ranges),
+        len(matched_overlap),
+        adjustment_metadata,
+    )
 
 
 def _download_year(
@@ -244,7 +286,7 @@ def _download_year(
     retry_base: float,
     retry_max: float,
     retry_jitter: float,
-) -> tuple[list[Bar], date | None]:
+) -> tuple[list[Bar], date | None, bool]:
     code = f"{instrument.market.lower()}{instrument.symbol}"
     callback = f"ai_trade_{code}_{start.year}"
     last_error: Exception | None = None
@@ -270,16 +312,23 @@ def _download_year(
                 )
             text = raw.decode("utf-8")
             payload = _parse_jsonp(text, callback, instrument.symbol)
-            return _parse_payload(
+            selected_key, used_unadjusted_equivalent = _response_series_key(
+                payload,
+                code=code,
+                response_key=response_key,
+                adjustment=adjustment,
+            )
+            rows, exact_override_date = _parse_payload(
                 payload,
                 instrument,
                 code,
-                response_key,
+                selected_key,
                 adjustment,
                 start,
                 end,
                 cutoff,
             )
+            return rows, exact_override_date, used_unadjusted_equivalent
         except (OSError, UnicodeError, ValueError, RuntimeError) as exc:
             last_error = exc
             if attempt + 1 < max_attempts:
@@ -289,6 +338,29 @@ def _download_year(
         f"Tencent failed to download {instrument.symbol} year {start.year} "
         f"after {max_attempts} attempts: {last_error}"
     ) from last_error
+
+
+def _response_series_key(
+    payload: object,
+    *,
+    code: str,
+    response_key: str,
+    adjustment: str,
+) -> tuple[str, bool]:
+    """Use raw rows only when a later independent identity proof is required."""
+
+    if adjustment != "qfq" or not isinstance(payload, dict):
+        return response_key, False
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return response_key, False
+    item = data.get(code)
+    if not isinstance(item, dict) or response_key in item:
+        return response_key, False
+    raw_rows = item.get("day")
+    if isinstance(raw_rows, list) and raw_rows:
+        return "day", True
+    return response_key, False
 
 
 def _parse_jsonp(text: str, callback: str, symbol: str) -> object:

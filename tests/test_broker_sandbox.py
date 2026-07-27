@@ -10,7 +10,6 @@ from unittest import TestCase
 
 from ai_trade.broker.base import BrokerEnvironment, BrokerOperation
 from ai_trade.broker.sandbox import (
-    SANDBOX_ACCOUNT_ID,
     SANDBOX_ADAPTER_NAME,
     SANDBOX_CAPABILITIES,
     SandboxCycleEngine,

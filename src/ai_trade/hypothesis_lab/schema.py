@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 
 SCHEMA_VERSION = 1
-ENGINE_VERSION = 1
+ENGINE_VERSION = 2
 TEMPLATE_VERSION = "local-objective-v1"
 
 HYPOTHESIS_ID = re.compile(r"hyp_[0-9a-f]{32}\Z")
@@ -189,7 +189,7 @@ def validate_record(value: Mapping[str, Any]) -> None:
         raise ValueError("Hypothesis top-level schema fields are invalid")
     if value.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("Hypothesis schema version is invalid")
-    if value.get("engine_version") != ENGINE_VERSION:
+    if value.get("engine_version") not in {1, ENGINE_VERSION}:
         raise ValueError("Hypothesis engine version is invalid")
     if value.get("template_version") != TEMPLATE_VERSION:
         raise ValueError("Hypothesis template version is invalid")

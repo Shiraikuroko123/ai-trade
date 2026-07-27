@@ -18,6 +18,7 @@ from ai_trade.model_lab.engine import (
     _fit_ridge,
     _solve,
 )
+from ai_trade.model_lab.schema import evaluation_record_fingerprint
 from ai_trade.model_lab.store import ModelLabCapacityError
 from ai_trade.models import Bar
 
@@ -163,6 +164,29 @@ class ModelLabEngineTests(TestCase):
         self.assertAlmostEqual(result["mean_ic"], 1.0)
         self.assertAlmostEqual(result["positive_share"], 1.0)
         self.assertGreater(result["mean_spread"], 0.0)
+        statistical = record["results"]["statistical_validation"]
+        model_validation = statistical["model_ic"]
+        self.assertAlmostEqual(model_validation["effect_size"], 1.0)
+        self.assertAlmostEqual(model_validation["ci_low"], 1.0)
+        self.assertAlmostEqual(model_validation["ci_high"], 1.0)
+        self.assertEqual(model_validation["p_value"], 0.001)
+        self.assertEqual(model_validation["family_size"], 3)
+        self.assertEqual(model_validation["block_size"], 2)
+        self.assertTrue(model_validation["reject_null"])
+        self.assertEqual(model_validation["positive_subperiods"], 3)
+        comparisons = statistical["factor_comparisons"]
+        self.assertEqual(
+            [item["factor_id"] for item in comparisons], self.factors
+        )
+        for comparison in comparisons:
+            self.assertAlmostEqual(comparison["mean_delta"], 0.0)
+            self.assertAlmostEqual(
+                comparison["validation"]["effect_size"], 0.0
+            )
+            self.assertEqual(
+                comparison["validation"]["adjusted_p_value"], 1.0
+            )
+            self.assertFalse(comparison["validation"]["reject_null"])
         baselines = {
             item["factor_id"]: item for item in record["results"]["factor_baselines"]
         }
@@ -287,12 +311,33 @@ class ModelLabEngineTests(TestCase):
             / f"{record['evaluation_id']}.json"
         )
         value = json.loads(path.read_text(encoding="utf-8"))
-        value["results"]["model"]["mean_ic"] = 0.5
+        value["results"]["statistical_validation"]["model_ic"]["seed"] += 1
+        value["record_fingerprint"] = evaluation_record_fingerprint(value)
         path.write_text(json.dumps(value), encoding="utf-8")
         with self.assertRaisesRegex(
             RuntimeError, "Invalid model evaluation record"
         ):
             self.store.get("alice", record["evaluation_id"])
+
+    def test_v1_evaluation_remains_readable(self):
+        record = self.engine.evaluate(
+            "alice", self.market, "ridge_v1", factor_ids=self.factors, horizon=10
+        )
+        path = (
+            self.store.owner_directory("alice")
+            / "evaluations"
+            / f"{record['evaluation_id']}.json"
+        )
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["schema_version"] = 1
+        value["engine_version"] = 1
+        value["results"].pop("statistical_validation")
+        value["record_fingerprint"] = evaluation_record_fingerprint(value)
+        path.write_text(json.dumps(value), encoding="utf-8")
+
+        stored = self.store.get("alice", record["evaluation_id"])
+        self.assertEqual(stored["schema_version"], 1)
+        self.assertNotIn("statistical_validation", stored["results"])
 
     def test_per_model_capacity_is_enforced(self):
         self.engine.evaluate(

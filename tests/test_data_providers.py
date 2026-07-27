@@ -21,16 +21,18 @@ from ai_trade.data.providers import (
 class DataProviderRegistryTests(unittest.TestCase):
     def test_registry_exposes_only_implemented_providers(self):
         self.assertEqual(
-            registered_provider_names(), ("eastmoney", "tencent", "tushare", "yahoo")
+            registered_provider_names(),
+            ("baostock", "eastmoney", "tencent", "tushare", "yahoo"),
         )
         self.assertEqual(snapshot_provider_names(), ("eastmoney", "tencent"))
         catalog = provider_catalog()
         self.assertEqual(
             [item["key"] for item in catalog],
-            ["eastmoney", "tencent", "tushare", "yahoo"],
+            ["baostock", "eastmoney", "tencent", "tushare", "yahoo"],
         )
         self.assertTrue(all(item["daily_bars"] for item in catalog))
         intraday = {item["key"]: item["intraday_bars"] for item in catalog}
+        self.assertFalse(intraday["baostock"])
         self.assertTrue(intraday["eastmoney"])
         self.assertFalse(intraday["tencent"])
         self.assertFalse(intraday["tushare"])
@@ -44,11 +46,19 @@ class DataProviderRegistryTests(unittest.TestCase):
         tushare = next(item for item in catalog if item["key"] == "tushare")
         self.assertFalse(tushare["snapshot_eligible"])
         self.assertEqual(tushare["status"], "implemented_reference_only_requires_token")
+        baostock = next(item for item in catalog if item["key"] == "baostock")
+        self.assertFalse(baostock["snapshot_eligible"])
+        self.assertFalse(baostock["confirmation_eligible"])
+        self.assertEqual(
+            baostock["confirmation_ineligible_reason"],
+            "reference_provider_authorization_unverified",
+        )
 
     def test_provider_lookup_is_normalized_and_rejects_unknown_sources(self):
         self.assertEqual(provider_for(" EASTMONEY ").descriptor.key, "eastmoney")
         self.assertEqual(provider_for(" Yahoo ").descriptor.key, "yahoo")
         self.assertEqual(provider_for(" Tushare ").descriptor.key, "tushare")
+        self.assertEqual(provider_for(" BaoStock ").descriptor.key, "baostock")
         with self.assertRaisesRegex(ProviderConfigurationError, "registered providers"):
             provider_for("akshare")
 
@@ -73,6 +83,11 @@ class DataProviderRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "data.fallback_provider"):
                 load_config(path)
 
+            raw["data"]["fallback_provider"] = "baostock"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "data.fallback_provider"):
+                load_config(path)
+
     def test_yahoo_is_allowed_as_forward_adjusted_cross_check_reference(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -88,6 +103,29 @@ class DataProviderRegistryTests(unittest.TestCase):
             config = load_config(path)
             self.assertEqual(
                 config.raw["data"]["cross_check"]["reference_provider"], "yahoo"
+            )
+
+            raw["data"]["adjustment"] = "backward"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "supports adjustment modes"):
+                load_config(path)
+
+    def test_baostock_is_allowed_only_as_a_forward_adjusted_reference(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = _write_config(root)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["data"]["cross_check"] = {
+                "enabled": True,
+                "reference_provider": " BaoStock ",
+                "lookback_sessions": 5,
+                "minimum_overlap_sessions": 3,
+            }
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            config = load_config(path)
+            self.assertEqual(
+                config.raw["data"]["cross_check"]["reference_provider"],
+                "baostock",
             )
 
             raw["data"]["adjustment"] = "backward"

@@ -21,7 +21,7 @@ from datetime import date, datetime, timezone
 import math
 import re
 import statistics
-from typing import Any, Mapping, Sequence
+from typing import Any, List, Mapping, Sequence
 from uuid import uuid4
 
 from ..backtest import BacktestEngine
@@ -231,14 +231,14 @@ class NestedWalkForwardEngine:
                 )
             return run_cache[key]
 
-        folds: list[dict[str, Any]] = []
-        deltas: list[float] = []
+        folds: List[dict[str, Any]] = []
+        deltas: List[float] = []
         non_baseline = 0
         regret = 0
         positive = 0
         selection_counts: dict[tuple[str, float], int] = {}
         for fold_number, fold in enumerate(layout, start=1):
-            scored: list[dict[str, Any]] = []
+            scored: List[dict[str, Any]] = []
             for index, candidate in enumerate(candidates):
                 scores = [
                     _objective_score(
@@ -467,8 +467,8 @@ class NestedWalkForwardEngine:
         baseline: Mapping[str, Mapping[str, Any]],
         specs,
         points: int,
-    ) -> list[dict[str, Any]]:
-        candidates: list[dict[str, Any]] = [
+    ) -> List[dict[str, Any]]:
+        candidates: List[dict[str, Any]] = [
             {
                 "parameter": None,
                 "value": None,
@@ -495,7 +495,7 @@ class NestedWalkForwardEngine:
                 )
         return candidates
 
-    def _calendar(self, market: MarketData) -> list[date]:
+    def _calendar(self, market: MarketData) -> List[date]:
         raw = self.config.raw.get("backtest", {})
         start = _config_date(raw.get("start"), date.min)
         end = _config_date(raw.get("end"), date.max)
@@ -533,13 +533,13 @@ class NestedWalkForwardEngine:
         stored["reused"] = False
         return stored
 
-    def _records(self, owner: str) -> list[dict[str, Any]]:
+    def _records(self, owner: str) -> List[dict[str, Any]]:
         directory = self.owner_directory(owner) / "nested"
         if not directory.exists():
             return []
         if directory.is_symlink() or not directory.is_dir():
             raise RuntimeError("Nested walk-forward owner directory is invalid")
-        records: list[dict[str, Any]] = []
+        records: List[dict[str, Any]] = []
         for path in directory.iterdir():
             if (
                 path.is_symlink()

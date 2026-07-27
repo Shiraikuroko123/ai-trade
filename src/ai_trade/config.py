@@ -34,6 +34,8 @@ DEFAULT_NEWS_DIR = "state/news"
 DEFAULT_FUNDAMENTALS_DIR = "state/fundamentals"
 DEFAULT_DISCLOSURES_DIR = "state/disclosures"
 DEFAULT_ORDER_BOOK_DIR = "state/order_book"
+DEFAULT_FEATURE_STORE_DIR = "state/feature_store"
+DEFAULT_SECURITY_MASTER_STORE_DIR = "state/security_master"
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,33 @@ class AppConfig:
         )
 
     @property
+    def feature_store_dir(self) -> Path:
+        """Return the local root for immutable PIT feature and label evidence."""
+
+        return _state_child_path(
+            self.raw.get("feature_store", {}),
+            project_root=self.project_root,
+            section="feature_store",
+            default=DEFAULT_FEATURE_STORE_DIR,
+        )
+
+    @property
+    def security_master_store_dir(self) -> Path:
+        """Return immutable knowledge-time security-master versions."""
+
+        master_spec = self.raw.get("security_master") or {}
+        return _state_child_path(
+            {
+                "root_dir": master_spec.get(
+                    "version_store", DEFAULT_SECURITY_MASTER_STORE_DIR
+                )
+            },
+            project_root=self.project_root,
+            section="security_master.version_store",
+            default=DEFAULT_SECURITY_MASTER_STORE_DIR,
+        )
+
+    @property
     def auth_enabled(self) -> bool:
         return bool(self.raw.get("auth", {}).get("enabled", True))
 
@@ -243,6 +272,20 @@ class AppConfig:
     def shadow_max_import_bytes(self) -> int:
         return int(
             self.raw.get("shadow_account", {}).get("max_import_bytes", 1_000_000)
+        )
+
+    @property
+    def shadow_ledger_dir(self) -> Path:
+        """Return the event-sourced shadow-account ledger root."""
+
+        value = self.raw.get("shadow_account", {}).get(
+            "ledger_dir", "state/shadow_ledger"
+        )
+        return _state_child_path(
+            {"root_dir": value},
+            project_root=self.project_root,
+            section="shadow_account.ledger",
+            default="state/shadow_ledger",
         )
 
     @property
@@ -462,6 +505,16 @@ def _validate(
     _validate_auth(raw.get("auth", {}))
     _validate_broker(raw.get("broker", {}), project_root=project_root)
     _validate_shadow_account(raw.get("shadow_account", {}))
+    _state_child_path(
+        {
+            "root_dir": raw.get("shadow_account", {}).get(
+                "ledger_dir", "state/shadow_ledger"
+            )
+        },
+        project_root=project_root,
+        section="shadow_account.ledger",
+        default="state/shadow_ledger",
+    )
     _validate_research_journal(
         raw.get("research_journal", {}), project_root=project_root
     )
@@ -513,6 +566,24 @@ def _validate(
         section="order_book",
         default=DEFAULT_ORDER_BOOK_DIR,
     )
+    _state_child_path(
+        raw.get("feature_store", {}),
+        project_root=project_root,
+        section="feature_store",
+        default=DEFAULT_FEATURE_STORE_DIR,
+    )
+    master_spec = raw.get("security_master") or {}
+    _state_child_path(
+        {
+            "root_dir": master_spec.get(
+                "version_store", DEFAULT_SECURITY_MASTER_STORE_DIR
+            )
+        },
+        project_root=project_root,
+        section="security_master.version_store",
+        default=DEFAULT_SECURITY_MASTER_STORE_DIR,
+    )
+    _validate_shadow_path_boundaries(raw, project_root=project_root)
 
 
 def _validate_data_transport(data: dict[str, Any]) -> None:
@@ -807,6 +878,70 @@ def _validate_shadow_account(value: dict[str, Any]) -> None:
         if normalized in configured:
             raise ValueError("shadow account ledger paths must be different")
         configured.add(normalized)
+
+
+def _validate_shadow_path_boundaries(
+    raw: dict[str, Any], *, project_root: Path
+) -> None:
+    shadow = raw.get("shadow_account", {})
+    ledger_root = _state_child_path(
+        {"root_dir": shadow.get("ledger_dir", "state/shadow_ledger")},
+        project_root=project_root,
+        section="shadow_account.ledger",
+        default="state/shadow_ledger",
+    )
+    protected: list[tuple[str, Path]] = []
+
+    def add(section: str, value: object) -> None:
+        candidate = Path(str(value))
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (project_root / candidate).resolve()
+        )
+        protected.append((section, resolved))
+
+    for name, default in (
+        ("fills_file", "state/shadow_fills.csv"),
+        ("imports_file", "state/shadow_imports.csv"),
+    ):
+        add(f"shadow_account.{name}", shadow.get(name, default))
+    paper = raw.get("paper", {})
+    for name, default in (
+        ("state_file", "state/paper_state.json"),
+        ("trades_file", "state/paper_trades.csv"),
+        ("equity_file", "state/paper_equity.csv"),
+        ("rejections_file", "state/paper_rejections.csv"),
+    ):
+        add(f"paper.{name}", paper.get(name, default))
+    broker = raw.get("broker", {})
+    for name, default in (
+        ("reconciliation_file", "state/broker_reconciliation.csv"),
+        ("orders_file", "state/broker_orders.csv"),
+        ("fills_file", "state/broker_fills.csv"),
+        ("ledger_scope_file", "state/broker_ledger_scope.json"),
+        ("authorization_file", "state/live_authorization.json"),
+        ("batch_approval_file", "state/live_batch_approval.json"),
+        ("kill_switch_file", "state/LIVE_KILL_SWITCH"),
+    ):
+        add(f"broker.{name}", broker.get(name, default))
+    feature_root = _state_child_path(
+        raw.get("feature_store", {}),
+        project_root=project_root,
+        section="feature_store",
+        default=DEFAULT_FEATURE_STORE_DIR,
+    )
+    protected.append(("feature_store.root_dir", feature_root))
+
+    for section, target in protected:
+        if (
+            ledger_root == target
+            or ledger_root in target.parents
+            or target in ledger_root.parents
+        ):
+            raise ValueError(
+                "shadow_account.ledger_dir must not overlap " + section
+            )
 
 
 def _validate_research_journal(

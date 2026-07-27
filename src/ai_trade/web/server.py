@@ -259,7 +259,9 @@ def serve_dashboard(
     display_host = (
         "127.0.0.1"
         if server.allow_container_bind and str(actual_host) in {"0.0.0.0", "::"}
-        else f"[{actual_host}]" if ":" in actual_host else actual_host
+        else f"[{actual_host}]"
+        if ":" in actual_host
+        else actual_host
     )
     url = f"http://{display_host}:{actual_port}/"
     LOGGER.info("AI Trade workstation listening at %s", url)
@@ -328,12 +330,14 @@ def _handler_factory(
                     if auth is not None and self._require_session() is None:
                         return
                     self._json_error(
-                        HTTPStatus.METHOD_NOT_ALLOWED, "HEAD is not supported for this API"
+                        HTTPStatus.METHOD_NOT_ALLOWED,
+                        "HEAD is not supported for this API",
                     )
                     return
-                if auth is not None and self._require_session(
-                    page=path in {"/", "/index.html"}
-                ) is None:
+                if (
+                    auth is not None
+                    and self._require_session(page=path in {"/", "/index.html"}) is None
+                ):
                     return
                 if path.startswith("/reports/"):
                     self._report(path, include_body=False)
@@ -375,7 +379,9 @@ def _handler_factory(
                     session = context[1] if context is not None else None
                     self._json(
                         {
-                            "token": session.csrf_token if session is not None else token,
+                            "token": session.csrf_token
+                            if session is not None
+                            else token,
                             "version": __version__,
                             "actions": list(jobs_action_names()),
                             "auth_enabled": auth is not None,
@@ -433,10 +439,10 @@ def _handler_factory(
                     self._json(service.portfolio())
                 elif parsed.path == "/api/trading":
                     if parsed.query:
-                        raise ValueError("Trading status does not accept query parameters")
-                    self._json(
-                        service.trading(owner_id=_assistant_user_id(context))
-                    )
+                        raise ValueError(
+                            "Trading status does not accept query parameters"
+                        )
+                    self._json(service.trading(owner_id=_assistant_user_id(context)))
                 elif parsed.path == "/api/universe/screen":
                     selected, filters = _parse_universe_screen_query(parsed.query)
                     self._json(service.screen_universe(selected, filters))
@@ -479,9 +485,7 @@ def _handler_factory(
                         raise ValueError(
                             "Monitoring status does not accept query parameters"
                         )
-                    self._json(
-                        service.monitoring(owner_id=_assistant_user_id(context))
-                    )
+                    self._json(service.monitoring(owner_id=_assistant_user_id(context)))
                 elif parsed.path == "/api/system":
                     self._json(service.system())
                 elif parsed.path == "/api/storage":
@@ -548,7 +552,9 @@ def _handler_factory(
                 )
 
         def do_POST(self) -> None:
+            self._request_body_consumed = False
             if not self._valid_host():
+                self._discard_bounded_request_body()
                 self._json_error(HTTPStatus.FORBIDDEN, "Invalid host header")
                 return
             parsed = urlsplit(self.path)
@@ -740,8 +746,7 @@ def _handler_factory(
                         _parse_shadow_import_payload(
                             self._read_json(
                                 maximum_bytes=(
-                                    service.config.shadow_max_import_bytes * 2
-                                    + 16_384
+                                    service.config.shadow_max_import_bytes * 2 + 16_384
                                 )
                             )
                         )
@@ -771,8 +776,8 @@ def _handler_factory(
                         HTTPStatus.CREATED,
                     )
                 elif parsed.path == "/api/strategy-lab/propose":
-                    title, hypothesis, objective = (
-                        _parse_strategy_lab_proposal_payload(self._read_json())
+                    title, hypothesis, objective = _parse_strategy_lab_proposal_payload(
+                        self._read_json()
                     )
                     self._json(
                         service.strategy_lab_propose(
@@ -819,9 +824,7 @@ def _handler_factory(
                         expected_active_candidate_id,
                         expected_active_fingerprint,
                         note,
-                    ) = _parse_strategy_lab_rollback_payload(
-                        self._read_json()
-                    )
+                    ) = _parse_strategy_lab_rollback_payload(self._read_json())
                     self._json(
                         service.strategy_lab_rollback(
                             note=note,
@@ -910,6 +913,7 @@ def _handler_factory(
                 )
 
         def do_DELETE(self) -> None:
+            self._request_body_consumed = False
             if self._authorize_write() is None:
                 return
             parsed = urlsplit(self.path)
@@ -931,26 +935,37 @@ def _handler_factory(
 
         def _authorize_write(self) -> tuple[str, Session | None] | None:
             if not self._valid_host():
+                self._discard_bounded_request_body()
                 self._json_error(HTTPStatus.FORBIDDEN, "Invalid host header")
                 return None
-            context = self._require_session() if auth is not None else ("", None)
+            context = (
+                self._require_session(discard_body_on_failure=True)
+                if auth is not None
+                else ("", None)
+            )
             if context is None:
                 return None
             provided = self.headers.get("X-AI-Trade-Token")
             expected = context[1].csrf_token if context[1] is not None else token
             if provided is None or not secrets.compare_digest(provided, expected):
-                self._json_error(HTTPStatus.FORBIDDEN, "Write token is missing or invalid")
+                self._discard_bounded_request_body()
+                self._json_error(
+                    HTTPStatus.FORBIDDEN, "Write token is missing or invalid"
+                )
                 return None
             if not self._same_origin():
+                self._discard_bounded_request_body()
                 self._json_error(HTTPStatus.FORBIDDEN, "Cross-origin write denied")
                 return None
             return context
 
         def _login(self) -> None:
             if auth is None:
+                self._discard_bounded_request_body()
                 self._json_error(HTTPStatus.NOT_FOUND, "Authentication is not enabled")
                 return
             if not self._same_origin():
+                self._discard_bounded_request_body()
                 self._json_error(HTTPStatus.FORBIDDEN, "Cross-origin login denied")
                 return
             try:
@@ -970,9 +985,7 @@ def _handler_factory(
                         headers={"Retry-After": str(retry_after)},
                     )
                 else:
-                    self._json_error(
-                        HTTPStatus.UNAUTHORIZED, "用户名或密码不正确"
-                    )
+                    self._json_error(HTTPStatus.UNAUTHORIZED, "用户名或密码不正确")
                 return
             except ValueError as exc:
                 self._json_error(HTTPStatus.BAD_REQUEST, str(exc))
@@ -996,9 +1009,7 @@ def _handler_factory(
                     ).isoformat(),
                 },
                 headers={
-                    "Set-Cookie": self._session_cookie(
-                        grant.token, session_max_age
-                    )
+                    "Set-Cookie": self._session_cookie(grant.token, session_max_age)
                 },
             )
 
@@ -1012,11 +1023,16 @@ def _handler_factory(
             return (token_value, session) if session is not None else None
 
         def _require_session(
-            self, *, page: bool = False
+            self,
+            *,
+            page: bool = False,
+            discard_body_on_failure: bool = False,
         ) -> tuple[str, Session] | None:
             context = self._session_context()
             if context is not None:
                 return context
+            if discard_body_on_failure:
+                self._discard_bounded_request_body()
             if page:
                 self._redirect("/login")
             else:
@@ -1104,6 +1120,23 @@ def _handler_factory(
                 return False
             return port is None or port == self.server.server_port
 
+        def _discard_bounded_request_body(self, maximum_bytes: int = 8192) -> None:
+            """Drain a small rejected body so Windows can deliver the response."""
+
+            if getattr(self, "_request_body_consumed", False):
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                return
+            if not 0 < length <= maximum_bytes:
+                return
+            try:
+                self.rfile.read(length)
+            except OSError:
+                return
+            self._request_body_consumed = True
+
         def _read_json(self, maximum_bytes: int = 8192) -> dict[str, object]:
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json")
@@ -1116,7 +1149,9 @@ def _handler_factory(
                     f"JSON request body must be between 1 and {maximum_bytes} bytes"
                 )
             try:
-                value = loads_unique_json(self.rfile.read(length).decode("utf-8"))
+                raw = self.rfile.read(length)
+                self._request_body_consumed = True
+                value = loads_unique_json(raw.decode("utf-8"))
             except (UnicodeError, ValueError) as exc:
                 raise ValueError("Request body is not valid UTF-8 JSON") from exc
             if not isinstance(value, dict):
@@ -1154,9 +1189,8 @@ def _handler_factory(
         def _report(self, path: str, include_body: bool = True) -> None:
             name = unquote(path.removeprefix("/reports/"))
             allowed_suffixes = {".csv", ".html", ".json", ".md"}
-            if (
-                not REPORT_NAME_PATTERN.fullmatch(name)
-                or not any(name.endswith(suffix) for suffix in allowed_suffixes)
+            if not REPORT_NAME_PATTERN.fullmatch(name) or not any(
+                name.endswith(suffix) for suffix in allowed_suffixes
             ):
                 self._json_error(HTTPStatus.NOT_FOUND, "Report not found")
                 return
@@ -1196,6 +1230,7 @@ def _handler_factory(
             status: HTTPStatus = HTTPStatus.OK,
             headers: dict[str, str] | None = None,
         ) -> None:
+            self._discard_bounded_request_body()
             content = json.dumps(
                 value, ensure_ascii=False, separators=(",", ":"), default=str
             ).encode("utf-8")
@@ -1282,8 +1317,7 @@ def _parse_research_journal_query(query: str) -> JournalQuery:
     unsupported = sorted(set(values) - {"category", "symbol", "q", "limit"})
     if unsupported:
         raise ValueError(
-            "Unsupported research journal query parameters: "
-            + ", ".join(unsupported)
+            "Unsupported research journal query parameters: " + ", ".join(unsupported)
         )
     for field, items in values.items():
         if len(items) != 1:
@@ -1294,8 +1328,7 @@ def _parse_research_journal_query(query: str) -> JournalQuery:
         raise ValueError("category is not a supported research journal category")
     symbol = values.get("symbol", [None])[0]
     if symbol is not None and (
-        symbol != symbol.strip()
-        or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
+        symbol != symbol.strip() or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
     ):
         raise ValueError("symbol must be a valid instrument identifier")
     text_query = values.get("q", [None])[0]
@@ -1310,9 +1343,7 @@ def _parse_research_journal_query(query: str) -> JournalQuery:
         raise ValueError("limit must be an integer")
     limit = int(raw_limit)
     if not 1 <= limit <= JOURNAL_MAX_LIMIT:
-        raise ValueError(
-            f"limit must be between 1 and {JOURNAL_MAX_LIMIT}"
-        )
+        raise ValueError(f"limit must be between 1 and {JOURNAL_MAX_LIMIT}")
     return JournalQuery(
         category=category,
         symbol=symbol,
@@ -1352,9 +1383,7 @@ def _parse_market_intelligence_query(query: str) -> DragonTigerQuery:
     trade_date = _parse_archive_date(values.get("date", [None])[0], "date")
     symbol = values.get("symbol", [None])[0]
     if symbol is not None and (
-        len(symbol) != 6
-        or not symbol.isascii()
-        or not symbol.isdigit()
+        len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()
     ):
         raise ValueError("symbol must be a six-digit security code")
     market = values.get("market", [None])[0]
@@ -1367,16 +1396,12 @@ def _parse_market_intelligence_query(query: str) -> DragonTigerQuery:
             "q",
             MARKET_INTELLIGENCE_MAX_TEXT_LENGTH,
         )
-    raw_limit = values.get(
-        "limit", [str(MARKET_INTELLIGENCE_DEFAULT_LIMIT)]
-    )[0]
+    raw_limit = values.get("limit", [str(MARKET_INTELLIGENCE_DEFAULT_LIMIT)])[0]
     if not raw_limit.isascii() or not raw_limit.isdigit():
         raise ValueError("limit must be an integer")
     limit = int(raw_limit)
     if not 1 <= limit <= MARKET_INTELLIGENCE_MAX_LIMIT:
-        raise ValueError(
-            f"limit must be between 1 and {MARKET_INTELLIGENCE_MAX_LIMIT}"
-        )
+        raise ValueError(f"limit must be between 1 and {MARKET_INTELLIGENCE_MAX_LIMIT}")
     return DragonTigerQuery(
         trade_date=trade_date,
         symbol=symbol,
@@ -1403,8 +1428,7 @@ def _parse_market_breadth_query(query: str) -> MarketBreadthQuery:
     unsupported = sorted(set(values) - {"date", "q", "sort", "direction", "limit"})
     if unsupported:
         raise ValueError(
-            "Unsupported market breadth query parameters: "
-            + ", ".join(unsupported)
+            "Unsupported market breadth query parameters: " + ", ".join(unsupported)
         )
     for field, items in values.items():
         if len(items) != 1:
@@ -1428,9 +1452,7 @@ def _parse_market_breadth_query(query: str) -> MarketBreadthQuery:
         raise ValueError("limit must be an integer")
     limit = int(raw_limit)
     if not 1 <= limit <= MARKET_BREADTH_MAX_LIMIT:
-        raise ValueError(
-            f"limit must be between 1 and {MARKET_BREADTH_MAX_LIMIT}"
-        )
+        raise ValueError(f"limit must be between 1 and {MARKET_BREADTH_MAX_LIMIT}")
     return MarketBreadthQuery(
         trade_date=trade_date,
         q=text_query,
@@ -1503,18 +1525,31 @@ def _parse_intraday_query(query: str) -> IntradayQuery:
         )
     except ValueError as exc:
         raise ValueError("Intraday query is invalid") from exc
-    unsupported = sorted(set(values) - {"symbol", "date", "interval", "limit", "revisions"})
+    unsupported = sorted(
+        set(values) - {"symbol", "date", "interval", "limit", "revisions"}
+    )
     if unsupported:
-        raise ValueError("Unsupported intraday query parameters: " + ", ".join(unsupported))
+        raise ValueError(
+            "Unsupported intraday query parameters: " + ", ".join(unsupported)
+        )
     for field, items in values.items():
         if len(items) != 1:
             raise ValueError(f"{field} must be provided at most once")
     symbol = values.get("symbol", [None])[0]
-    if symbol is None or len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit():
+    if (
+        symbol is None
+        or len(symbol) != 6
+        or not symbol.isascii()
+        or not symbol.isdigit()
+    ):
         raise ValueError("symbol must be a six-digit security code")
     on_date = _parse_archive_date(values.get("date", [None])[0], "date")
     raw_interval = values.get("interval", ["1"])[0]
-    if not raw_interval.isascii() or not raw_interval.isdigit() or int(raw_interval) not in INTRADAY_INTERVALS:
+    if (
+        not raw_interval.isascii()
+        or not raw_interval.isdigit()
+        or int(raw_interval) not in INTRADAY_INTERVALS
+    ):
         raise ValueError("interval must be one of 1, 5, 15, 30, or 60")
     raw_limit = values.get("limit", [str(INTRADAY_DEFAULT_LIMIT)])[0]
     if not raw_limit.isascii() or not raw_limit.isdigit():
@@ -1552,12 +1587,16 @@ def _parse_valuation_query(query: str) -> ValuationQuery:
         raise ValueError("Valuation query is invalid") from exc
     unsupported = sorted(set(values) - {"date", "symbol", "limit", "revisions"})
     if unsupported:
-        raise ValueError("Unsupported valuation query parameters: " + ", ".join(unsupported))
+        raise ValueError(
+            "Unsupported valuation query parameters: " + ", ".join(unsupported)
+        )
     for field, items in values.items():
         if len(items) != 1:
             raise ValueError(f"{field} must be provided at most once")
     symbol = values.get("symbol", [None])[0]
-    if symbol is not None and (len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()):
+    if symbol is not None and (
+        len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()
+    ):
         raise ValueError("symbol must be a six-digit security code")
     on_date = _parse_archive_date(values.get("date", [None])[0], "date")
     raw_limit = values.get("limit", [str(VALUATION_DEFAULT_LIMIT)])[0]
@@ -1612,9 +1651,7 @@ def _parse_fundamentals_query(query: str) -> FundamentalQuery:
         raise ValueError("limit must be an integer")
     limit = int(raw_limit)
     if not 1 <= limit <= FUNDAMENTALS_MAX_LIMIT:
-        raise ValueError(
-            f"limit must be between 1 and {FUNDAMENTALS_MAX_LIMIT}"
-        )
+        raise ValueError(f"limit must be between 1 and {FUNDAMENTALS_MAX_LIMIT}")
     revisions = values.get("revisions", ["0"])[0]
     if revisions not in {"0", "1"}:
         raise ValueError("revisions must be 0 or 1")
@@ -1746,14 +1783,18 @@ def _parse_news_query(query: str) -> NewsQuery:
         )
     except ValueError as exc:
         raise ValueError("News query is invalid") from exc
-    unsupported = sorted(set(values) - {"date", "symbol", "kind", "q", "limit", "revisions"})
+    unsupported = sorted(
+        set(values) - {"date", "symbol", "kind", "q", "limit", "revisions"}
+    )
     if unsupported:
         raise ValueError("Unsupported news query parameters: " + ", ".join(unsupported))
     for field, items in values.items():
         if len(items) != 1:
             raise ValueError(f"{field} must be provided at most once")
     symbol = values.get("symbol", [None])[0]
-    if symbol is not None and (len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()):
+    if symbol is not None and (
+        len(symbol) != 6 or not symbol.isascii() or not symbol.isdigit()
+    ):
         raise ValueError("symbol must be a six-digit security code")
     kind = values.get("kind", ["all"])[0]
     if kind not in {"all", "news", "announcement"}:
@@ -1795,13 +1836,10 @@ def _parse_research_archive_query(query: str) -> ResearchArchiveQuery:
         )
     except ValueError as exc:
         raise ValueError("Research archive query is invalid") from exc
-    unsupported = sorted(
-        set(values) - {"kind", "date", "week", "month", "limit"}
-    )
+    unsupported = sorted(set(values) - {"kind", "date", "week", "month", "limit"})
     if unsupported:
         raise ValueError(
-            "Unsupported research archive query parameters: "
-            + ", ".join(unsupported)
+            "Unsupported research archive query parameters: " + ", ".join(unsupported)
         )
     for field, items in values.items():
         if len(items) != 1:
@@ -1834,9 +1872,7 @@ def _parse_research_archive_query(query: str) -> ResearchArchiveQuery:
         raise ValueError("limit must be an integer")
     limit = int(raw_limit)
     if not 1 <= limit <= ARCHIVE_MAX_LIMIT:
-        raise ValueError(
-            f"limit must be between 1 and {ARCHIVE_MAX_LIMIT}"
-        )
+        raise ValueError(f"limit must be between 1 and {ARCHIVE_MAX_LIMIT}")
     return ResearchArchiveQuery(
         kind=kind,
         on_date=on_date,
@@ -2048,9 +2084,7 @@ def _parse_research_journal_payload(payload: dict[str, object]) -> JournalDraft:
         research_date=research_date,
         category=category,
         symbol=symbol,
-        title=_bounded_text(
-            payload.get("title"), "title", MAX_JOURNAL_TITLE_LENGTH
-        ),
+        title=_bounded_text(payload.get("title"), "title", MAX_JOURNAL_TITLE_LENGTH),
         note=_bounded_text(payload.get("note"), "note", MAX_JOURNAL_NOTE_LENGTH),
         decision=decision,
         confidence=confidence,
@@ -2148,8 +2182,7 @@ def _parse_universe_screen_query(
     unsupported = sorted(set(values) - supported)
     if unsupported:
         raise ValueError(
-            "Unsupported universe screen query parameters: "
-            + ", ".join(unsupported)
+            "Unsupported universe screen query parameters: " + ", ".join(unsupported)
         )
     for field in supported:
         if field in values and len(values[field]) != 1:
@@ -2242,10 +2275,7 @@ def _parse_market_chart_query(query: str) -> tuple[str, str, int]:
             raise ValueError(f"{field} must be provided at most once")
 
     symbol = values["symbol"][0]
-    if (
-        symbol != symbol.strip()
-        or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol)
-    ):
+    if symbol != symbol.strip() or not ASSISTANT_SYMBOL_PATTERN.fullmatch(symbol):
         raise ValueError("symbol must be a valid market instrument identifier")
     period = values.get("period", ["day"])[0]
     if period not in MARKET_CHART_PERIODS:
@@ -2334,9 +2364,9 @@ def _parse_strategy_lab_rollback_payload(
     if payload.get("confirmed") is not True:
         raise ValueError("rollback requires confirmed=true")
     candidate_id = payload.get("expected_active_candidate_id")
-    if not isinstance(candidate_id, str) or not STRATEGY_LAB_CANDIDATE_ID_PATTERN.fullmatch(
-        candidate_id
-    ):
+    if not isinstance(
+        candidate_id, str
+    ) or not STRATEGY_LAB_CANDIDATE_ID_PATTERN.fullmatch(candidate_id):
         raise ValueError("expected_active_candidate_id must be a valid candidate id")
     fingerprint = payload.get("expected_active_fingerprint")
     if not isinstance(
@@ -2488,13 +2518,9 @@ def _parse_monitoring_rule_payload(
             raise ValueError("delete does not accept rule fields")
         return action, expected_revision, rule_id, {}
     if action == "create":
-        missing = sorted(
-            {"watchlist_id", "symbol", "rule_type"} - set(payload)
-        )
+        missing = sorted({"watchlist_id", "symbol", "rule_type"} - set(payload))
         if missing:
-            raise ValueError(
-                "Missing monitoring rule fields: " + ", ".join(missing)
-            )
+            raise ValueError("Missing monitoring rule fields: " + ", ".join(missing))
     rule = {key: payload[key] for key in fields if key in payload}
     watchlist_id = rule.get("watchlist_id")
     if watchlist_id is not None and (
@@ -2517,7 +2543,9 @@ def _parse_monitoring_rule_payload(
         raise ValueError("severity must be info, warning, or critical")
     for field in ("window", "comparison_window", "cooldown_sessions"):
         value = rule.get(field)
-        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int)
+        ):
             raise ValueError(f"{field} must be an integer")
     threshold = rule.get("threshold")
     if threshold is not None and (
@@ -2593,9 +2621,7 @@ def _parse_monitoring_notification_action_payload(
     return str(action), expected
 
 
-def _parse_monitoring_revision(
-    value: object, *, required: bool = False
-) -> int | None:
+def _parse_monitoring_revision(value: object, *, required: bool = False) -> int | None:
     if value is None:
         if required:
             raise ValueError("expected_revision is required")
@@ -2615,9 +2641,7 @@ def _reject_unknown_fields(
 ) -> None:
     unsupported = sorted(set(payload) - allowed)
     if unsupported:
-        raise ValueError(
-            f"Unsupported {operation} fields: " + ", ".join(unsupported)
-        )
+        raise ValueError(f"Unsupported {operation} fields: " + ", ".join(unsupported))
 
 
 def _bounded_text(value: object, field: str, maximum: int) -> str:

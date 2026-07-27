@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-07-26",
+  "as_of": "2026-07-27",
   "selection_method": "curated_static",
   "provenance": "Manually curated ETF universe. The original eight members start at listing. The 2026-07-26 expansion adds 39 liquid ETFs with conservative membership start dates at or after the believed listing date (never before). On 2026-07-26 the twelve highest-risk post-2016 entries were cross-checked against Eastmoney fund establishment dates (one correction: 512720). Establishment is a lower bound on exchange listing; the first cached bar is the authoritative first session — run universe-verify after download.",
   "instruments": [
@@ -143,7 +143,7 @@
       "sector": "healthcare",
       "currency": "CNY",
       "board": "ETF",
-      "listing_date": "2020-03-20",
+      "listing_date": "2020-04-10",
       "delisting_date": null,
       "price_limit_pct": 0.1,
       "tick_size": 0.001
@@ -479,7 +479,7 @@
       "sector": "securities",
       "currency": "CNY",
       "board": "ETF",
-      "listing_date": "2016-07-26",
+      "listing_date": "2016-08-08",
       "delisting_date": null,
       "price_limit_pct": 0.1,
       "tick_size": 0.001
@@ -871,7 +871,7 @@
       },
       {
         "symbol": "512200",
-        "start": "2017-07-03",
+        "start": "2017-09-25",
         "end": null
       },
       {

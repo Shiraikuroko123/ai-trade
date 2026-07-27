@@ -199,6 +199,7 @@ def _run_locked(
             "amount_relative_tolerance": AMOUNT_RELATIVE_TOLERANCE,
             "comparison_fields": list(COMPARISON_FIELDS),
             "provider_declared_field_subset": True,
+            "confirmation_eligibility_enforced": True,
         },
     }
     if reference_name in {"", "none"}:
@@ -244,8 +245,22 @@ def _run_locked(
         base.update(status="warning", confidence="independent_incomplete", error=_safe_error(exc))
 
     statuses = [str(item.get("status")) for item in base["symbols"]]
+    confirmation_ineligible_reasons = [
+        str(item.get("confirmation_ineligible_reason"))
+        for item in base["symbols"]
+        if item.get("status") == "matched"
+        and item.get("confirmation_eligible") is False
+        and item.get("confirmation_ineligible_reason")
+    ]
     if statuses and all(value == "matched" for value in statuses):
-        base.update(status="passed", confidence="independent_confirmed")
+        if confirmation_ineligible_reasons:
+            base.update(
+                status="warning",
+                confidence="independent_incomplete",
+                reason=confirmation_ineligible_reasons[0],
+            )
+        else:
+            base.update(status="passed", confidence="independent_confirmed")
     elif any(value == "mismatch" for value in statuses):
         base.update(status="failed", confidence="independent_conflict")
     elif statuses:
@@ -265,6 +280,9 @@ def _run_locked(
         "insufficient_overlap": statuses.count("insufficient_overlap"),
         "reference_unavailable": statuses.count("reference_unavailable"),
         "not_independent": statuses.count("not_independent"),
+        "confirmation_ineligible": sum(
+            item.get("confirmation_eligible") is False for item in base["symbols"]
+        ),
     }
     return _persist_result(config, manifest, base)
 
@@ -345,6 +363,12 @@ def _audit_symbols(
                 )
                 results.append(item)
                 continue
+            confirmation_eligible, ineligible_reason = _confirmation_eligibility(
+                reference
+            )
+            item["confirmation_eligible"] = confirmation_eligible
+            if ineligible_reason is not None:
+                item["confirmation_ineligible_reason"] = ineligible_reason
             comparison_fields = _comparison_fields(reference)
             item["comparison_fields"] = list(comparison_fields)
             item["unavailable_fields"] = [
@@ -453,6 +477,16 @@ def _comparison_fields(provider: object) -> tuple[str, ...]:
     return tuple(field for field in COMPARISON_FIELDS if field in selected)
 
 
+def _confirmation_eligibility(provider: object) -> tuple[bool, str | None]:
+    descriptor = getattr(provider, "descriptor", None)
+    if getattr(descriptor, "confirmation_eligible", True) is not False:
+        return True, None
+    reason = getattr(descriptor, "confirmation_ineligible_reason", None)
+    if not isinstance(reason, str) or not reason.strip():
+        reason = "reference_provider_confirmation_ineligible"
+    return False, reason.strip()[:MAX_ERROR_LENGTH]
+
+
 def _within_tolerance(field: str, left: float, right: float) -> bool:
     if not (math.isfinite(left) and math.isfinite(right)):
         return False
@@ -479,6 +513,8 @@ def _actual_provider(entry: object, configured_primary: str) -> str | None:
         value = str(candidate or "").strip().lower()
         if "yahoo" in value:
             return "yahoo"
+        if "baostock" in value:
+            return "baostock"
         if "tencent" in value:
             return "tencent"
         if "eastmoney" in value:

@@ -12,10 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from ai_trade.cli import build_parser, main
 from ai_trade.config import load_config
-from ai_trade.hypothesis_lab.sweep import (
-    MAX_TOTAL_VARIANTS,
-    ParameterSweepEngine,
-)
+from ai_trade.hypothesis_lab.sweep import ParameterSweepEngine
 from ai_trade.strategy_lab import StrategyLabEngine, StrategyLabStore
 
 

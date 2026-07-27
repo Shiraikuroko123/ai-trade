@@ -236,12 +236,32 @@ def atomic_create_json(
 ) -> None:
     """Publish JSON without ever replacing an existing revision."""
 
+    supplied_path = Path(path)
+    root = Path(root).resolve()
+    path = supplied_path.resolve()
     try:
         relative = path.relative_to(root)
     except ValueError as exc:
         raise ValueError(f"{label} target must stay below its store root") from exc
     if not relative.parts or relative.name in {"", ".", ".."}:
         raise ValueError(f"{label} target is invalid")
+
+    # Windows runners may spell the same directory through an 8.3 alias in
+    # one call path and its expanded name in another. Resolve both sides for
+    # containment, while still rejecting symbolic components from the path
+    # supplied by the caller.
+    current_parent = supplied_path.parent
+    for _ in range(len(supplied_path.parts) + 1):
+        if current_parent.is_symlink():
+            raise RuntimeError(f"{label} directory must not be symbolic")
+        if current_parent.resolve() == root:
+            break
+        parent = current_parent.parent
+        if parent == current_parent:
+            raise ValueError(f"{label} target must stay below its store root")
+        current_parent = parent
+    else:
+        raise ValueError(f"{label} target must stay below its store root")
 
     current = root
     for part in relative.parts[:-1]:
@@ -328,34 +348,43 @@ def _file_lock(path: Path, label: str) -> Iterator[None]:
                 handle.flush()
                 os.fsync(handle.fileno())
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            getattr(msvcrt, "locking")(
+                handle.fileno(), getattr(msvcrt, "LK_LOCK"), 1
+            )
         else:
             import fcntl
 
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            getattr(fcntl, "flock")(
+                handle.fileno(), getattr(fcntl, "LOCK_EX")
+            )
         try:
             yield
         finally:
             if os.name == "nt":
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                getattr(msvcrt, "locking")(
+                    handle.fileno(), getattr(msvcrt, "LK_UNLCK"), 1
+                )
             else:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                getattr(fcntl, "flock")(
+                    handle.fileno(), getattr(fcntl, "LOCK_UN")
+                )
 
 
 def _windows_move_file(source: Path, target: Path) -> None:
     import ctypes
     from ctypes import wintypes
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
     move_file_ex = kernel32.MoveFileExW
     move_file_ex.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
     move_file_ex.restype = wintypes.BOOL
     if not move_file_ex(str(source), str(target), 0x00000008):
-        error = ctypes.get_last_error()
+        error = getattr(ctypes, "get_last_error")()
+        format_error = getattr(ctypes, "FormatError")
         if error in {80, 183}:
-            raise FileExistsError(error, ctypes.FormatError(error), str(target))
-        raise OSError(error, ctypes.FormatError(error), str(target))
+            raise FileExistsError(error, format_error(error), str(target))
+        raise OSError(error, format_error(error), str(target))
 
 
 def _fsync_directory(path: Path) -> None:

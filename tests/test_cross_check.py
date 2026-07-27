@@ -26,11 +26,22 @@ class _FakeProvider:
         mismatch: bool = False,
         amount_mismatch: bool = False,
         comparison_fields: tuple[str, ...] | None = None,
+        confirmation_eligible: bool | None = None,
+        confirmation_ineligible_reason: str | None = None,
     ):
         self.mismatch = mismatch
         self.amount_mismatch = amount_mismatch
+        descriptor: dict[str, object] = {}
         if comparison_fields is not None:
-            self.descriptor = SimpleNamespace(cross_check_fields=comparison_fields)
+            descriptor["cross_check_fields"] = comparison_fields
+        if confirmation_eligible is not None:
+            descriptor["confirmation_eligible"] = confirmation_eligible
+        if confirmation_ineligible_reason is not None:
+            descriptor["confirmation_ineligible_reason"] = (
+                confirmation_ineligible_reason
+            )
+        if descriptor:
+            self.descriptor = SimpleNamespace(**descriptor)
 
     def download(
         self,
@@ -149,6 +160,45 @@ class CrossCheckTests(unittest.TestCase):
             )
             self.assertTrue(projection["valid"])
             self.assertEqual(projection["status"], "failed")
+
+    def test_matching_unverified_reference_remains_warning(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(_config(root))
+            staged = config.cache_dir / ".test-staged" / "510300.csv"
+            _write_primary(staged)
+            install_snapshot(config.cache_dir, {"510300.csv": staged}, _manifest(staged))
+            provider = _FakeProvider(
+                confirmation_eligible=False,
+                confirmation_ineligible_reason=(
+                    "reference_provider_authorization_unverified"
+                ),
+            )
+
+            with patch(
+                "ai_trade.data.cross_check.provider_for",
+                return_value=provider,
+            ), patch(
+                "ai_trade.data.cross_check.completed_session_cutoff",
+                return_value=date(2024, 1, 8),
+            ):
+                result = cross_check_market_snapshot(config, force=True)
+
+            self.assertEqual(result["status"], "warning")
+            self.assertEqual(result["confidence"], "independent_incomplete")
+            self.assertEqual(
+                result["reason"],
+                "reference_provider_authorization_unverified",
+            )
+            self.assertEqual(result["symbols"][0]["status"], "matched")
+            self.assertFalse(result["symbols"][0]["confirmation_eligible"])
+            self.assertEqual(result["summary"]["confirmation_ineligible"], 1)
+            stored = json.loads(
+                (config.cache_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            projection = cross_source_projection(stored)
+            self.assertTrue(projection["valid"])
+            self.assertEqual(projection["status"], "warning")
 
     def test_fallback_file_uses_primary_as_independent_reference(self):
         with tempfile.TemporaryDirectory() as temporary:

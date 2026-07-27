@@ -34,6 +34,8 @@ class ProviderDescriptor:
     quotes: bool = False
     status: str = "implemented"
     snapshot_eligible: bool = True
+    confirmation_eligible: bool = True
+    confirmation_ineligible_reason: str | None = None
     cross_check_fields: tuple[str, ...] = (
         "open",
         "high",
@@ -111,6 +113,56 @@ class _EastmoneyProvider:
         from .eastmoney import _is_transport_failure
 
         return _is_transport_failure(error)
+
+
+class _BaoStockProvider:
+    descriptor = ProviderDescriptor(
+        key="baostock",
+        display_name="BaoStock",
+        implementation="baostock.history.daily_reference",
+        daily_bars=True,
+        intraday_bars=False,
+        quotes=False,
+        status="implemented_reference_only_authorization_unverified",
+        snapshot_eligible=False,
+        confirmation_eligible=False,
+        confirmation_ineligible_reason="reference_provider_authorization_unverified",
+        supported_adjustments=("none", "forward"),
+    )
+    primary_source_label = "network"
+    fallback_source_label = "baostock_network_fallback"
+
+    def download(
+        self,
+        config: AppConfig,
+        instrument: Instrument,
+        output_path: Path,
+        *,
+        cache_path: Path | None,
+        cutoff: date,
+        proxy_mode: str,
+        network_errors: list[str],
+        provider_metadata: dict[str, object],
+    ) -> Path:
+        from .baostock import download_instrument
+
+        try:
+            return download_instrument(
+                config,
+                instrument,
+                output_path,
+                cutoff=cutoff,
+                proxy_mode=proxy_mode,
+                provider_metadata=provider_metadata,
+            )
+        except Exception as exc:
+            network_errors.append(f"{type(exc).__name__}: {exc}")
+            raise
+
+    def is_transport_failure(self, error: Exception) -> bool:
+        from .baostock import is_transport_failure
+
+        return is_transport_failure(error)
 
 
 class _TencentProvider:
@@ -263,6 +315,7 @@ class _TushareProvider:
 
 
 _PROVIDERS: dict[str, MarketDataProvider] = {
+    "baostock": _BaoStockProvider(),
     "eastmoney": _EastmoneyProvider(),
     "tencent": _TencentProvider(),
     "tushare": _TushareProvider(),
@@ -312,6 +365,10 @@ def provider_catalog() -> list[dict[str, Any]]:
             "quotes": descriptor.quotes,
             "status": descriptor.status,
             "snapshot_eligible": descriptor.snapshot_eligible,
+            "confirmation_eligible": descriptor.confirmation_eligible,
+            "confirmation_ineligible_reason": (
+                descriptor.confirmation_ineligible_reason
+            ),
             "cross_check_fields": list(descriptor.cross_check_fields),
             "supported_adjustments": list(descriptor.supported_adjustments),
         }

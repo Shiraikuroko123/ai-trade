@@ -46,6 +46,39 @@ class EvidenceIoTests(unittest.TestCase):
             {"revision": 1, "value": "first"},
         )
 
+    def test_atomic_create_normalizes_equivalent_root_spellings(self):
+        canonical_root = self.root.resolve()
+        lexical_root = self.root.parent / "unused" / ".." / self.root.name
+        path = canonical_root / "2026-07-20" / "revision_00000001.json"
+        canonical_root.mkdir()
+
+        atomic_create_json(
+            lexical_root,
+            path,
+            {"revision": 1, "value": "canonical"},
+            label="test evidence",
+            maximum_bytes=1024,
+        )
+
+        self.assertEqual(
+            json.loads(path.read_text(encoding="utf-8")),
+            {"revision": 1, "value": "canonical"},
+        )
+
+    def test_atomic_create_rejects_a_canonical_target_outside_root(self):
+        outside = self.root.parent / "outside" / "revision_00000001.json"
+
+        with self.assertRaisesRegex(ValueError, "must stay below its store root"):
+            atomic_create_json(
+                self.root,
+                outside,
+                {"revision": 1},
+                label="test evidence",
+                maximum_bytes=1024,
+            )
+
+        self.assertFalse(outside.exists())
+
     def test_store_lock_serializes_revision_number_allocation(self):
         def publish(value: int) -> int:
             with evidence_store_lock(self.root, "Test evidence"):

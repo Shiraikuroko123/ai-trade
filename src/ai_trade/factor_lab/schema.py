@@ -5,11 +5,17 @@ from hashlib import sha256
 import json
 import math
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
+
+from ..research_statistics import (
+    DEFAULT_BOOTSTRAP_RESAMPLES,
+    apply_holm_correction,
+    deterministic_seed,
+)
 
 
-SCHEMA_VERSION = 1
-ENGINE_VERSION = 1
+SCHEMA_VERSION = 2
+ENGINE_VERSION = 2
 
 EVALUATION_ID = re.compile(r"eval_[0-9a-f]{32}\Z")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
@@ -86,6 +92,33 @@ _RESULT_FIELDS = frozenset(
         "mean_spread",
         "spread_std",
         "direction_adjusted_mean_spread",
+        "statistical_validation",
+    }
+)
+_RESULT_FIELDS_V1 = _RESULT_FIELDS - {"statistical_validation"}
+_STATISTICAL_VALIDATION_FIELDS = frozenset(
+    {
+        "method",
+        "alternative",
+        "observations",
+        "block_size",
+        "resamples",
+        "seed",
+        "confidence_level",
+        "effect_size",
+        "standard_error",
+        "ci_low",
+        "ci_high",
+        "p_value",
+        "subperiods",
+        "subperiod_means",
+        "positive_subperiods",
+        "minimum_subperiod_mean",
+        "alpha",
+        "correction",
+        "family_size",
+        "adjusted_p_value",
+        "reject_null",
     }
 )
 
@@ -123,9 +156,11 @@ def json_fingerprint(value: Any) -> str:
 def validate_evaluation(value: Mapping[str, Any]) -> None:
     if not isinstance(value, Mapping) or set(value) != TOP_LEVEL_FIELDS:
         raise ValueError("Factor evaluation top-level schema fields are invalid")
-    if value.get("schema_version") != SCHEMA_VERSION:
+    schema_version = value.get("schema_version")
+    if schema_version not in {1, SCHEMA_VERSION}:
         raise ValueError("Factor evaluation schema version is invalid")
-    if value.get("engine_version") != ENGINE_VERSION:
+    expected_engine = 1 if schema_version == 1 else ENGINE_VERSION
+    if value.get("engine_version") != expected_engine:
         raise ValueError("Factor evaluation engine version is invalid")
     _identifier(value.get("evaluation_id"), EVALUATION_ID, "evaluation_id")
     _identifier(value.get("owner"), FINGERPRINT, "owner")
@@ -201,6 +236,10 @@ def validate_evaluation(value: Mapping[str, Any]) -> None:
     ):
         if type(item) is not int or not 0 <= item <= 200_000:
             raise ValueError(f"Factor evaluation coverage {name} is invalid")
+    calendar_sessions = cast(int, calendar_sessions)
+    sampled = cast(int, sampled)
+    evaluated = cast(int, evaluated)
+    skipped = cast(int, skipped)
     if evaluated + skipped != sampled or sampled > calendar_sessions:
         raise ValueError("Factor evaluation coverage counts are inconsistent")
     if evaluated < 1:
@@ -227,8 +266,13 @@ def validate_evaluation(value: Mapping[str, Any]) -> None:
     results = value.get("results")
     if not isinstance(results, list) or len(results) != len(horizons):
         raise ValueError("Factor evaluation results must match its horizons")
+    validation_family: list[Mapping[str, Any]] = []
     for expected_horizon, item in zip(horizons, results):
-        result = _object(item, _RESULT_FIELDS, "result")
+        result = _object(
+            item,
+            _RESULT_FIELDS if schema_version == SCHEMA_VERSION else _RESULT_FIELDS_V1,
+            "result",
+        )
         if result.get("horizon") != expected_horizon:
             raise ValueError("Factor evaluation result horizons are out of order")
         dates = result.get("dates")
@@ -250,6 +294,29 @@ def validate_evaluation(value: Mapping[str, Any]) -> None:
         for name in ("positive_share", "direction_hit_rate"):
             if not 0.0 <= float(result[name]) <= 1.0:
                 raise ValueError(f"Factor evaluation {name} is out of range")
+        if schema_version == SCHEMA_VERSION:
+            expected_effect = float(result["mean_ic"]) * int(factor["direction"])
+            validation_family.append(_statistical_validation(
+                result.get("statistical_validation"),
+                observations=int(dates),
+                family_size=len(horizons),
+                expected_effect=expected_effect,
+                expected_block_size=min(
+                    int(dates), max(1, math.ceil(expected_horizon / int(step)))
+                ),
+                expected_seed=deterministic_seed(
+                    "factor-ic",
+                    snapshot["fingerprint"],
+                    factor["factor_id"],
+                    expected_horizon,
+                    step,
+                    SCHEMA_VERSION,
+                    ENGINE_VERSION,
+                ),
+                label="result.statistical_validation",
+            ))
+    if validation_family:
+        _validate_holm_family(validation_family)
 
     _identifier(
         value.get("evaluation_fingerprint"), FINGERPRINT, "evaluation_fingerprint"
@@ -265,6 +332,107 @@ def _object(value: Any, fields: frozenset[str], label: str) -> Mapping[str, Any]
     if not isinstance(value, Mapping) or set(value) != fields:
         raise ValueError(f"Factor evaluation {label} schema fields are invalid")
     return value
+
+
+def _statistical_validation(
+    value: Any,
+    *,
+    observations: int,
+    family_size: int,
+    expected_effect: float,
+    expected_block_size: int,
+    expected_seed: int,
+    label: str,
+) -> Mapping[str, Any]:
+    validation = _object(value, _STATISTICAL_VALIDATION_FIELDS, label)
+    if (
+        validation.get("method") != "circular_moving_block_bootstrap"
+        or validation.get("alternative") != "greater"
+        or validation.get("correction") != "holm"
+    ):
+        raise ValueError(f"Factor evaluation {label} method is invalid")
+    if validation.get("observations") != observations:
+        raise ValueError(f"Factor evaluation {label} observations are invalid")
+    block_size = validation.get("block_size")
+    if block_size != expected_block_size:
+        raise ValueError(f"Factor evaluation {label} block size is invalid")
+    resamples = validation.get("resamples")
+    if resamples != DEFAULT_BOOTSTRAP_RESAMPLES:
+        raise ValueError(f"Factor evaluation {label} resamples are invalid")
+    seed = validation.get("seed")
+    if seed != expected_seed:
+        raise ValueError(f"Factor evaluation {label} seed is invalid")
+    confidence = _finite(
+        validation.get("confidence_level"), f"{label}.confidence_level"
+    )
+    if abs(confidence - 0.95) > 1e-12:
+        raise ValueError(f"Factor evaluation {label} confidence level is invalid")
+    effect = _finite(validation.get("effect_size"), f"{label}.effect_size")
+    if abs(effect - expected_effect) > 1e-9:
+        raise ValueError(f"Factor evaluation {label} effect size is inconsistent")
+    standard_error = _finite(
+        validation.get("standard_error"), f"{label}.standard_error"
+    )
+    low = _finite(validation.get("ci_low"), f"{label}.ci_low")
+    high = _finite(validation.get("ci_high"), f"{label}.ci_high")
+    if standard_error < 0 or low > high or not -1 <= low <= high <= 1:
+        raise ValueError(f"Factor evaluation {label} uncertainty is invalid")
+    p_value = _finite(validation.get("p_value"), f"{label}.p_value")
+    adjusted = _finite(
+        validation.get("adjusted_p_value"), f"{label}.adjusted_p_value"
+    )
+    if not 1 / (int(resamples) + 1) <= p_value <= adjusted <= 1:
+        raise ValueError(f"Factor evaluation {label} p-values are invalid")
+    alpha = _finite(validation.get("alpha"), f"{label}.alpha")
+    if abs(alpha - 0.05) > 1e-12:
+        raise ValueError(f"Factor evaluation {label} alpha is invalid")
+    if validation.get("family_size") != family_size:
+        raise ValueError(f"Factor evaluation {label} family size is invalid")
+    if validation.get("subperiods") != 3:
+        raise ValueError(f"Factor evaluation {label} subperiod count is invalid")
+    period_means = validation.get("subperiod_means")
+    if (
+        not isinstance(period_means, list)
+        or len(period_means) != 3
+        or any(
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+            or not -1 <= float(item) <= 1
+            for item in period_means
+        )
+    ):
+        raise ValueError(f"Factor evaluation {label} subperiod means are invalid")
+    positive = validation.get("positive_subperiods")
+    expected_positive = sum(float(item) > 0 for item in period_means)
+    if positive != expected_positive:
+        raise ValueError(f"Factor evaluation {label} stability is invalid")
+    minimum = _finite(
+        validation.get("minimum_subperiod_mean"),
+        f"{label}.minimum_subperiod_mean",
+    )
+    if abs(minimum - min(float(item) for item in period_means)) > 1e-12:
+        raise ValueError(f"Factor evaluation {label} stability is inconsistent")
+    rejected = validation.get("reject_null")
+    if type(rejected) is not bool or rejected != (adjusted <= alpha):
+        raise ValueError(f"Factor evaluation {label} rejection is inconsistent")
+    return validation
+
+
+def _validate_holm_family(family: list[Mapping[str, Any]]) -> None:
+    expected = apply_holm_correction(family)
+    for observed, corrected in zip(family, expected):
+        if (
+            abs(
+                float(observed["adjusted_p_value"])
+                - float(corrected["adjusted_p_value"])
+            )
+            > 1e-12
+            or observed["reject_null"] != corrected["reject_null"]
+        ):
+            raise ValueError(
+                "Factor evaluation Holm correction is inconsistent"
+            )
 
 
 def _identifier(value: Any, pattern: re.Pattern[str], field: str) -> str:

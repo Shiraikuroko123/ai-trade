@@ -31,6 +31,11 @@ behavior. The reference provider must be registered and different from the
 configured primary provider. `yahoo` is reference-only and can be selected
 there, but cannot supply the primary or fallback snapshot.
 
+`baostock` is also selectable after installing the optional
+`ai-trade[baostock]` dependency. It is intentionally confirmation-ineligible:
+the audit compares its numbers but records a warning because upstream
+provenance, service level, and redistribution authorization are unverified.
+
 ## Running It
 
 An enabled `download --force` refresh runs the audit after the CSV snapshot is
@@ -56,9 +61,9 @@ never compared or used as liquidity evidence.
 
 | Status | Meaning | Operating response |
 | --- | --- | --- |
-| `passed` | Every checked value is within the disclosed tolerance and dates fully overlap | Independent public-source confirmation for this snapshot; still not exchange certification |
+| `passed` | Every checked value from a confirmation-eligible source is within tolerance and dates fully overlap | Independent source confirmation for this snapshot; still not exchange certification |
 | `failed` | At least one OHLCV value exceeds tolerance | Treat the snapshot as requiring review; the primary CSV is not silently replaced |
-| `warning` | Missing sessions, transport failure, or an incomplete set of symbols | Primary data remains readable, but it is not independently confirmed |
+| `warning` | Missing sessions, transport failure, incomplete symbols, or a complete match from a confirmation-ineligible source | Primary data remains readable, but it is not independently confirmed |
 | `unavailable` | No usable different reference provider | Use the source/fallback evidence and resolve the provider configuration |
 | `not_independent` | The file's actual source is unknown or is the same as the candidate reference | No self-comparison is counted as evidence |
 | `invalid` | The audit digest or its file binding no longer matches the active manifest | Refresh and rerun; do not rely on the old audit |
@@ -83,6 +88,15 @@ provider's additive forward-adjustment convention on older sessions. Such a
 difference remains a visible audit mismatch rather than being silently
 reconciled. The adapter is limited to 63 calendar days per request and only
 completed rows are accepted.
+
+BaoStock maps `sh.`/`sz.` symbols, converts share volume to 100-share lots, and
+uses provider-reported CNY amount. Provider flags `2` and `3` are requested for
+forward-adjusted and unadjusted bars respectively. Its optional client uses a
+direct TCP service rather than the configured HTTP proxy. The adapter is
+bounded to 101 calendar days and 80 rows. A matched symbol remains
+`status=matched`, but the top-level audit is forced to `status=warning`,
+`confidence=independent_incomplete`, and
+`reason=reference_provider_authorization_unverified`.
 
 The audit digest is bound to the manifest's CSV row counts and SHA-256 values.
 Changing a CSV or editing the audit summary makes the projection `invalid` on

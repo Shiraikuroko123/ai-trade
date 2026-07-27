@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import math
 import statistics
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
@@ -8,6 +9,11 @@ from uuid import uuid4
 from .. import __version__
 from ..config import AppConfig
 from ..data.market import MarketData
+from ..research_statistics import (
+    apply_holm_correction,
+    deterministic_seed,
+    moving_block_bootstrap_mean,
+)
 from .gbdt import fit_gbdt
 from .library import LIBRARY_VERSION, model_definition, model_registry
 from .schema import (
@@ -257,6 +263,64 @@ class ModelLabEngine:
             )
         best_factor_id = max(adjusted, key=lambda key: adjusted[key])
         best_value = adjusted[best_factor_id]
+        block_size = min(
+            len(model_ics), max(1, math.ceil(horizon / step))
+        )
+        raw_validations = [
+            moving_block_bootstrap_mean(
+                model_ics,
+                block_size=block_size,
+                seed=deterministic_seed(
+                    "model-ic",
+                    snapshot_fingerprint,
+                    model.model_id,
+                    horizon,
+                    step,
+                    SCHEMA_VERSION,
+                    ENGINE_VERSION,
+                ),
+            )
+        ]
+        comparison_rows: list[dict[str, Any]] = []
+        for definition in factors:
+            factor_id = definition.factor_id
+            deltas = [
+                model_value - factor_value * definition.direction
+                for model_value, factor_value in zip(
+                    model_ics, factor_ics[factor_id]
+                )
+            ]
+            comparison_rows.append(
+                {
+                    "factor_id": factor_id,
+                    "mean_delta": statistics.fmean(deltas),
+                }
+            )
+            raw_validations.append(
+                moving_block_bootstrap_mean(
+                    deltas,
+                    block_size=block_size,
+                    seed=deterministic_seed(
+                        "model-minus-factor-ic",
+                        snapshot_fingerprint,
+                        model.model_id,
+                        factor_id,
+                        horizon,
+                        step,
+                        SCHEMA_VERSION,
+                        ENGINE_VERSION,
+                    ),
+                )
+            )
+        corrected_validations = apply_holm_correction(raw_validations)
+        for row, validation in zip(
+            comparison_rows, corrected_validations[1:]
+        ):
+            row["validation"] = validation
+        statistical_validation = {
+            "model_ic": corrected_validations[0],
+            "factor_comparisons": comparison_rows,
+        }
         coefficients = []
         for column, definition in enumerate(factors):
             series = [weights[column] for weights in coefficient_history]
@@ -356,6 +420,7 @@ class ModelLabEngine:
                     "best_factor_id": best_factor_id,
                     "best_factor_direction_adjusted_mean_ic": best_value,
                     "model_minus_best_factor_ic": mean_ic - best_value,
+                    "statistical_validation": statistical_validation,
                 },
                 "coefficients": coefficients,
                 "evaluation_fingerprint": evaluation_fingerprint,

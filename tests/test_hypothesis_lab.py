@@ -10,7 +10,11 @@ from uuid import uuid4
 
 from ai_trade.config import load_config
 from ai_trade.hypothesis_lab import HypothesisLabEngine, HypothesisLabStore
-from ai_trade.hypothesis_lab.schema import finalize_record
+from ai_trade.hypothesis_lab.schema import (
+    design_fingerprint,
+    finalize_record,
+    record_fingerprint,
+)
 from ai_trade.hypothesis_lab.store import (
     MAX_HYPOTHESIS_RECORD_BYTES,
     HypothesisLabCapacityError,
@@ -216,6 +220,23 @@ class HypothesisLabTests(TestCase):
             self.store.get("alice", record["hypothesis_id"])
 
     @patch("ai_trade.hypothesis_lab.engine.BacktestEngine", _Backtest)
+    def test_engine_v1_hypothesis_remains_readable(self):
+        record = self.engine.generate_local("alice", self.market)
+        path = (
+            self.store.owner_directory("alice")
+            / "hypotheses"
+            / f"{record['hypothesis_id']}.json"
+        )
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["engine_version"] = 1
+        value["design_fingerprint"] = design_fingerprint(value)
+        value["record_fingerprint"] = record_fingerprint(value)
+        path.write_text(json.dumps(value), encoding="utf-8")
+
+        stored = self.store.get("alice", record["hypothesis_id"])
+        self.assertEqual(stored["engine_version"], 1)
+
+    @patch("ai_trade.hypothesis_lab.engine.BacktestEngine", _Backtest)
     def test_explicit_materialization_creates_one_bound_draft_only(self):
         record = self.engine.generate_local(
             "alice", self.market, objective="balanced"
@@ -283,7 +304,26 @@ def _model_evaluation(
     dates: int = 400,
     delta: float = 0.02,
     dominant: str = "momentum_60_5",
+    statistically_significant: bool = True,
+    stable: bool = True,
+    positive_ci: bool = True,
 ) -> dict:
+    adjusted_p = 0.01 if statistically_significant else 0.20
+
+    def validation(effect: float) -> dict:
+        return {
+            "effect_size": effect,
+            "ci_low": effect / 2 if positive_ci else -abs(effect) / 2,
+            "p_value": 0.005,
+            "adjusted_p_value": adjusted_p,
+            "alpha": 0.05,
+            "correction": "holm",
+            "reject_null": statistically_significant,
+            "subperiods": 3,
+            "positive_subperiods": 3 if stable else 2,
+            "minimum_subperiod_mean": effect / 2 if stable else -abs(effect) / 2,
+        }
+
     return {
         "evaluation_id": "mdl_" + "a" * 32,
         "record_fingerprint": "e" * 64,
@@ -303,6 +343,16 @@ def _model_evaluation(
             "best_factor_id": "volatility_60",
             "model_minus_best_factor_ic": delta,
             "model": {"dates": dates, "mean_ic": mean_ic},
+            "statistical_validation": {
+                "model_ic": validation(mean_ic),
+                "factor_comparisons": [
+                    {
+                        "factor_id": "volatility_60",
+                        "mean_delta": delta,
+                        "validation": validation(delta),
+                    }
+                ],
+            },
         },
     }
 
@@ -349,7 +399,8 @@ class ModelEvidenceBridgeTests(TestCase):
         self.assertEqual(record["source"]["kind"], "model_evidence_deterministic")
         self.assertEqual(record["source"]["objective"], "drawdown")
         self.assertFalse(record["source"]["model_used"])
-        self.assertIn("model-evidence-derivation-v1", record["source"]["selection_reason"])
+        self.assertIn("model-evidence-derivation-v2", record["source"]["selection_reason"])
+        self.assertIn("Holm-adjusted", record["source"]["selection_reason"])
         reference = next(
             item
             for item in record["evidence"]["references"]
@@ -381,6 +432,21 @@ class ModelEvidenceBridgeTests(TestCase):
             self._derive(_model_evaluation(self.snapshot_fingerprint, delta=-0.005))
         with self.assertRaisesRegex(RuntimeError, "快照"):
             self._derive(_model_evaluation("f" * 64))
+        with self.assertRaisesRegex(ValueError, "Holm-corrected"):
+            self._derive(
+                _model_evaluation(
+                    self.snapshot_fingerprint,
+                    statistically_significant=False,
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "three subperiods"):
+            self._derive(
+                _model_evaluation(self.snapshot_fingerprint, stable=False)
+            )
+        with self.assertRaisesRegex(ValueError, "confidence interval"):
+            self._derive(
+                _model_evaluation(self.snapshot_fingerprint, positive_ci=False)
+            )
         self.assertEqual(self.store.list("alice")["hypotheses"], [])
         self.assertEqual(self.strategy_store.list_candidates("alice"), [])
 

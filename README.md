@@ -5,18 +5,19 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2f6f68)](LICENSE)
 
-[在线展示](https://shiraikuroko123.github.io/ai-trade/) · [架构](docs/ARCHITECTURE.md) · [Docker 部署](docs/DOCKER_DEPLOYMENT.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[在线展示](https://shiraikuroko123.github.io/ai-trade/) · [架构](docs/ARCHITECTURE.md) · [Docker 部署](docs/DOCKER_DEPLOYMENT.md) · [AI K线助理](docs/AI_ASSISTANT.md) · [系统对照](docs/ECOSYSTEM.md) · [Factor Lab](docs/FACTOR_LAB.md) · [Model Lab](docs/MODEL_LAB.md) · [Hypothesis Lab](docs/HYPOTHESIS_LAB.md) · [标的池与市场规则](docs/UNIVERSE.md) · [证券池批量筛选](docs/UNIVERSE_SCREENING.md) · [数据源与独立核对](docs/CROSS_SOURCE_AUDIT.md) · [市场情报证据](docs/MARKET_INTELLIGENCE.md) · [市场宽度与板块排名](docs/MARKET_BREADTH.md) · [板块资金流证据](docs/CAPITAL_FLOW.md) · [研究方法](docs/RESEARCH_METHODOLOGY.md) · [研究日志](docs/RESEARCH_JOURNAL.md) · [日报/周报归档](docs/RESEARCH_DIGESTS.md) · [监控与告警运维](docs/MONITORING.md) · [模拟盘运维](docs/PAPER_TRADING.md) · [云端行情快照](docs/CLOUD_STORAGE.md) · [券商适配器](docs/BROKER_ADAPTERS.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[JQData licensed-data onboarding](docs/JQDATA.md) · [零成本近期行情与前向证据操作](docs/FORWARD_EVIDENCE.md)
 
 `v1.0.0` 是 AI Trade 当前公开发行版。这是一个面向中国个人投资者的本地系统化研究与模拟交易工作台。默认策略使用 A 股场内 ETF 日线，只做多、不加杠杆；底层投资池采用时点有效的证券主数据模型，不存在“最多 8 只”的代码限制。独立的只读行情工作台提供日/周/月 K 线、成交量、MA/EMA/BOLL、MACD/KDJ/RSI/Wilder ATR、十字线、缩放和当前模拟账户成交标记，全部绑定同一份已完成行情快照。市场情报页提供九类彼此隔离的证据，包括股票时点基本面、股票历史估值分位、官方披露、第三方新闻和公开 Level-1 五档盘口；这些证据仍固定为 `research_only`。相互隔离的多头、空头和裁判研究账本中，每个角色分别经过预算、重试、缓存和不可变审计，失败时独立回退到确定性本地记录；裁判只能整理一致点、冲突和未决问题，不能改变研究结论、订单、仓位或权限。新历史记录会把公开调用摘要与对应的用户隔离不可变证据交叉绑定，缺失或不匹配的模型记录不会进入历史与下一次对比。证券选择来自配置主数据，不在前端写死数量。策略实验室要求候选完成同快照对照、留出集、成本、回撤与稳定性验证并经人工批准；AI K 线助理只有 `research_only` 权限。交易页还可把券商导出的标准成交 CSV 导入本地影子账户，复核行为、相对模拟成交价和成交分配偏差。可选择的“仅本地 / 本地 + R2”存储、腾讯网络回退、Yahoo 或可选 Tushare 独立核对、可恢复缓存事务、研究监控与归档、市场情报、内测登录、券商能力声明、限定标的/方向/额度的 mandate、逐批一次性人工批准、可重启恢复的订单生命周期账本与多重实盘门禁均已纳入安全边界，但没有内置任何可用的真实券商适配器，真实下单保持关闭。
 
-`v1.0.0` 的完整本地研究、回测、模拟、监控和归档流程 **不需要大模型**。模型增强是用户自行配置的可选能力；未配置 Key、模型不可用或预算耗尽时，系统继续使用确定性本地结果。大模型驱动的规律发现、自动实验和策略自迭代不属于 `v1.0.0` 正式版；当前 `main` 已开始开发 `v2.0.0` 研究线的确定性假设登记核心。
+`v1.0.0` 的完整本地研究、回测、模拟、监控和归档流程 **不需要大模型**。模型增强是用户自行配置的可选能力；未配置 Key、模型不可用或预算耗尽时，系统继续使用确定性本地结果。大模型驱动的规律发现、自动实验和策略自迭代不属于 `v1.0.0` 正式版；当前 `main` 上未发布的 `v2.0.0` 研究线已经包含确定性因子评估、受限表达式因子、Ridge/因子均值/GBDT 模型基线、假设实验执行、参数扫描、带 embargo 的嵌套滚动验证、研究报告投影，以及受轮次、工具预算和白名单约束的初版自动研究循环。所有产物保持 `research_only`，循环不能物化候选、批准、激活、改写活动组合或生成订单。
 
 本 README 描述 `v1.0.0` 公开发行版及其安全边界。月度研究视图、旧模拟账期只读浏览、R2 digest 备份、邮件与 Windows Toast、可审计多空裁判、AI 调用治理、Tushare 财务/估值参考核验、官方事件与新闻证据、研究监控和市场情报均已纳入本版 wheel；完整变更见 [更新记录](CHANGELOG.md)。
 
 系统已经贯通以下流程：
 
 1. 按证券上市/退市日期和成分生效区间，生成历史时点可见的动态候选池。
-2. 以东方财富为主数据源、腾讯财经为网络回退，下载、校验并以整套快照缓存候选标的历史行情；默认用 Yahoo Finance、也可用环境变量授权的 Tushare Pro 做短窗口独立核对，两者都不进入策略快照链。
+2. 以东方财富为主数据源、腾讯财经为网络回退，下载、校验并以整套快照缓存候选标的历史行情；默认用 Yahoo Finance、也可用环境变量授权的 Tushare Pro 做短窗口独立核对。可选 BaoStock 仅用于近期数值监测，因授权与上游出处未核实，即使匹配也保持 warning；三个参考源都不进入策略快照链。
 3. 用趋势、相对强弱、波动率、流动性、资金容量和分组暴露生成目标仓位。
 4. 按信号后下一交易日开盘成交，计入整手、滑点、佣金、印花税、过户费、停牌和涨跌停约束。
 5. 运行历史回测、沪深 300 ETF 基准对比和连续滚动样本外验证。
@@ -48,9 +49,54 @@
 
 ## v2.0.0 路线边界
 
-`v2.0.0` 研究线将引入大模型辅助的自主研究：从已有证据提出可证伪的因子或规则假设，生成带版本的数据集与实验计划，执行防未来泄漏的回测、留出集、成本压力和滚动样本外验证，再把合格结果登记为 Challenger。当前第一层已经可以在不调用模型、不联网刷新的前提下，把本地行情快照和当前 Strategy Lab 基线登记为不可变假设，预先写明机制、定量预测、反证阈值、替代解释、混杂控制、三假设家族预算及验证计划；用户还可以通过显式 `--yes` 确认把它物化为唯一、指纹绑定的 Strategy Lab 草稿，但系统尚不会自动执行实验、验证或批准。默认计算路线会优先使用普通个人电脑可运行的确定性研究引擎、小型本地模型或用户自选的远程模型 API，不把高性能本地大模型作为安装前提。详见 [Hypothesis Lab](docs/HYPOTHESIS_LAB.md)。
+`v2.0.0` 研究线正在引入大模型辅助的自主研究：从已有证据提出可证伪的因子或规则假设，生成带版本的数据集与实验计划，执行防未来泄漏的回测、留出集、成本压力和滚动样本外验证，再把合格结果登记为 Challenger。当前 `main` 已经可以在不调用模型、不联网刷新的前提下完成以下确定性链路：登记不可变假设；预先写明机制、定量预测、反证阈值、替代解释、混杂控制、三假设家族预算及验证计划；执行同快照实验并保存预测命中/反证判定；评估内置或受限表达式因子的 rank IC、衰减与分组差；用固定超参数的 `factor_mean_v1`、`ridge_v1`、`gbdt_v1` 做严格按时间滚动的样本外比较；运行探索性参数扫描及带 embargo、one-standard-error 规则的嵌套滚动验证；再由显式 `--yes` 把一个指纹绑定的假设物化为 Strategy Lab 草稿。默认计算路线优先使用普通个人电脑可运行的确定性研究引擎，不把 GPU 或高性能本地大模型作为安装前提。详见 [Factor Lab](docs/FACTOR_LAB.md)、[Model Lab](docs/MODEL_LAB.md) 与 [Hypothesis Lab](docs/HYPOTHESIS_LAB.md)。
 
-“自我迭代”只表示自动提出和验证候选，不表示自动批准。任何候选进入 Champion、活动模拟策略或更高权限前仍须人工复核和明确批准；模型不能自行改写基准、降低门槛、删除不利实验、调整真实持仓或创建订单。`v1.0.0` 不包含这些自主研究运行时代码。
+Factor/Model evaluation v2 还会用证据绑定的确定性种子执行 999 次 circular moving-block bootstrap，保存 95% CI、单侧 p 值和三段时间稳定性，并分别在因子 horizon 家族、模型 IC 与逐输入因子差值家族内执行 Holm FWER 校正。旧 v1 记录保持只读兼容；从模型证据派生假设时，模型 IC 及其相对最佳单因子的增量都必须在校正后通过、CI 下界为正且三个子期间方向一致。Hypothesis runner 对预注册业务阈值的命中/反证判断仍不是 p 值检验，不能把两类结论混写。
+
+当前 `main` 还加入了第一版研究证据链：不可变 `FeatureSnapshot` 与独立 `LabelSnapshot` 按日期创建后不覆盖，记录知识截止、历史重建标记、逐证券输入指纹、缺失原因和证券池排除原因；训练配对只接纳在训练截止前已经成熟的标签。CLI 默认只对最新共同完成会话做真实 capture；历史日期必须显式声明 reconstruction，且这类重建证据不能训练 artifact。统计门禁合格的 v2 模型评估可以物化为包含标准化状态和完整系数的线性 `ModelArtifact`，在严格样本外特征快照上生成持久化 `PredictionSnapshot`；预测必须从特征日后的已知第一交易会话生效，结束日不能超过模型 horizon，日历证据不足时失败关闭而不把普通工作日猜成交易日。确定性的 long-only 组合构造器再把预测、不确定性、当前权重、费用表、行情 manifest/输入指纹和现金/单标的/资产/板块/波动/换手/容量约束绑定成不可变 `PortfolioPlan`，且决策时间不能早于预测生成时间；预期 alpha 不能覆盖费用时允许零交易。显式 CLI 已提供特征构建/读取、独立标签、artifact 拟合、样本外预测和组合计划入口；当前 artifact 只支持 Ridge 与因子均值，不支持 GBDT 树持久化，Factor/Model 评估本身也尚未统一改为消费物化特征仓。这条链仍未接入事件回测、Strategy Lab、模拟账户或订单生成。
+
+ShadowAccount 也新增了与旧成交 CSV 复盘隔离的实验性事件账本：可从期初现金、存取款、成交、费用调整、持仓调整、公司行动、行情标记和账户快照重建现金、持仓、成本与权益，并对独立券商现金/持仓快照做差异检查。CLI 提供事件追加、账户投影和 JSON 快照差异检查；事件使用定点十进制字符串、幂等外部 ID 和追加式哈希链，篡改、冲突 ID、超卖或负现金会失败关闭。对账前还会重验投影的完整 schema、现金/持仓/权益守恒和投影指纹，并用同一事件 schema 规范化券商证券代码与定点十进制数量。它尚未迁移旧成交账本、接入适配器或形成连续 sandbox 证据，记录固定声明 `qualifying_broker_sandbox_evidence=false`、`execution_enabled=false`。
+
+“自我迭代”只表示自动提出和验证研究动作，不表示自动批准。初版 `ResearchLoopEngine` 可以重放一个有界 JSON 计划，也可以让已配置的大模型在现有调用预算、缓存、并发和不可变审计边界内逐轮选择下一步。它只允许定义/评估受限因子、评估注册模型、从本循环模型证据派生假设、执行本循环假设或停止；每项工具有固定成本，预算在调用前检查，重复提案会被拒绝，失败和负结果继续写入按用户隔离的追加式哈希链。模型评估和假设 ID 必须由同一循环产生，不能引用外部记录绕过门禁。
+
+这仍是范围很窄的研究编排内核：Factor/Model Lab 尚未统一消费物化特征仓，预测尚未进入事件回测和活动模拟策略，也没有跨循环候选选择偏差校正或真实未来期自动研究证据。循环安全契约固定禁止候选物化、批准、激活、调整券商配置、降低验证门槛和交易。任何候选进入 Champion、活动模拟策略或更高权限前仍须在循环之外由人工复核和明确批准；`v1.0.0` 不包含上述未发布研究运行时代码。
+
+在已有已校验缓存上可运行以下 `main` 研究命令；它们不会隐式下载数据：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli factor-list
+.\.venv\Scripts\python.exe -m ai_trade.cli factor-evaluate --factor momentum_120_5
+.\.venv\Scripts\python.exe -m ai_trade.cli model-evaluate --model ridge_v1 --horizon 20
+.\.venv\Scripts\python.exe -m ai_trade.cli parameter-sweep --objective sharpe
+.\.venv\Scripts\python.exe -m ai_trade.cli nested-walk-forward --objective sharpe
+.\.venv\Scripts\python.exe -m ai_trade.cli hypothesis-generate --objective balanced
+.\.venv\Scripts\python.exe -m ai_trade.cli hypothesis-run <hypothesis-id>
+.\.venv\Scripts\python.exe -m ai_trade.cli research-report
+.\.venv\Scripts\python.exe -m ai_trade.cli research-loop-run --mode local --plan-file <bounded-plan.json> --max-rounds 6 --max-tool-units 16
+.\.venv\Scripts\python.exe -m ai_trade.cli research-loop-run --mode model --max-rounds 6 --max-tool-units 16
+.\.venv\Scripts\python.exe -m ai_trade.cli research-loop-list
+.\.venv\Scripts\python.exe -m ai_trade.cli research-loop-show <research-loop-id>
+```
+
+`research-loop-run --mode local` 重放最多 12 个动作的有界 JSON 计划；`--mode model` 只有在用户已经配置模型与调用治理时才会联网请求下一项动作。两种模式都复用同一工具白名单、轮次/工具预算、同循环 ID 绑定和追加式审计，不会刷新行情，也没有 materialize、approve、activate、portfolio、broker 或 trade 入口。
+
+物化特征、预测组合和 Shadow 事件账本使用另一组显式、只研究命令。需要行情的命令只读取已验证缓存，不会隐式刷新数据；整组命令都没有 approve、activate 或 trade 参数：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-forward-run
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-build --as-of 2026-07-24 --factors momentum_120_5,volatility_60
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-build --as-of 2026-01-30 --historical-reconstruction
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-show <feature-snapshot-id> --date 2026-07-24
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-label <feature-snapshot-id> --date 2026-07-24 --horizon 20
+.\.venv\Scripts\python.exe -m ai_trade.cli model-artifact-fit <model-evaluation-id> --training-cutoff 2026-07-24T15:30:00+08:00
+.\.venv\Scripts\python.exe -m ai_trade.cli model-predict <artifact-id> <feature-snapshot-id> --feature-date 2026-07-24 --valid-from 2026-07-27 --valid-until 2026-08-21
+.\.venv\Scripts\python.exe -m ai_trade.cli portfolio-plan <prediction-id> --feature-date 2026-07-24 --execution-date 2026-07-27 --equity 100000
+.\.venv\Scripts\python.exe -m ai_trade.cli shadow-event-append --help
+.\.venv\Scripts\python.exe -m ai_trade.cli shadow-project --account-reference <local-account-reference>
+.\.venv\Scripts\python.exe -m ai_trade.cli shadow-reconcile --help
+```
+
+`feature-forward-run` 不联网刷新行情。推荐在每个收盘会话依次执行 `download --force` 和 `feature-forward-run`；只有特征日、缓存最新共同会话与当时的已完成会话截止日三者相等，快照才算 genuine PIT，缓存滞后时命令会失败关闭。相同输入的重复运行会复用同一个快照，并只为已经历完整 5/20/60 个交易会话的 genuine 快照补标签。`feature-build` 默认也是 live capture，只接受最新共同完成会话；`--factors` 应与目标模型评估的因子集合及顺序完全一致。Feature/Label 快照从活动 manifest 的逐文件路由推导真实供数者：全部回退时记录 `tencent`，混合供数时记录稳定的 `mixed:...`，不能识别实际来源时拒绝物化证据，不会把配置首选的 `eastmoney` 冒充实际来源。`--historical-reconstruction` 只用于研究回放，artifact 拟合会排除它。`model-artifact-fit` 还会先执行统计部署门禁；当前 47 标的三个模型都不合格，因此用现有三个 evaluation ID 调用会按设计拒绝，而不是生成预测或组合。`portfolio-plan` 接受的是显式权益与可选当前权重 JSON，不会读取或改写活动模拟账户，并把用于流动性/波动元数据的行情 manifest 与逐证券输入指纹固化进计划。Shadow 命令也只写隔离的影子证据账本；对账 JSON 只接受 `cash` 和 `positions`，不能由调用者放宽现金容差，不构成券商 sandbox 晋级或执行授权。
 
 ## 快速开始
 
@@ -389,12 +435,19 @@ ai-trade/
 ├── scripts/                 # Windows 初始化、模拟盘、监控与归档计划任务脚本
 ├── src/ai_trade/
 │   ├── assistant/           # research-only K 线复核与本地历史存储
-│   ├── broker/              # 模拟账户、前向审计和实盘阻断
-│   ├── data/                # 行情下载、校验、快照和市场访问
+│   ├── broker/              # 模拟账户、影子事件投影、前向审计和实盘阻断
+│   ├── data/                # 行情下载、校验、快照和可续传刷新候选
+│   ├── factor_lab/          # 因子注册、受限表达式和时点评估证据
+│   ├── feature_store/       # 不可变 PIT 特征快照与独立标签快照
+│   ├── model_lab/           # 固定模型评估、线性产物与样本外预测快照
+│   ├── portfolio/           # research-only 成本约束组合计划
+│   ├── hypothesis_lab/      # 预注册、实验执行、参数扫描和嵌套验证
+│   ├── research_loop/       # 有界工具白名单、预算与追加式自动研究审计
 │   ├── web/                 # 零运行依赖的本地工作台、任务队列和 HTTP 防护
 │   ├── research_archive.py  # 模拟账本、日报与日志的只读收盘归档投影
 │   ├── research_digest.py   # 按用户/账期隔离的不可变日报与周报修订链
 │   ├── research_journal.py  # 每用户隔离的不可变研究日志
+│   ├── research_statistics.py # 区块 Bootstrap、稳定性和 Holm 校正
 │   ├── monitoring.py        # 每用户隔离的监控、告警与本地通知证据
 │   ├── backtest.py          # 事件驱动回测
 │   ├── security.py          # 时点证券主数据与动态标的池
@@ -407,16 +460,17 @@ ai-trade/
 └── README.md
 ```
 
-行情缓存、助理历史、模拟账户、成交与净值账本、日志、报告、云恢复暂存区、虚拟环境和 `.env` 不会上传 GitHub。
+行情缓存、助理历史、研究循环账本、模拟账户、成交与净值账本、日志、报告、云恢复暂存区、虚拟环境和 `.env` 不会上传 GitHub。
 
 ## 数据安全
 
 - 交易所时区固定为中国标准时间，默认 15:30 后才把当日 bar 视为完整日线。
 - 盘中下载会自动剔除当天未完成 bar，信号、回测和模拟盘只读取已完成交易日。
-- 默认先串行请求东方财富；主源失败时使用腾讯财经日线回退，若刷新级传输熔断已打开，后续标的会跳过重复的主源请求。两个网络源都失败后，才允许降级到距截止日不超过 7 天的本地已校验缓存。
+- 默认先串行请求东方财富；主源失败时使用腾讯财经日线回退，若刷新级传输熔断已打开，后续标的会跳过重复的主源请求。请求前复权而腾讯只返回 `day` 时，原始序列默认不可用；只有新浪 qfq 因子严格证明调整因子恒等，且新浪与腾讯的全历史核对满足显式的交易日覆盖、单 tick 价格差异、可用成交量和缺失数量上限时，才把该证券记录为有独立证据的“原始价等价于前复权”。来源元数据会保存因子/参考响应哈希、覆盖率、两侧缺失日期、价格差异和缺失成交量日期；任一硬上限失败即整支证券失败关闭。三个公开接口都不构成交易所或授权数据保证。
 - 全部候选文件先写入临时快照，全部下载成功并通过 schema、日期、数值和 OHLC 校验后才作为一套发布。
 - `data/cache/manifest.json` 记录请求上界、实际共同完成交易日、每个标的的来源路由、网络错误、回退原因、最新日期和 SHA-256；腾讯增量模式还会认证旧 manifest、旧文件哈希、复权口径和历史起点，并记录保留历史的来源与种子哈希。
 - 默认刷新后用 Yahoo Finance 核对最近 5 个完整交易日；若本次文件实际来自腾讯回退，仍使用 Yahoo 作为独立参考，不会把腾讯与自身比较后标记通过。Yahoo 的成交额不可用，因此审计只比较 OHLCV；结果、容差和逐证券偏差位于 `manifest.json -> cross_source_check`，详见 [跨源日线审计](docs/CROSS_SOURCE_AUDIT.md)。
+- 安装 `.[baostock]` 后可把 `data.cross_check.reference_provider` 设为 `baostock`，用于发现近期尾部缺失或明显冲突。它不是有授权的正式证据源：逐标的数值可以记录为 `matched`，但总审计固定降级为 `warning / independent_incomplete`，不会解除任何实盘门禁。
 - 腾讯历史 K 线成交额按当前接口观测到的两位“万元”量化保留，即 100 元分辨率；只有在按四舍五入解释时，名义单条误差界限才是 50 元。最新日若可与报价接口严格对应，会用报价字段覆盖并在 manifest 中标记。流动性和容量判断应考虑这一非交易所担保的精度边界。
 - `MarketData` 会核对 manifest 中的 SHA-256；混合快照或手工改坏的缓存会被拒绝。
 - `doctor` 显示共同数据截止日、各标的覆盖范围、哈希及被排除的未完成日期。
@@ -457,7 +511,17 @@ ai-trade/
 
 ## 当前研究证据
 
-数据截止 2026-07-13，这组首发研究证据在同一默认策略配置下重建：全历史年化收益约 10.00%、Sharpe 约 1.10、最大回撤约 -11.81%；连续滚动样本外账户年化约 11.12%、Sharpe 约 1.21、最大回撤约 -14.01%。1,000 次移动区块 Bootstrap 的年化收益 95% 区间约为 4.66% 至 17.34%，较差 5% 路径的最大回撤约 -24.12%。4/4 研究门槛通过，但 `live_ready=false`，这些结果仍不是实盘授权。
+截至 2026-07-27，活动 `data/cache/manifest.json` 已原子发布配置内全部 47 只 ETF 和 47 个 CSV，共同完成日为 2026-07-27；逐文件行数、SHA-256 和最后交易日均已校验，manifest SHA-256 为 `242101042f3882106ae0e95afc0c81c732b51254dbc79fc357961dd4357ce0c9`。本轮 33 个文件按有界重叠增量刷新、14 个文件抓取全历史，最终 47 条实际路由均为腾讯网络回退；其中 12 个只返回原始 `day` 的标的额外绑定新浪恒等 qfq 因子及有界全历史 OHLC/可用成交量等价证据，其余返回腾讯 `qfqday`。修正 `512200` 的 `core_etf` 生效日为首条缓存 bar 的 2017-09-25 后，`universe-verify` 结果为 47/47 verified、0 missing cache、0 dangerous issues。
+
+这不是“独立跨源核对通过”。本轮 Yahoo 在最近 5 个重叠会话上确认 42/47 标的；`159901`、`159915`、`159992`、`159995` 仅在 2026-07-27 开盘价出现 0.96% 至 4.27% 的差异，`159928` 的 Yahoo 响应自身未通过 OHLC 关系校验，因此固化状态为 `failed / independent_conflict`。BaoStock 随后的裁决请求再次返回传输代码 `10002007`，冲突尚未解决。当前数据证据等级应读作“完整发布并通过内部契约，但存在未裁决的独立来源冲突”；它可以继续用于受限研究，不能提升交易权限。
+
+同日 `feature-forward-run` 生成首份合格的未来积累快照 `fs_4ab92ed3e9044cac7f5de4257a4ac147`：47 行、7 个默认因子、实际来源 `tencent`、`genuine_pit=true`；重复运行复用同一 ID，没有追加修订。5/20/60 日标签目前均为 pending。两份针对 2026-07-24、但到 2026-07-27 才创建的旧记录仍保留为不可变审计，按严格时点规则不属于 genuine PIT，也不能进入部署训练。
+
+同日 BaoStock 匿名接口探测覆盖了 `510300`、`510500`、`159915` 从 2026-04-24 至 2026-07-27 的 63 个交易日；2026-07-24 的重叠 OHLC 与成交额一致，成交量从股换算为手后也一致。它只能证明这三个样本在重叠日没有发现数值冲突，不能证明上游独立性、数据授权或 SLA；随后长区间复权复核遇到 `10002007` 网络接收错误，因此仍不能写成正式独立确认。
+
+基于同一 47 标快照重建的全历史回测区间为 2016-01-04 至 2026-07-24：策略 CAGR 约 7.03%、Sharpe 约 0.77、最大回撤约 -15.36%；沪深 300 ETF 基准分别约为 5.38%、0.36 和 -44.75%。8 段连续滚动样本外结果为 CAGR 约 6.44%、Sharpe 约 0.68、最大回撤约 -15.30%，仅 4/8 分段为正。1,000 次移动区块 Bootstrap 的 Sharpe 95% 区间约为 0.24 至 1.42；稳健性门槛 4/4 通过，但 `live_ready=false`。
+
+7 个基准因子的 v2 统计证据、3 个模型、参数扫描、4 折嵌套滚动验证和研究报告也已重建。`momentum_120_5` 是 20 日协议中的最佳单因子；Ridge、因子均值和 GBDT 的平均 IC 分别约为 -0.0304、0.0292 和 0.0462。GBDT 虽是三者中最高，但 Holm 调整后 p 值为 0.105，且相对最佳因子的 IC 增量为 -0.0067；三个模型均未通过模型派生门禁，因此没有合格模型可物化为新的模型派生假设或 artifact。嵌套验证 4 折中只有 1 折选择非基线参数、也只有 1 折取得正增量，不能宣称稳定调参改进。此前 8 标结果仅保留为历史开发基线，不能与新结果混写或作为独立检验集。
 
 这些历史窗口已经用于工程和模型判断，不再是独立最终检验集。它们只能说明当前实现值得继续模拟，不能说明未来会取得相同收益；下一份真正独立的证据来自版本冻结后的未来模拟盘。
 
@@ -483,6 +547,9 @@ ai-trade/
 - `state/broker_reconciliation.csv`：内容指纹绑定的正式沙箱现金/持仓对账证据；旧身份 ID 不计入连续干净会话。
 - `state/shadow_fills.csv`：按登录用户、来源和账户别名隔离的标准化影子成交；每行带可重算的内容指纹。
 - `state/shadow_imports.csv`：原始文件 SHA-256、接收/重复数量和导入时间；不保留原始券商 CSV。
+- `state/feature_store/`、`state/model_lab/` 与 `state/portfolio/`：未发布研究线的不可变特征/标签、合格线性 artifact、样本外预测和成本约束组合计划；均不进入活动模拟账户。
+- `state/research_loop/users/<owner-sha256>/loops/`：本地计划或受治理模型逐轮产生的 planner、工具、失败、拒绝和停止事件哈希链；不保存审批或交易权限。
+- `state/shadow_ledger/`：与旧成交 CSV 复盘分离的事件化影子账户投影证据；不是正式券商 sandbox 对账。
 - `state/research_journal/users/<owner-sha256>/entries/`：按登录用户隔离的 append-only 研究记录；每条记录绑定证据指纹，修正通过新记录关联旧编号。
 - `state/monitoring/users/<owner-sha256>/`：配置修订、扫描、告警、本地通知及各自的追加式处理动作；不进入 R2 行情备份。
 - `paper_audit.json`、`paper_audit.md`：账本完整性、前向指标和券商沙盒晋级门槛。
@@ -565,6 +632,9 @@ Unregister-ScheduledTask -TaskName 'AI-Trade Research Archive Daily' -Confirm:$f
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m ruff check src tests scripts adapters/qmt/src
+.\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe -m coverage run -m unittest discover -s tests -q
+.\.venv\Scripts\python.exe -m coverage report
 .\.venv\Scripts\python.exe -m compileall -q src tests scripts adapters/qmt/src
 node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m pip install build==1.2.2.post1
@@ -574,5 +644,7 @@ node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m ai_trade.cli validate
 .\.venv\Scripts\python.exe -m ai_trade.cli live-check
 ```
+
+CI 把质量门禁和平台测试分开执行：独立 Ubuntu/Python 3.12 `quality` job 运行 Ruff、研究核心 Mypy 和分支覆盖率，`pyproject.toml` 当前要求分支覆盖率至少 `75.0%`；测试矩阵覆盖 Ubuntu/Windows 与 Python 3.10/3.12，另有 Windows PowerShell/bootstrap 和发行包安装冒烟。2026-07-27 当前未提交工作树的统一本地验收为：924 项 unittest 单次全绿、分支覆盖率 76.3%、Ruff 通过、Mypy 对 50 个研究核心文件零错误，Compileall、JavaScript/PowerShell 语法、8 项 QMT 适配器定向测试和 `git diff --check` 通过；主包与 QMT 的 wheel/sdist 已在隔离构建环境成功生成，主包发行内容校验通过。远端 `main` HEAD `adf8456` 的 [CI run 30228478457](https://github.com/Shiraikuroko123/ai-trade/actions/runs/30228478457) 仍为失败：Ubuntu 3.10/3.12 与 package job 通过，Windows 3.10/3.12 测试和 PowerShell bootstrap job 失败；当前工作树尚未提交或推送，所以这些本地结果不能写成远端 CI 已通过。旧的 22 文件/71 项聚焦测试/77.2% 快照早于本轮 pipeline 与 research-loop 增量，不能再当作当前质量结果。
 
 `live-check` 正常情况下应失败：即使安装 QMT 只读插件并设置风险确认环境变量，系统仍会因为没有可实盘下单的券商适配器而拒绝。

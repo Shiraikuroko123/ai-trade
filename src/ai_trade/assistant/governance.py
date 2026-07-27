@@ -34,6 +34,7 @@ _CALL_ROLES = {
     "research_debate_bull",
     "research_debate_bear",
     "research_debate_judge",
+    "research_loop_planner",
 }
 MAX_REQUEST_BYTES = 1024 * 1024
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 from ..data.evidence_io import atomic_create_json, evidence_store_lock
 from ..json_utils import load_unique_json
@@ -259,7 +259,7 @@ class HypothesisLabStore:
 
     def _run_records_unlocked(
         self, owner: str, *, missing_ok: bool
-    ) -> list[dict[str, Any]]:
+    ) -> List[dict[str, Any]]:
         directory = self.owner_directory(owner) / "runs"
         if not directory.exists():
             if missing_ok:
@@ -267,7 +267,7 @@ class HypothesisLabStore:
             raise RuntimeError("Hypothesis run owner directory is unavailable")
         if directory.is_symlink() or not directory.is_dir():
             raise RuntimeError("Hypothesis run owner directory is invalid")
-        records: list[dict[str, Any]] = []
+        records: List[dict[str, Any]] = []
         for path in directory.iterdir():
             if (
                 path.is_symlink()
@@ -288,7 +288,7 @@ class HypothesisLabStore:
 
     def _records_unlocked(
         self, owner: str, *, missing_ok: bool
-    ) -> list[dict[str, Any]]:
+    ) -> List[dict[str, Any]]:
         directory = self.owner_directory(owner) / "hypotheses"
         if not directory.exists():
             if missing_ok:
@@ -296,7 +296,7 @@ class HypothesisLabStore:
             raise RuntimeError("Hypothesis owner directory is unavailable")
         if directory.is_symlink() or not directory.is_dir():
             raise RuntimeError("Hypothesis owner directory is invalid")
-        records: list[dict[str, Any]] = []
+        records: List[dict[str, Any]] = []
         for path in directory.iterdir():
             if (
                 path.is_symlink()

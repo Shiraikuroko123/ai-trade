@@ -11,7 +11,7 @@
     "request_jitter_seconds": 0.5,
     "failure_cooldown_seconds": 20.0,
     "max_attempts": 4,
-    "eastmoney_max_attempts": 2,
+    "eastmoney_max_attempts": 8,
     "retry_base_seconds": 1.0,
     "retry_max_seconds": 8.0,
     "retry_jitter_seconds": 0.5,
@@ -125,6 +125,7 @@
   "shadow_account": {
     "fills_file": "state/shadow_fills.csv",
     "imports_file": "state/shadow_imports.csv",
+    "ledger_dir": "state/shadow_ledger",
     "max_import_bytes": 1000000
   },
   "research_journal": {
@@ -156,6 +157,14 @@
   },
   "order_book": {
     "root_dir": "state/order_book"
+  },
+  "feature_store": {
+    "root_dir": "state/feature_store"
+  },
+  "portfolio_construction": {
+    "max_turnover": 0.5,
+    "minimum_net_alpha_bps": 1.0,
+    "uncertainty_penalty": 0.25
   },
   "reports_dir": "reports",
   "logs_dir": "logs"

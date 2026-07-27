@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from getpass import getpass
 from pathlib import Path
 
@@ -58,6 +58,45 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument(
         "--force", action="store_true", help="Overwrite existing cache"
     )
+
+    jqdata_probe = subparsers.add_parser(
+        "jqdata-probe",
+        help="Inspect JQData entitlement and quota without requesting market data",
+    )
+    jqdata_probe.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Require credentials from process environment instead of prompting",
+    )
+    jqdata_sample = subparsers.add_parser(
+        "jqdata-sample",
+        help="Capture and reconcile a bounded licensed JQData history sample",
+    )
+    jqdata_sample.add_argument(
+        "--end-date",
+        required=True,
+        help="Licensed completed trading date in YYYY-MM-DD form",
+    )
+    jqdata_sample.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Require credentials from process environment instead of prompting",
+    )
+
+
+    subparsers.add_parser(
+        "security-master-capture",
+        help="Capture the configured master as an immutable knowledge-time version",
+    )
+    subparsers.add_parser(
+        "security-master-versions",
+        help="List verified knowledge-time security-master versions",
+    )
+    security_resolve = subparsers.add_parser(
+        "security-master-resolve",
+        help="Resolve the master version known at a timezone-aware cutoff",
+    )
+    security_resolve.add_argument("knowledge_cutoff")
 
     cross_check = subparsers.add_parser(
         "cross-check-data",
@@ -369,6 +408,123 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show and verify one immutable model evaluation record",
     )
     model_show.add_argument("evaluation_id")
+    research_loop_run = subparsers.add_parser(
+        "research-loop-run",
+        help=(
+            "Run a bounded research-only loop over an explicit tool allowlist "
+            "and append every outcome to an immutable ledger"
+        ),
+    )
+    research_loop_run.add_argument(
+        "--mode", choices=("local", "model"), default="local"
+    )
+    research_loop_run.add_argument(
+        "--plan-file",
+        default=None,
+        help="Bounded JSON action plan required in local mode",
+    )
+    research_loop_run.add_argument("--max-rounds", type=int, default=6)
+    research_loop_run.add_argument("--max-tool-units", type=int, default=16)
+    research_loop_list = subparsers.add_parser(
+        "research-loop-list", help="List immutable local research-loop ledgers"
+    )
+    research_loop_list.add_argument("--limit", type=int, default=50)
+    research_loop_show = subparsers.add_parser(
+        "research-loop-show", help="Show and verify one research-loop hash chain"
+    )
+    research_loop_show.add_argument("loop_id")
+    feature_build = subparsers.add_parser(
+        "feature-build",
+        help="Materialize one immutable completed-session FeatureSnapshot",
+    )
+    feature_build.add_argument("--as-of", help="Completed session in YYYY-MM-DD")
+    feature_build.add_argument(
+        "--factors",
+        default=None,
+        help="Comma-separated factor ids matching the intended model evaluation",
+    )
+    capture_mode = feature_build.add_mutually_exclusive_group()
+    capture_mode.add_argument(
+        "--live-capture",
+        dest="live_capture",
+        action="store_true",
+        help="Capture the latest completed session with the current knowledge cutoff",
+    )
+    capture_mode.add_argument(
+        "--historical-reconstruction",
+        dest="live_capture",
+        action="store_false",
+        help="Build research-only historical evidence that cannot train an artifact",
+    )
+    feature_build.set_defaults(live_capture=True)
+    feature_forward = subparsers.add_parser(
+        "feature-forward-run",
+        help=(
+            "Capture the current genuine FeatureSnapshot and materialize every "
+            "mature pending LabelSnapshot without refreshing market data"
+        ),
+    )
+    feature_forward.add_argument(
+        "--factors",
+        default=None,
+        help="Comma-separated factor ids (default: the whole registry)",
+    )
+    feature_forward.add_argument(
+        "--horizons",
+        default="5,20,60",
+        help="Comma-separated forward horizons in sessions (ascending)",
+    )
+    feature_show = subparsers.add_parser(
+        "feature-show",
+        help="Read and verify one immutable FeatureSnapshot",
+    )
+    feature_show.add_argument("snapshot_id")
+    feature_show.add_argument("--date", required=True, help="YYYY-MM-DD")
+    feature_label = subparsers.add_parser(
+        "feature-label",
+        help="Materialize a separate mature LabelSnapshot for one feature snapshot",
+    )
+    feature_label.add_argument("snapshot_id")
+    feature_label.add_argument("--date", required=True, help="YYYY-MM-DD")
+    feature_label.add_argument("--horizon", type=int, required=True)
+    artifact_fit = subparsers.add_parser(
+        "model-artifact-fit",
+        help=(
+            "Fit an inference-complete linear artifact only from a statistically "
+            "qualified v2 evaluation and mature PIT training pairs"
+        ),
+    )
+    artifact_fit.add_argument("evaluation_id")
+    artifact_fit.add_argument(
+        "--training-cutoff",
+        required=True,
+        help="Timezone-aware ISO-8601 timestamp",
+    )
+    model_predict = subparsers.add_parser(
+        "model-predict",
+        help="Create an immutable out-of-sample PredictionSnapshot",
+    )
+    model_predict.add_argument("artifact_id")
+    model_predict.add_argument("feature_snapshot_id")
+    model_predict.add_argument("--feature-date", required=True, help="YYYY-MM-DD")
+    model_predict.add_argument("--valid-from", required=True, help="YYYY-MM-DD")
+    model_predict.add_argument("--valid-until", required=True, help="YYYY-MM-DD")
+    portfolio_plan = subparsers.add_parser(
+        "portfolio-plan",
+        help="Create a research-only, cost-constrained immutable PortfolioPlan",
+    )
+    portfolio_plan.add_argument("prediction_id")
+    portfolio_plan.add_argument("--feature-date", required=True, help="YYYY-MM-DD")
+    portfolio_plan.add_argument("--execution-date", required=True, help="YYYY-MM-DD")
+    portfolio_plan.add_argument("--equity", type=float, required=True)
+    portfolio_plan.add_argument(
+        "--decision-time",
+        help="Timezone-aware ISO-8601 timestamp (default: now)",
+    )
+    portfolio_plan.add_argument(
+        "--current-weights-file",
+        help="Bounded JSON object mapping symbols to current portfolio weights",
+    )
     parameter_sweep = subparsers.add_parser(
         "parameter-sweep",
         help=(
@@ -460,6 +616,28 @@ def build_parser() -> argparse.ArgumentParser:
         "sandbox-drills", help="List immutable sandbox drill records"
     )
     sandbox_drills.add_argument("--limit", type=int, default=50)
+    shadow_event = subparsers.add_parser(
+        "shadow-event-append",
+        help="Append one research-only event to a pseudonymous ShadowAccount ledger",
+    )
+    shadow_event.add_argument("--account-reference", required=True)
+    shadow_event.add_argument("--event-type", required=True)
+    shadow_event.add_argument("--occurred-at", required=True)
+    shadow_event.add_argument("--trading-session", required=True, help="YYYY-MM-DD")
+    shadow_event.add_argument("--source", required=True)
+    shadow_event.add_argument("--external-id", required=True)
+    shadow_event.add_argument("--payload-file", required=True)
+    shadow_project = subparsers.add_parser(
+        "shadow-project",
+        help="Rebuild cash, positions, costs, and equity from ShadowAccount events",
+    )
+    shadow_project.add_argument("--account-reference", required=True)
+    shadow_reconcile = subparsers.add_parser(
+        "shadow-reconcile",
+        help="Compare a ShadowAccount projection with an independent JSON snapshot",
+    )
+    shadow_reconcile.add_argument("--account-reference", required=True)
+    shadow_reconcile.add_argument("--broker-snapshot-file", required=True)
     subparsers.add_parser(
         "universe-verify",
         help=(
@@ -649,6 +827,126 @@ def main(argv: list[str] | None = None) -> int:
             return _initialize_workspace(Path(args.directory))
         config = load_config(_resolve_config_path(args.config))
         _configure_logging(config)
+        if args.command == "jqdata-probe":
+            from .data.jqdata import (
+                JQDataCredentialError,
+                JQDataProbeStore,
+                credentials_from_environment,
+                probe_account,
+                prompt_credentials,
+            )
+
+            credentials = credentials_from_environment()
+            if credentials is None:
+                if args.non_interactive:
+                    raise JQDataCredentialError(
+                        "JQData credentials are absent from the process environment"
+                    )
+                credentials = prompt_credentials()
+            probe = probe_account(credentials)
+            result = JQDataProbeStore(
+                config.project_root / "state" / "jqdata"
+            ).publish(probe)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "jqdata-sample":
+            from .data.jqdata import (
+                JQDataCredentialError,
+                JQDataSampleStore,
+                capture_price_sample,
+                credentials_from_environment,
+                prompt_credentials,
+                summarize_price_sample,
+            )
+
+            credentials = credentials_from_environment()
+            if credentials is None:
+                if args.non_interactive:
+                    raise JQDataCredentialError(
+                        "JQData credentials are absent from the process environment"
+                    )
+                credentials = prompt_credentials()
+            sample = capture_price_sample(
+                credentials,
+                end_date=_required_cli_date(args.end_date, "--end-date"),
+                local_cache_dir=config.cache_dir,
+            )
+            stored = JQDataSampleStore(
+                config.project_root / "state" / "jqdata"
+            ).publish(sample)
+            print(
+                json.dumps(
+                    summarize_price_sample(stored),
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            )
+            return 0
+        if args.command.startswith("security-master-"):
+            from hashlib import sha256
+
+            from .security_store import SecurityMasterVersionStore
+
+            store = SecurityMasterVersionStore(config.security_master_store_dir)
+            if args.command == "security-master-capture":
+                source_path = config.security_master.source_path
+                if source_path is not None and source_path.is_file():
+                    response_sha256 = sha256(source_path.read_bytes()).hexdigest()
+                    try:
+                        source_label = source_path.resolve().relative_to(
+                            config.project_root
+                        ).as_posix()
+                    except ValueError:
+                        source_label = "external-configured-master"
+                else:
+                    encoded = json.dumps(
+                        config.security_master.to_dict(),
+                        ensure_ascii=True,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                    response_sha256 = sha256(encoded).hexdigest()
+                    source_label = "legacy-config"
+                version = store.publish(
+                    config.security_master,
+                    known_at=datetime.now(timezone.utc),
+                    source_manifest={
+                        "provider": "manual",
+                        "dataset": "configured_security_master",
+                        "request": {
+                            "mode": "configured_snapshot",
+                            "source_file": source_label,
+                        },
+                        "rows": len(config.security_master.instruments),
+                        "response_sha256": response_sha256,
+                        "usage_scope": "internal_research_only",
+                    },
+                )
+                print(
+                    json.dumps(
+                        version.summary(), ensure_ascii=False, indent=2, default=str
+                    )
+                )
+                return 0
+            if args.command == "security-master-versions":
+                print(
+                    json.dumps(
+                        store.versions(), ensure_ascii=False, indent=2, default=str
+                    )
+                )
+                return 0
+            version = store.resolve(
+                _parse_cli_timestamp(
+                    args.knowledge_cutoff, "knowledge_cutoff"
+                )
+            )
+            print(
+                json.dumps(
+                    version.summary(), ensure_ascii=False, indent=2, default=str
+                )
+            )
+            return 0
         if args.command in {
             "beta-user-add",
             "beta-user-list",
@@ -1209,6 +1507,180 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
+        if args.command == "research-loop-run":
+            from .research_loop import (
+                ModelResearchPlanner,
+                ResearchLoopEngine,
+                StaticResearchPlanner,
+            )
+
+            if args.mode == "local":
+                if args.plan_file is None:
+                    raise ValueError(
+                        "research-loop-run local mode requires --plan-file"
+                    )
+                planner = StaticResearchPlanner.from_file(args.plan_file)
+            else:
+                if args.plan_file is not None:
+                    raise ValueError(
+                        "research-loop-run model mode does not accept --plan-file"
+                    )
+                planner = ModelResearchPlanner(config, "local-owner")
+            market = MarketData(config, recover_snapshot=False)
+            result = ResearchLoopEngine(config).run(
+                "local-owner",
+                market,
+                planner,
+                max_rounds=args.max_rounds,
+                max_tool_units=args.max_tool_units,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "research-loop-list":
+            from .research_loop import ResearchLoopStore
+
+            result = ResearchLoopStore(
+                config.project_root / "state" / "research_loop"
+            ).list("local-owner", limit=args.limit)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "research-loop-show":
+            from .research_loop import ResearchLoopStore
+
+            result = ResearchLoopStore(
+                config.project_root / "state" / "research_loop"
+            ).get("local-owner", args.loop_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "feature-build":
+            from .pipeline_cli import build_feature_snapshot
+
+            factor_ids = (
+                None
+                if args.factors is None
+                else [
+                    part.strip()
+                    for part in str(args.factors).split(",")
+                    if part.strip()
+                ]
+            )
+            if factor_ids is not None and (
+                not factor_ids or len(factor_ids) != len(set(factor_ids))
+            ):
+                raise ValueError("feature-build --factors must contain unique ids")
+            result = build_feature_snapshot(
+                config,
+                as_of_session=_parse_cli_iso_date(args.as_of, "--as-of"),
+                live_capture=bool(args.live_capture),
+                factor_ids=factor_ids,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "feature-forward-run":
+            from .pipeline_cli import run_forward_evidence
+
+            factor_ids = (
+                None
+                if args.factors is None
+                else [
+                    part.strip()
+                    for part in str(args.factors).split(",")
+                    if part.strip()
+                ]
+            )
+            if factor_ids is not None and (
+                not factor_ids or len(factor_ids) != len(set(factor_ids))
+            ):
+                raise ValueError(
+                    "feature-forward-run --factors must contain unique ids"
+                )
+            result = run_forward_evidence(
+                config,
+                factor_ids=factor_ids,
+                horizons=_parse_horizons(args.horizons),
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "feature-show":
+            from .pipeline_cli import show_feature_snapshot
+
+            result = show_feature_snapshot(
+                config,
+                args.snapshot_id,
+                on_date=_required_cli_date(args.date, "--date"),
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "feature-label":
+            from .pipeline_cli import build_label_snapshot
+
+            result = build_label_snapshot(
+                config,
+                args.snapshot_id,
+                on_date=_required_cli_date(args.date, "--date"),
+                horizon=args.horizon,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "model-artifact-fit":
+            from .pipeline_cli import fit_model_artifact
+
+            result = fit_model_artifact(
+                config,
+                args.evaluation_id,
+                training_cutoff=_parse_cli_timestamp(
+                    args.training_cutoff,
+                    "--training-cutoff",
+                ),
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "model-predict":
+            from .pipeline_cli import create_prediction_snapshot
+
+            result = create_prediction_snapshot(
+                config,
+                args.artifact_id,
+                args.feature_snapshot_id,
+                feature_date=_required_cli_date(
+                    args.feature_date,
+                    "--feature-date",
+                ),
+                valid_from_session=_required_cli_date(
+                    args.valid_from,
+                    "--valid-from",
+                ),
+                valid_until_session=_required_cli_date(
+                    args.valid_until,
+                    "--valid-until",
+                ),
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "portfolio-plan":
+            from .pipeline_cli import create_portfolio_plan
+
+            result = create_portfolio_plan(
+                config,
+                args.prediction_id,
+                feature_date=_required_cli_date(
+                    args.feature_date,
+                    "--feature-date",
+                ),
+                equity=args.equity,
+                execution_session=_required_cli_date(
+                    args.execution_date,
+                    "--execution-date",
+                ),
+                decision_time=(
+                    datetime.now(timezone.utc)
+                    if args.decision_time is None
+                    else _parse_cli_timestamp(args.decision_time, "--decision-time")
+                ),
+                current_weights_file=args.current_weights_file,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
         if args.command == "parameter-sweep":
             market = MarketData(config, recover_snapshot=False)
             selected = (
@@ -1316,6 +1788,43 @@ def main(argv: list[str] | None = None) -> int:
             from .broker.sandbox import SandboxCycleEngine
 
             result = SandboxCycleEngine(config).list_drills(limit=args.limit)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "shadow-event-append":
+            from .pipeline_cli import append_shadow_event
+
+            result = append_shadow_event(
+                config,
+                args.account_reference,
+                args.event_type,
+                occurred_at=_parse_cli_timestamp(
+                    args.occurred_at,
+                    "--occurred-at",
+                ),
+                trading_session=_required_cli_date(
+                    args.trading_session,
+                    "--trading-session",
+                ),
+                source=args.source,
+                external_id=args.external_id,
+                payload_file=args.payload_file,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "shadow-project":
+            from .pipeline_cli import shadow_projection
+
+            result = shadow_projection(config, args.account_reference)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "shadow-reconcile":
+            from .pipeline_cli import shadow_reconciliation
+
+            result = shadow_reconciliation(
+                config,
+                args.account_reference,
+                broker_snapshot_file=args.broker_snapshot_file,
+            )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "universe-verify":
@@ -1645,6 +2154,23 @@ def _parse_cli_iso_date(value: str | None, field: str) -> date | None:
         raise ValueError(f"{field} must use YYYY-MM-DD format") from exc
     if parsed.isoformat() != value:
         raise ValueError(f"{field} must use YYYY-MM-DD format")
+    return parsed
+
+
+def _required_cli_date(value: str, field: str) -> date:
+    parsed = _parse_cli_iso_date(value, field)
+    if parsed is None:
+        raise ValueError(f"{field} is required")
+    return parsed
+
+
+def _parse_cli_timestamp(value: str, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as exc:
+        raise ValueError(f"{field} must use ISO-8601 format") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field} must include a timezone")
     return parsed
 
 

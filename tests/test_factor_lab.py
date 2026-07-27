@@ -18,6 +18,7 @@ from ai_trade.factor_lab import (
     factor_registry,
 )
 from ai_trade.factor_lab.engine import MINIMUM_EVALUATED_DATES
+from ai_trade.factor_lab.schema import evaluation_record_fingerprint
 from ai_trade.factor_lab.store import FactorLabCapacityError
 from ai_trade.models import Bar
 
@@ -159,6 +160,20 @@ class FactorLabEngineTests(TestCase):
             self.assertAlmostEqual(row["direction_hit_rate"], 1.0)
             self.assertGreater(row["mean_spread"], 0.0)
             self.assertGreaterEqual(row["dates"], MINIMUM_EVALUATED_DATES)
+            validation = row["statistical_validation"]
+            self.assertAlmostEqual(validation["effect_size"], 1.0)
+            self.assertAlmostEqual(validation["ci_low"], 1.0)
+            self.assertAlmostEqual(validation["ci_high"], 1.0)
+            self.assertEqual(validation["p_value"], 0.001)
+            self.assertLessEqual(validation["adjusted_p_value"], 0.05)
+            self.assertTrue(validation["reject_null"])
+            self.assertEqual(validation["family_size"], 2)
+            self.assertEqual(validation["subperiods"], 3)
+            self.assertEqual(validation["positive_subperiods"], 3)
+            self.assertEqual(
+                validation["block_size"],
+                max(1, (row["horizon"] + 4) // 5),
+            )
         coverage = record["coverage"]
         self.assertEqual(coverage["evaluated_dates"] + coverage["skipped_dates"], coverage["sampled_dates"])
         self.assertEqual(len(coverage["symbols"]), 6)
@@ -186,6 +201,11 @@ class FactorLabEngineTests(TestCase):
         self.assertAlmostEqual(
             row["direction_adjusted_mean_spread"], -row["mean_spread"]
         )
+        validation = row["statistical_validation"]
+        self.assertAlmostEqual(validation["effect_size"], -1.0)
+        self.assertEqual(validation["p_value"], 1.0)
+        self.assertEqual(validation["positive_subperiods"], 0)
+        self.assertFalse(validation["reject_null"])
 
     def test_repeated_evaluation_is_idempotent(self):
         first = self.engine.evaluate(
@@ -235,6 +255,33 @@ class FactorLabEngineTests(TestCase):
 
     def test_tampered_record_is_rejected_on_read(self):
         record = self.engine.evaluate(
+            "alice", self.market, "momentum_60_5", horizons=(5, 20), step=5
+        )
+        path = (
+            self.store.owner_directory("alice")
+            / "evaluations"
+            / f"{record['evaluation_id']}.json"
+        )
+        original = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(json.dumps(original))
+        value["results"][0]["statistical_validation"]["effect_size"] = 0.0
+        value["record_fingerprint"] = evaluation_record_fingerprint(value)
+        path.write_text(json.dumps(value), encoding="utf-8")
+        with self.assertRaisesRegex(
+            RuntimeError, "Invalid factor evaluation record"
+        ):
+            self.store.get("alice", record["evaluation_id"])
+
+        value = original
+        validation = value["results"][0]["statistical_validation"]
+        validation["adjusted_p_value"] = validation["p_value"]
+        value["record_fingerprint"] = evaluation_record_fingerprint(value)
+        path.write_text(json.dumps(value), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Holm correction"):
+            self.store.get("alice", record["evaluation_id"])
+
+    def test_v1_evaluation_remains_readable(self):
+        record = self.engine.evaluate(
             "alice", self.market, "momentum_60_5", horizons=(5,), step=5
         )
         path = (
@@ -243,12 +290,16 @@ class FactorLabEngineTests(TestCase):
             / f"{record['evaluation_id']}.json"
         )
         value = json.loads(path.read_text(encoding="utf-8"))
-        value["results"][0]["mean_ic"] = 0.0
+        value["schema_version"] = 1
+        value["engine_version"] = 1
+        for result in value["results"]:
+            result.pop("statistical_validation")
+        value["record_fingerprint"] = evaluation_record_fingerprint(value)
         path.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaisesRegex(
-            RuntimeError, "Invalid factor evaluation record"
-        ):
-            self.store.get("alice", record["evaluation_id"])
+
+        stored = self.store.get("alice", record["evaluation_id"])
+        self.assertEqual(stored["schema_version"], 1)
+        self.assertNotIn("statistical_validation", stored["results"][0])
 
     def test_per_factor_capacity_is_enforced(self):
         self.engine.evaluate(

@@ -22,7 +22,16 @@ DEFAULT_MAX_RESPONSE_BYTES = 512 * 1024
 MAX_COMPLETION_TOKENS = 1400
 PROMPT_TEMPLATE_VERSION = "assistant-enhancement-v2"
 DEBATE_PROMPT_TEMPLATE_VERSION = "assistant-debate-v1"
+RESEARCH_LOOP_PROMPT_TEMPLATE_VERSION = "research-loop-planner-v1"
 DEBATE_ADVOCATE_ROLES = {"bull", "bear"}
+RESEARCH_LOOP_TOOLS = {
+    "factor-define",
+    "factor-evaluate",
+    "model-evaluate",
+    "hypothesis-from-model",
+    "hypothesis-run",
+    "stop",
+}
 _RETRYABLE_ERRORS = {
     "model_rate_limited",
     "model_server_error",
@@ -252,6 +261,33 @@ class OpenAICompatibleProvider:
                 bull_argument_ids,
                 bear_argument_ids,
             ),
+            max_retries=max_retries,
+            audit_hook=audit_hook,
+        )
+
+    def research_action(
+        self,
+        *,
+        context: dict[str, Any],
+        max_retries: int = 0,
+        audit_hook: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, int]]:
+        instruction = (
+            "Return one JSON object only. Select at most one next research action from the "
+            "supplied allowlist and use only identifiers present in the context. Required "
+            "exact shape: {\"tool\":\"factor-define|factor-evaluate|model-evaluate|"
+            "hypothesis-from-model|hypothesis-run|stop\",\"arguments\":object,"
+            "\"rationale\":string}. Follow the exact argument names in tool_contracts. "
+            "Never request code execution, files, network access, data refresh, candidate "
+            "materialization, approval, activation, portfolio construction, broker access, "
+            "or an order. Failed and negative results are evidence; do not conceal them or "
+            "weaken a validation gate. Use stop when no valid next experiment fits the "
+            "remaining rounds and tool budget. Do not output hidden reasoning."
+        )
+        return self._structured_call(
+            instruction=instruction,
+            public_input=context,
+            validator=_validate_research_action,
             max_retries=max_retries,
             audit_hook=audit_hook,
         )
@@ -876,6 +912,48 @@ def valid_judge_shape(
         allowed_bear_argument_ids,
     )
     return not errors
+
+
+def valid_research_action_shape(value: Any) -> bool:
+    _normalized, errors = _validate_research_action(value)
+    return not errors
+
+
+def _validate_research_action(
+    value: Any,
+) -> tuple[dict[str, Any], list[str]]:
+    errors: list[str] = []
+    if not isinstance(value, dict):
+        return {}, ["research action must be an object"]
+    _exact_keys(value, {"tool", "arguments", "rationale"}, "research action", errors)
+    tool = value.get("tool")
+    if tool not in RESEARCH_LOOP_TOOLS:
+        errors.append("research action tool is invalid")
+    arguments = value.get("arguments")
+    if not isinstance(arguments, dict):
+        errors.append("research action arguments must be an object")
+        arguments = {}
+    else:
+        try:
+            encoded = json.dumps(
+                arguments,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError):
+            errors.append("research action arguments are not JSON")
+        else:
+            if len(encoded.encode("utf-8")) > 16 * 1024:
+                errors.append("research action arguments are too large")
+    rationale = _bounded_text(
+        value.get("rationale"), 500, "research action rationale", errors
+    )
+    return {
+        "tool": tool,
+        "arguments": dict(arguments),
+        "rationale": rationale,
+    }, errors
 
 
 def _bounded_text(value: Any, maximum: int, name: str, errors: list[str]) -> str:

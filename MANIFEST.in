@@ -18,6 +18,8 @@ include docs/CROSS_SOURCE_AUDIT.md
 include docs/DOCKER_DEPLOYMENT.md
 include docs/AI_ASSISTANT.md
 include docs/HYPOTHESIS_LAB.md
+include docs/JQDATA.md
+include docs/FORWARD_EVIDENCE.md
 include docs/BROKER_ADAPTERS.md
 include docs/CLOUD_STORAGE.md
 include docs/ECOSYSTEM.md
@@ -48,6 +50,7 @@ include src/ai_trade/monitoring.py
 include src/ai_trade/data/market_intelligence.py
 include src/ai_trade/data/market_breadth.py
 include src/ai_trade/data/capital_flow.py
+include src/ai_trade/data/baostock.py
 include src/ai_trade/data/cross_check.py
 include src/ai_trade/data/evidence_io.py
 include src/ai_trade/data/disclosures.py

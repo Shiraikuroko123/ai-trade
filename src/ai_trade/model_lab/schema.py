@@ -7,9 +7,15 @@ import math
 import re
 from typing import Any, Mapping
 
+from ..research_statistics import (
+    DEFAULT_BOOTSTRAP_RESAMPLES,
+    apply_holm_correction,
+    deterministic_seed,
+)
 
-SCHEMA_VERSION = 1
-ENGINE_VERSION = 1
+
+SCHEMA_VERSION = 2
+ENGINE_VERSION = 2
 
 EVALUATION_ID = re.compile(r"mdl_[0-9a-f]{32}\Z")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
@@ -91,8 +97,10 @@ _RESULT_FIELDS = frozenset(
         "best_factor_id",
         "best_factor_direction_adjusted_mean_ic",
         "model_minus_best_factor_ic",
+        "statistical_validation",
     }
 )
+_RESULT_FIELDS_V1 = _RESULT_FIELDS - {"statistical_validation"}
 _MODEL_RESULT_FIELDS = frozenset(
     {
         "dates",
@@ -106,6 +114,37 @@ _MODEL_RESULT_FIELDS = frozenset(
 )
 _BASELINE_FIELDS = frozenset(
     {"factor_id", "direction", "mean_ic", "direction_adjusted_mean_ic", "ic_ir"}
+)
+_STATISTICAL_VALIDATION_FIELDS = frozenset(
+    {"model_ic", "factor_comparisons"}
+)
+_FACTOR_COMPARISON_FIELDS = frozenset(
+    {"factor_id", "mean_delta", "validation"}
+)
+_BOOTSTRAP_VALIDATION_FIELDS = frozenset(
+    {
+        "method",
+        "alternative",
+        "observations",
+        "block_size",
+        "resamples",
+        "seed",
+        "confidence_level",
+        "effect_size",
+        "standard_error",
+        "ci_low",
+        "ci_high",
+        "p_value",
+        "subperiods",
+        "subperiod_means",
+        "positive_subperiods",
+        "minimum_subperiod_mean",
+        "alpha",
+        "correction",
+        "family_size",
+        "adjusted_p_value",
+        "reject_null",
+    }
 )
 _COEFFICIENT_FIELDS = frozenset({"factor_id", "mean", "mean_abs", "final"})
 
@@ -143,9 +182,11 @@ def json_fingerprint(value: Any) -> str:
 def validate_evaluation(value: Mapping[str, Any]) -> None:
     if not isinstance(value, Mapping) or set(value) != TOP_LEVEL_FIELDS:
         raise ValueError("Model evaluation top-level schema fields are invalid")
-    if value.get("schema_version") != SCHEMA_VERSION:
+    schema_version = value.get("schema_version")
+    if schema_version not in {1, SCHEMA_VERSION}:
         raise ValueError("Model evaluation schema version is invalid")
-    if value.get("engine_version") != ENGINE_VERSION:
+    expected_engine = 1 if schema_version == 1 else ENGINE_VERSION
+    if value.get("engine_version") != expected_engine:
         raise ValueError("Model evaluation engine version is invalid")
     _identifier(value.get("evaluation_id"), EVALUATION_ID, "evaluation_id")
     _identifier(value.get("owner"), FINGERPRINT, "owner")
@@ -268,7 +309,11 @@ def validate_evaluation(value: Mapping[str, Any]) -> None:
     ):
         raise ValueError("Model evaluation symbol coverage is invalid")
 
-    results = _object(value.get("results"), _RESULT_FIELDS, "results")
+    results = _object(
+        value.get("results"),
+        _RESULT_FIELDS if schema_version == SCHEMA_VERSION else _RESULT_FIELDS_V1,
+        "results",
+    )
     model_result = _object(
         results.get("model"), _MODEL_RESULT_FIELDS, "results.model"
     )
@@ -321,6 +366,84 @@ def validate_evaluation(value: Mapping[str, Any]) -> None:
     if abs(delta - (float(model_result["mean_ic"]) - best_value)) > 1e-9:
         raise ValueError("Model evaluation best-factor delta is inconsistent")
 
+    if schema_version == SCHEMA_VERSION:
+        statistical = _object(
+            results.get("statistical_validation"),
+            _STATISTICAL_VALIDATION_FIELDS,
+            "results.statistical_validation",
+        )
+        family_size = len(factor_ids) + 1
+        expected_block_size = min(
+            int(counts["evaluated_dates"]),
+            max(1, math.ceil(int(horizon) / int(step))),
+        )
+        validation_family = [
+            _bootstrap_validation(
+            statistical.get("model_ic"),
+            observations=int(counts["evaluated_dates"]),
+            family_size=family_size,
+            expected_effect=float(model_result["mean_ic"]),
+            expected_block_size=expected_block_size,
+            expected_seed=deterministic_seed(
+                "model-ic",
+                snapshot["fingerprint"],
+                model["model_id"],
+                horizon,
+                step,
+                SCHEMA_VERSION,
+                ENGINE_VERSION,
+            ),
+            effect_bound=1.0,
+            label="results.statistical_validation.model_ic",
+            )
+        ]
+        comparisons = statistical.get("factor_comparisons")
+        if not isinstance(comparisons, list) or len(comparisons) != len(factor_ids):
+            raise ValueError("Model evaluation statistical comparisons are invalid")
+        comparison_ids: list[str] = []
+        for item in comparisons:
+            comparison = _object(
+                item, _FACTOR_COMPARISON_FIELDS, "statistical factor comparison"
+            )
+            factor_id = str(comparison.get("factor_id"))
+            if factor_id not in adjusted or factor_id in comparison_ids:
+                raise ValueError(
+                    "Model evaluation statistical comparison factors are inconsistent"
+                )
+            comparison_ids.append(factor_id)
+            mean_delta = _finite(
+                comparison.get("mean_delta"), "comparison.mean_delta"
+            )
+            expected_delta = float(model_result["mean_ic"]) - adjusted[factor_id]
+            if abs(mean_delta - expected_delta) > 1e-9:
+                raise ValueError(
+                    "Model evaluation statistical comparison delta is inconsistent"
+                )
+            validation_family.append(_bootstrap_validation(
+                comparison.get("validation"),
+                observations=int(counts["evaluated_dates"]),
+                family_size=family_size,
+                expected_effect=mean_delta,
+                expected_block_size=expected_block_size,
+                expected_seed=deterministic_seed(
+                    "model-minus-factor-ic",
+                    snapshot["fingerprint"],
+                    model["model_id"],
+                    factor_id,
+                    horizon,
+                    step,
+                    SCHEMA_VERSION,
+                    ENGINE_VERSION,
+                ),
+                effect_bound=2.0,
+                label="comparison.validation",
+            ))
+        if comparison_ids != factor_ids:
+            raise ValueError(
+                "Model evaluation statistical comparisons are out of order"
+            )
+        _validate_holm_family(validation_family)
+
     coefficients = value.get("coefficients")
     if not isinstance(coefficients, list) or len(coefficients) != len(factor_ids):
         raise ValueError("Model evaluation coefficients are invalid")
@@ -350,6 +473,110 @@ def _object(value: Any, fields: frozenset[str], label: str) -> Mapping[str, Any]
     if not isinstance(value, Mapping) or set(value) != fields:
         raise ValueError(f"Model evaluation {label} schema fields are invalid")
     return value
+
+
+def _bootstrap_validation(
+    value: Any,
+    *,
+    observations: int,
+    family_size: int,
+    expected_effect: float,
+    expected_block_size: int,
+    expected_seed: int,
+    effect_bound: float,
+    label: str,
+) -> Mapping[str, Any]:
+    validation = _object(value, _BOOTSTRAP_VALIDATION_FIELDS, label)
+    if (
+        validation.get("method") != "circular_moving_block_bootstrap"
+        or validation.get("alternative") != "greater"
+        or validation.get("correction") != "holm"
+    ):
+        raise ValueError(f"Model evaluation {label} method is invalid")
+    if validation.get("observations") != observations:
+        raise ValueError(f"Model evaluation {label} observations are invalid")
+    block_size = validation.get("block_size")
+    if block_size != expected_block_size:
+        raise ValueError(f"Model evaluation {label} block size is invalid")
+    resamples = validation.get("resamples")
+    if resamples != DEFAULT_BOOTSTRAP_RESAMPLES:
+        raise ValueError(f"Model evaluation {label} resamples are invalid")
+    seed = validation.get("seed")
+    if seed != expected_seed:
+        raise ValueError(f"Model evaluation {label} seed is invalid")
+    confidence = _finite(
+        validation.get("confidence_level"), f"{label}.confidence_level"
+    )
+    if abs(confidence - 0.95) > 1e-12:
+        raise ValueError(f"Model evaluation {label} confidence level is invalid")
+    effect = _finite(validation.get("effect_size"), f"{label}.effect_size")
+    if abs(effect - expected_effect) > 1e-9:
+        raise ValueError(f"Model evaluation {label} effect size is inconsistent")
+    standard_error = _finite(
+        validation.get("standard_error"), f"{label}.standard_error"
+    )
+    low = _finite(validation.get("ci_low"), f"{label}.ci_low")
+    high = _finite(validation.get("ci_high"), f"{label}.ci_high")
+    if (
+        standard_error < 0
+        or low > high
+        or not -effect_bound <= low <= high <= effect_bound
+    ):
+        raise ValueError(f"Model evaluation {label} uncertainty is invalid")
+    p_value = _finite(validation.get("p_value"), f"{label}.p_value")
+    adjusted = _finite(
+        validation.get("adjusted_p_value"), f"{label}.adjusted_p_value"
+    )
+    if not 1 / (int(resamples) + 1) <= p_value <= adjusted <= 1:
+        raise ValueError(f"Model evaluation {label} p-values are invalid")
+    alpha = _finite(validation.get("alpha"), f"{label}.alpha")
+    if abs(alpha - 0.05) > 1e-12:
+        raise ValueError(f"Model evaluation {label} alpha is invalid")
+    if validation.get("family_size") != family_size:
+        raise ValueError(f"Model evaluation {label} family size is invalid")
+    if validation.get("subperiods") != 3:
+        raise ValueError(f"Model evaluation {label} subperiod count is invalid")
+    period_means = validation.get("subperiod_means")
+    if (
+        not isinstance(period_means, list)
+        or len(period_means) != 3
+        or any(
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+            or not -effect_bound <= float(item) <= effect_bound
+            for item in period_means
+        )
+    ):
+        raise ValueError(f"Model evaluation {label} subperiod means are invalid")
+    positive = validation.get("positive_subperiods")
+    expected_positive = sum(float(item) > 0 for item in period_means)
+    if positive != expected_positive:
+        raise ValueError(f"Model evaluation {label} stability is invalid")
+    minimum = _finite(
+        validation.get("minimum_subperiod_mean"),
+        f"{label}.minimum_subperiod_mean",
+    )
+    if abs(minimum - min(float(item) for item in period_means)) > 1e-12:
+        raise ValueError(f"Model evaluation {label} stability is inconsistent")
+    rejected = validation.get("reject_null")
+    if type(rejected) is not bool or rejected != (adjusted <= alpha):
+        raise ValueError(f"Model evaluation {label} rejection is inconsistent")
+    return validation
+
+
+def _validate_holm_family(family: list[Mapping[str, Any]]) -> None:
+    expected = apply_holm_correction(family)
+    for observed, corrected in zip(family, expected):
+        if (
+            abs(
+                float(observed["adjusted_p_value"])
+                - float(corrected["adjusted_p_value"])
+            )
+            > 1e-12
+            or observed["reject_null"] != corrected["reject_null"]
+        ):
+            raise ValueError("Model evaluation Holm correction is inconsistent")
 
 
 def _identifier(value: Any, pattern: re.Pattern[str], field: str) -> str:

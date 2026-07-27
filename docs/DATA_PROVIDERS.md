@@ -14,9 +14,11 @@ license remain design references only.
 
 ## Supported configuration
 
-The current release registers four daily-bar providers. Eastmoney and Tencent
-are eligible to supply the strategy-visible snapshot; Yahoo Finance and
-Tushare Pro are bounded independent reference routes only.
+The current release registers five daily-bar providers. Eastmoney and Tencent
+are eligible to supply the strategy-visible snapshot; Yahoo Finance, Tushare
+Pro, and BaoStock are bounded reference routes only. BaoStock has an additional
+evidence restriction: its upstream provenance and redistribution authorization
+have not been verified, so even a complete numerical match remains a warning.
 
 | Key | Role | Intraday | Comparable fields | Status |
 | --- | --- | --- | --- | --- |
@@ -24,6 +26,12 @@ Tushare Pro are bounded independent reference routes only.
 | `tencent` | primary or fallback | No | OHLCV + amount | Implemented |
 | `yahoo` | independent cross-check only | No | OHLCV (amount unavailable) | Implemented, reference-only |
 | `tushare` | independent cross-check only | No | OHLCV + amount | Implemented, reference-only, token required |
+| `baostock` | provisional recent-data cross-check only | No | OHLCV + amount | Implemented, optional client, authorization unverified |
+
+JQData is a separate optional licensed pre-integration. It is not registered
+as a snapshot or cross-check provider yet; the current command only probes
+entitlement and quota without requesting market data. See
+[JQDATA.md](JQDATA.md) for its personal-research boundary and staged gate.
 
 Example:
 
@@ -60,11 +68,34 @@ $env:AI_TRADE_TUSHARE_TOKEN='<tushare-token>'
 }
 ```
 
+BaoStock can be installed and selected without credentials:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[baostock]"
+```
+
+```json
+{
+  "data": {
+    "provider": "eastmoney",
+    "fallback_provider": "tencent",
+    "cross_check": {
+      "enabled": true,
+      "reference_provider": "baostock"
+    }
+  }
+}
+```
+
+This route is useful for detecting a stale tail or an obvious value conflict.
+It is not a substitute for licensed evidence and cannot produce
+`independent_confirmed` even when every compared value matches.
+
 Provider names are normalized to lowercase during configuration loading. The
 primary and fallback cannot be the same provider. `none` disables the network
 fallback and leaves the validated local cache as the final route.
 
-`yahoo` and `tushare` cannot be selected as `provider` or
+`yahoo`, `tushare`, and `baostock` cannot be selected as `provider` or
 `fallback_provider`. Yahoo's public
 Chart response has no provider-reported CNY turnover amount and is intentionally
 limited to a short, completed-session reference window. Yahoo share volume is
@@ -84,6 +115,63 @@ CNY to CNY, and supports only `none` and `forward` adjustment. A missing token
 or provider error makes the independent audit unavailable; it never replaces
 the primary snapshot or changes strategy output.
 
+BaoStock uses its anonymous optional Python client and a direct TCP connection.
+The client does not apply the application's HTTP proxy mode. The adapter limits
+each request to 101 calendar days and 80 rows, maps provider `adjustflag=2` to
+forward adjustment and `adjustflag=3` to unadjusted bars, converts share volume
+to 100-share lots, and preserves provider-reported CNY amount. A live probe on
+2026-07-27 returned 63 sessions for `510300`, `510500`, and `159915` from
+2026-04-24 through 2026-07-27; the overlapping 2026-07-24 OHLC and amount values
+matched the installed cache, with volume matching after the share-to-lot
+conversion. A later long-window retry failed with BaoStock transport code
+`10002007`, so older forward-adjustment equivalence remains unverified.
+
+## Recent-data source decision
+
+The immediate public route and the formal evidence route are deliberately
+different:
+
+| Candidate | Recent ETF coverage | Authorization/evidence role | Decision |
+| --- | --- | --- | --- |
+| RQData | Documented daily ETF bars with readiness, quota, and license APIs | Account-scoped `TRIAL`/`FULL` service | Defer the adapter until an account/license is already available; it is not required for research-only forward capture |
+| Tushare Pro `fund_daily` | Post-close ETF daily bars; account points and endpoint permissions apply | Token-authenticated service | Already implemented as reference-only; do not purchase access merely to bypass a failed model gate |
+| JQData | Licensed account-scoped market data | Current trial evidence ends at 2026-04-24 | Keep the passed historical sample; a broader entitlement is still required for May-July |
+| BaoStock | Anonymous recent and historical daily bars | No verified SLA, upstream provenance, or redistribution authorization | Implemented only for provisional monitoring and conflict detection |
+| AKShare ETF history | Current public wrapper around Eastmoney for this route | Same upstream as the primary route | Do not count as an independent source |
+| pytdx | Public client project archived in 2020 | Project restricts use to personal learning | Do not use as formal or production evidence |
+
+Official capability references used for the formal candidates are the
+[RQData Python manual](https://www.ricequant.com/doc/rqdata/python/manual),
+[RQData generic API](https://www.ricequant.com/doc/rqdata/python/generic-api),
+and [Tushare `fund_daily`](https://tushare.pro/document/2?doc_id=127). Provider
+terms and account entitlements must be checked again before enabling any
+strategy-visible or redistributable use.
+
+When no licensed account is available, the supported zero-cost path is to keep
+the validated Eastmoney/Tencent cache as research input, use BaoStock only for
+bounded anomaly detection, and accumulate genuine forward Feature/Label
+snapshots. This does not make the public feeds licensed or independent and does
+not change `live_ready=false`. A broker-supplied market-data and sandbox route
+can be assessed later; broker eligibility and fees vary and must not be inferred
+from a GitHub client library.
+
+Run the two stages explicitly after a completed market session:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli download --force
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-forward-run
+```
+
+`feature-forward-run` never refreshes or contacts a provider. It fails closed
+unless the feature date, the cache's latest common session, and the completed
+session cutoff at capture time are identical. Repeating it with identical
+inputs reuses the same immutable FeatureSnapshot. It creates LabelSnapshots
+only after a genuine snapshot has accumulated the requested 5, 20, or 60
+future market sessions; otherwise the label remains pending. Historical
+reconstruction and a late capture of a stale cache do not qualify for model
+deployment, even when their numerical values later match. This workflow creates
+research evidence only: it creates no signal, order, or trading permission.
+
 ## Independent cross-check
 
 The optional `data.cross_check` block runs a bounded recent-session audit after
@@ -96,12 +184,14 @@ primary instead and records an unavailable/warning result if it cannot be
 reached. See [CROSS_SOURCE_AUDIT.md](CROSS_SOURCE_AUDIT.md) for the status
 semantics and command examples.
 
-AKShare, TDX and WenCai are not registered yet. A configuration that
+AKShare, TDX and WenCai are not registered. A configuration that
 names one of them fails at startup instead of pretending that the source was
-used. Both reference-only adapters have explicit field mappings, adjustment
-policies, bounded response parsers, and independent deterministic fixtures,
-but neither replaces an exchange-certified or licensed primary feed. Their
-availability, terms, permissions, and regional access can change.
+used. Every registered reference-only adapter has explicit field mappings,
+adjustment policies, bounded response parsers, and deterministic fixtures, but
+none replaces an exchange-certified or licensed primary feed. Their
+availability, terms, permissions, and regional access can change. BaoStock's
+descriptor additionally prevents a numerical match from being promoted to
+independent confirmation.
 
 The Dragon-Tiger List, market-breadth, and board-capital-flow
 adapters documented in `MARKET_INTELLIGENCE.md`, `MARKET_BREADTH.md`, and
@@ -131,6 +221,9 @@ Each refresh records the normalized provider chain in
 The top-level `provider` remains the configured primary provider. A file may
 still have a fallback source; that distinction is preserved so a report never
 confuses the configured route with the route that actually supplied a bar.
+Feature and label snapshots therefore derive their `source.provider` from the
+per-file routes: one actual provider is named directly, multiple providers are
+recorded as a sorted `mixed:...` set, and an unidentifiable route fails closed.
 All files are subject to the existing completed-session cutoff, schema checks,
 hash checks and atomic snapshot publication.
 

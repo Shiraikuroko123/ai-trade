@@ -21,6 +21,7 @@ from ai_trade.data.eastmoney import (
     load_cached_bars,
 )
 from ai_trade.data.market import MAX_MARKET_MANIFEST_BYTES, MarketData
+from ai_trade.data.refresh_candidate import CANDIDATES_DIR_NAME
 from ai_trade.data.tencent import (
     DIRECT_OPENER as TENCENT_DIRECT_OPENER,
     download_instrument as download_tencent_instrument,
@@ -785,6 +786,90 @@ class DataTests(unittest.TestCase):
                 self.assertEqual(query["param"][0].split(",")[-1], request_mode)
                 self.assertEqual(metadata["tencent_proxy_mode"], "direct")
 
+    def test_tencent_raw_rows_require_independent_identity_proof(self):
+        rows = [
+            ["2024-01-02", "10", "10.1", "10.2", "9.8", "100", {}, "4", "0.10"],
+            ["2024-01-03", "10.1", "10.2", "10.3", "10", "110", {}, "3", "0.20"],
+        ]
+        payload = _tencent_payload(
+            rows,
+            response_key="day",
+            include_quote=False,
+        )
+
+        def open_request(request, timeout):
+            return _tencent_response(request, payload)
+
+        evidence = {
+            "adjustment_equivalence": "sina_qfq_identity_factor",
+            "adjustment_evidence_rows": 2,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(_write_config(root))
+            metadata = {}
+            with (
+                patch(
+                    "ai_trade.data.tencent.urllib.request.urlopen",
+                    side_effect=open_request,
+                ),
+                patch("ai_trade.data.tencent.os.environ.get", return_value=None),
+                patch(
+                    "ai_trade.data.sina.verify_forward_adjustment_identity",
+                    return_value=evidence,
+                ) as verify,
+            ):
+                download_tencent_instrument(
+                    config,
+                    config.instruments[0],
+                    root / "identity.csv",
+                    cutoff=datetime(2024, 1, 3).date(),
+                    provider_metadata=metadata,
+                )
+
+            verify.assert_called_once()
+            self.assertEqual(
+                metadata["adjustment_equivalence"],
+                "sina_qfq_identity_factor",
+            )
+            self.assertEqual(metadata["tencent_response_series"], "day")
+            self.assertEqual(metadata["requested_adjustment_series"], "qfqday")
+
+    def test_tencent_raw_rows_fail_when_identity_proof_fails(self):
+        rows = [
+            ["2024-01-03", "10", "10.1", "10.2", "9.8", "100", {}, "4", "0.10"]
+        ]
+        payload = _tencent_payload(
+            rows,
+            response_key="day",
+            include_quote=False,
+        )
+
+        def open_request(request, timeout):
+            return _tencent_response(request, payload)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(_write_config(root))
+            with (
+                patch(
+                    "ai_trade.data.tencent.urllib.request.urlopen",
+                    side_effect=open_request,
+                ),
+                patch("ai_trade.data.tencent.os.environ.get", return_value=None),
+                patch(
+                    "ai_trade.data.sina.verify_forward_adjustment_identity",
+                    side_effect=RuntimeError("identity proof failed"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "identity proof failed"),
+            ):
+                download_tencent_instrument(
+                    config,
+                    config.instruments[0],
+                    root / "rejected.csv",
+                    cutoff=datetime(2024, 1, 3).date(),
+                )
+
     def test_tencent_recent_cache_merges_only_matching_overlap(self):
         rows = [
             ["2024-01-02", "10", "10.1", "10.2", "9.8", "100", {}, "4", "0.099"],
@@ -1304,6 +1389,241 @@ class DataTests(unittest.TestCase):
                 self.assertTrue(
                     any("Tencent fallback failed" in value for value in item["network_errors"])
                 )
+
+    def test_uncached_symbol_reprobes_primary_after_circuit_fallback_failure(self):
+        target = datetime(2024, 1, 3).date()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(
+                _write_config(
+                    root,
+                    {
+                        "request_interval_seconds": 0.0,
+                        "request_jitter_seconds": 0.0,
+                        "failure_cooldown_seconds": 0.0,
+                    },
+                )
+            )
+            first, second = config.instruments
+            eastmoney_calls = []
+            tencent_calls = []
+
+            def primary(config, instrument, _force, output_path, **_kwargs):
+                eastmoney_calls.append(instrument.symbol)
+                if instrument.symbol == first.symbol:
+                    try:
+                        raise http.client.RemoteDisconnected(
+                            "provider disconnected"
+                        )
+                    except http.client.RemoteDisconnected as cause:
+                        raise RuntimeError(
+                            "Eastmoney attempts exhausted"
+                        ) from cause
+                _write_bars(
+                    output_path,
+                    dates=("2024-01-02", target.isoformat()),
+                )
+                return output_path
+
+            def fallback(
+                config,
+                instrument,
+                output_path,
+                **_kwargs,
+            ):
+                tencent_calls.append(instrument.symbol)
+                if instrument.symbol == second.symbol:
+                    raise RuntimeError("Tencent adjusted rows unavailable")
+                _write_bars(
+                    output_path,
+                    dates=("2024-01-02", target.isoformat()),
+                )
+                return output_path
+
+            with (
+                patch(
+                    "ai_trade.data.eastmoney.completed_session_cutoff",
+                    return_value=target,
+                ),
+                patch(
+                    "ai_trade.data.eastmoney.download_instrument",
+                    side_effect=primary,
+                ),
+                patch(
+                    "ai_trade.data.eastmoney.tencent.download_instrument",
+                    side_effect=fallback,
+                ),
+                patch("ai_trade.data.eastmoney.time_module.sleep"),
+            ):
+                download_universe(config, force=True)
+
+            self.assertEqual(eastmoney_calls, [first.symbol, second.symbol])
+            self.assertEqual(tencent_calls, [first.symbol, second.symbol])
+            manifest = json.loads(
+                (config.cache_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            recovered = manifest["files"][second.symbol]
+            self.assertEqual(recovered["source"], "network")
+            self.assertIn(
+                "primary recovery succeeded", recovered["fallback_reason"]
+            )
+            self.assertFalse(
+                manifest["request_policy"]["primary_provider_circuit_breaker"][
+                    "opened"
+                ]
+            )
+
+    def test_failed_refresh_resumes_verified_candidate_files(self):
+        target = datetime(2024, 1, 3).date()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(
+                _write_config(
+                    root,
+                    {
+                        "fallback_provider": "none",
+                        "request_interval_seconds": 0.0,
+                        "request_jitter_seconds": 0.0,
+                        "failure_cooldown_seconds": 0.0,
+                    },
+                )
+            )
+            first, second = config.instruments
+            calls = []
+            failed_once = False
+
+            def primary(config, instrument, _force, output_path, **_kwargs):
+                nonlocal failed_once
+                calls.append(instrument.symbol)
+                if instrument.symbol == second.symbol and not failed_once:
+                    failed_once = True
+                    raise RuntimeError("temporary provider failure")
+                _write_bars(
+                    output_path,
+                    dates=("2024-01-02", target.isoformat()),
+                )
+                return output_path
+
+            with (
+                patch(
+                    "ai_trade.data.eastmoney.completed_session_cutoff",
+                    return_value=target,
+                ),
+                patch(
+                    "ai_trade.data.eastmoney.download_instrument",
+                    side_effect=primary,
+                ),
+                self.assertRaisesRegex(RuntimeError, "no local cache exists"),
+            ):
+                download_universe(config, force=True)
+
+            self.assertEqual(calls, [first.symbol, second.symbol])
+            candidate_root = config.cache_dir / CANDIDATES_DIR_NAME
+            self.assertEqual(
+                len(list(candidate_root.glob(f"*/{first.symbol}.csv"))),
+                1,
+            )
+            self.assertFalse((config.cache_dir / "manifest.json").exists())
+
+            with (
+                patch(
+                    "ai_trade.data.eastmoney.completed_session_cutoff",
+                    return_value=target,
+                ),
+                patch(
+                    "ai_trade.data.eastmoney.download_instrument",
+                    side_effect=primary,
+                ),
+            ):
+                download_universe(config, force=True)
+
+            self.assertEqual(calls, [first.symbol, second.symbol, second.symbol])
+            manifest = json.loads(
+                (config.cache_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            resume = manifest["request_policy"]["refresh_resume"]
+            self.assertEqual(resume["resumed_count"], 1)
+            self.assertEqual(resume["resumed_files"], [first.symbol])
+            self.assertFalse(candidate_root.exists())
+
+    def test_tampered_refresh_candidate_fails_closed(self):
+        target = datetime(2024, 1, 3).date()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(
+                _write_config(
+                    root,
+                    {
+                        "fallback_provider": "none",
+                        "request_interval_seconds": 0.0,
+                        "request_jitter_seconds": 0.0,
+                        "failure_cooldown_seconds": 0.0,
+                    },
+                )
+            )
+            first, second = config.instruments
+
+            def first_attempt(config, instrument, _force, output_path, **_kwargs):
+                if instrument.symbol == second.symbol:
+                    raise RuntimeError("temporary provider failure")
+                _write_bars(output_path)
+                return output_path
+
+            with (
+                patch(
+                    "ai_trade.data.eastmoney.completed_session_cutoff",
+                    return_value=target,
+                ),
+                patch(
+                    "ai_trade.data.eastmoney.download_instrument",
+                    side_effect=first_attempt,
+                ),
+                self.assertRaisesRegex(RuntimeError, "no local cache exists"),
+            ):
+                download_universe(config, force=True)
+
+            candidate = next(
+                (config.cache_dir / CANDIDATES_DIR_NAME).glob(
+                    f"*/{first.symbol}.csv"
+                )
+            )
+            with candidate.open("a", encoding="utf-8") as handle:
+                handle.write("2024-01-04,1,1,1,1,1,1\n")
+
+            with (
+                patch(
+                    "ai_trade.data.eastmoney.completed_session_cutoff",
+                    return_value=target,
+                ),
+                patch("ai_trade.data.eastmoney.download_instrument") as download,
+                self.assertRaisesRegex(RuntimeError, "row count mismatch"),
+            ):
+                download_universe(config, force=True)
+
+            download.assert_not_called()
+            self.assertFalse((config.cache_dir / "manifest.json").exists())
+
+    def test_local_fallback_without_any_cache_fails_closed_with_clean_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(_write_config(root))
+            instrument = config.instruments[0]
+            source = config.cache_dir / f"{instrument.symbol}.csv"
+            destination = root / "staged.csv"
+            self.assertFalse(source.exists())
+
+            with self.assertRaisesRegex(
+                RuntimeError, "no local cache exists for fallback"
+            ):
+                _stage_recent_completed_cache(
+                    config,
+                    instrument,
+                    source,
+                    destination,
+                    date(2024, 1, 3),
+                )
+
+            self.assertFalse(destination.exists())
 
     def test_local_fallback_rejects_manifest_contract_and_hash_mismatches(self):
         missing = object()

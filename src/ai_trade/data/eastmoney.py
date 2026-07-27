@@ -17,7 +17,6 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from uuid import uuid4
 
 from ..config import AppConfig
 from ..json_utils import load_unique_json, loads_unique_json
@@ -28,6 +27,7 @@ from .cache_snapshot import (
     recover_pending_snapshot,
     snapshot_refresh_lock,
 )
+from .refresh_candidate import RefreshCandidate, RefreshCandidateError
 
 LOGGER = logging.getLogger(__name__)
 ENDPOINT = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -93,14 +93,31 @@ def _download_universe_locked(
     ):
         return final_paths
 
-    staging = config.cache_dir / f".snapshot-{uuid4().hex}"
-    staging.mkdir(parents=True, exist_ok=False)
+    primary_provider_name = config.raw["data"].get("provider", "eastmoney")
+    fallback_provider_name = config.raw["data"].get(
+        "fallback_provider", "tencent"
+    )
+    proxy_mode = _proxy_mode(config)
+    candidate = RefreshCandidate.for_refresh(
+        config.cache_dir,
+        _refresh_candidate_identity(
+            config,
+            target_session=target_session,
+            market_close=market_close,
+            primary_provider=str(primary_provider_name),
+            fallback_provider=str(fallback_provider_name),
+            proxy_mode=proxy_mode,
+        ),
+    )
+    staging = candidate.directory
+    published = False
     try:
         staged_paths: dict[str, Path] = {}
         sources: dict[str, str] = {}
         network_errors: dict[str, list[str]] = {}
         fallback_reasons: dict[str, str | None] = {}
         provider_metadata: dict[str, dict[str, object]] = {}
+        resumed_symbols: list[str] = []
         request_interval = max(
             0.0, float(config.raw["data"].get("request_interval_seconds", 2.0))
         )
@@ -110,20 +127,31 @@ def _download_universe_locked(
         failure_cooldown = max(
             0.0, float(config.raw["data"].get("failure_cooldown_seconds", 20.0))
         )
-        primary_provider_name = config.raw["data"].get("provider", "eastmoney")
         primary_provider = provider_for(primary_provider_name)
-        fallback_provider_name = config.raw["data"].get(
-            "fallback_provider", "tencent"
-        )
         fallback_provider = (
             None
             if fallback_provider_name == "none"
             else provider_for(fallback_provider_name)
         )
-        proxy_mode = _proxy_mode(config)
         circuit_reason: str | None = None
         circuit_symbol: str | None = None
         for index, instrument in enumerate(config.instruments):
+            restored = candidate.restore(instrument.symbol)
+            if restored is not None:
+                staged, entry = restored
+                (
+                    sources[instrument.symbol],
+                    network_errors[instrument.symbol],
+                    fallback_reasons[instrument.symbol],
+                    provider_metadata[instrument.symbol],
+                ) = _restore_refresh_candidate_entry(
+                    instrument.symbol,
+                    staged,
+                    entry,
+                )
+                staged_paths[instrument.symbol] = staged
+                resumed_symbols.append(instrument.symbol)
+                continue
             errors: list[str] = []
             network_errors[instrument.symbol] = errors
             provider_metadata[instrument.symbol] = {}
@@ -167,6 +195,7 @@ def _download_universe_locked(
                     f"{type(primary_error).__name__}: {primary_error}"
                 )
                 fallback_error: Exception | None = None
+                recovery_error: Exception | None = None
                 if fallback_provider is not None:
                     try:
                         staged_paths[instrument.symbol] = fallback_provider.download(
@@ -197,6 +226,50 @@ def _download_universe_locked(
                             f"failed: {type(exc).__name__}: {exc}"
                         )
 
+                if (
+                    fallback_error is not None
+                    and not primary_attempted
+                    and not final_paths[instrument.symbol].is_file()
+                ):
+                    primary_attempted = True
+                    try:
+                        staged_paths[instrument.symbol] = primary_provider.download(
+                            config,
+                            instrument,
+                            staged,
+                            cache_path=final_paths[instrument.symbol],
+                            cutoff=instrument_cutoff,
+                            proxy_mode=proxy_mode,
+                            network_errors=errors,
+                            provider_metadata=provider_metadata[instrument.symbol],
+                        )
+                        sources[instrument.symbol] = (
+                            primary_provider.primary_source_label
+                        )
+                        fallback_reasons[instrument.symbol] = (
+                            f"{primary_reason}; "
+                            f"{fallback_provider.descriptor.display_name} "
+                            f"{type(fallback_error).__name__}: {fallback_error}; "
+                            "primary recovery succeeded for uncached instrument"
+                        )
+                        primary_error = None
+                        fallback_error = None
+                        circuit_reason = None
+                        circuit_symbol = None
+                        LOGGER.warning(
+                            "%s recovery succeeded for uncached %s after %s "
+                            "fallback failed",
+                            primary_provider.descriptor.display_name,
+                            instrument.symbol,
+                            fallback_provider.descriptor.display_name,
+                        )
+                    except Exception as exc:
+                        recovery_error = exc
+                        errors.append(
+                            f"{primary_provider.descriptor.key.title()} recovery "
+                            f"failed: {type(exc).__name__}: {exc}"
+                        )
+
                 if fallback_provider is None or fallback_error is not None:
                     fallback = final_paths[instrument.symbol]
                     _stage_recent_completed_cache(
@@ -214,6 +287,11 @@ def _download_universe_locked(
                             f"; {fallback_provider.descriptor.display_name} "
                             f"{type(fallback_error).__name__}: {fallback_error}"
                         )
+                    if recovery_error is not None:
+                        fallback_reason += (
+                            f"; {primary_provider.descriptor.display_name} recovery "
+                            f"{type(recovery_error).__name__}: {recovery_error}"
+                        )
                     fallback_reasons[instrument.symbol] = fallback_reason
                     LOGGER.warning(
                         "Network providers failed for %s; reused recent validated "
@@ -221,6 +299,18 @@ def _download_universe_locked(
                         instrument.symbol,
                         fallback_reason,
                     )
+            candidate_bars = load_cached_bars(staged_paths[instrument.symbol])
+            candidate.record(
+                instrument.symbol,
+                staged_paths[instrument.symbol],
+                {
+                    "source": sources[instrument.symbol],
+                    "latest_session": candidate_bars[-1].date.isoformat(),
+                    "network_errors": network_errors[instrument.symbol],
+                    "fallback_reason": fallback_reasons[instrument.symbol],
+                    "provider_metadata": provider_metadata[instrument.symbol],
+                },
+            )
             if index + 1 < len(config.instruments):
                 delay = request_interval + random.uniform(0.0, request_jitter)
                 if primary_attempted and (
@@ -305,6 +395,12 @@ def _download_universe_locked(
                 "retry_jitter_seconds": float(
                     config.raw["data"].get("retry_jitter_seconds", 0.5)
                 ),
+                "refresh_resume": {
+                    "schema_version": 1,
+                    "fingerprint": candidate.fingerprint,
+                    "resumed_count": len(resumed_symbols),
+                    "resumed_files": sorted(resumed_symbols),
+                },
             },
             "files": {
                 symbol: {
@@ -327,6 +423,7 @@ def _download_universe_locked(
             },
             manifest,
         )
+        published = True
         # Independent reconciliation is an evidence attachment, not a second
         # market-data source.  It is opt-in in custom configurations and is
         # enabled by the bundled configuration.  Any network or comparison
@@ -341,7 +438,92 @@ def _download_universe_locked(
             cross_check_market_snapshot(config, lock_held=True)
         return final_paths
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        if published:
+            try:
+                candidate.discard()
+            except RefreshCandidateError as exc:
+                LOGGER.warning(
+                    "Published snapshot but could not remove refresh candidate: %s",
+                    exc,
+                )
+
+
+def _refresh_candidate_identity(
+    config: AppConfig,
+    *,
+    target_session: date,
+    market_close: str,
+    primary_provider: str,
+    fallback_provider: str,
+    proxy_mode: str,
+) -> dict[str, object]:
+    return {
+        "contract": "daily-adjusted-bars-v1",
+        "requested_from": config.raw["data"]["start"],
+        "configured_end": config.raw["data"]["end"],
+        "requested_through": target_session.isoformat(),
+        "market_close_time": market_close,
+        "adjustment": config.raw["data"].get("adjustment", "forward"),
+        "primary_provider": primary_provider,
+        "fallback_provider": fallback_provider,
+        "proxy_mode": proxy_mode,
+        "instruments": [
+            {
+                "symbol": instrument.symbol,
+                "market": instrument.market,
+                "listing_date": (
+                    instrument.listing_date.isoformat()
+                    if instrument.listing_date is not None
+                    else None
+                ),
+                "delisting_date": (
+                    instrument.delisting_date.isoformat()
+                    if instrument.delisting_date is not None
+                    else None
+                ),
+            }
+            for instrument in config.instruments
+        ],
+    }
+
+
+def _restore_refresh_candidate_entry(
+    symbol: str,
+    path: Path,
+    entry: dict[str, object],
+) -> tuple[str, list[str], str | None, dict[str, object]]:
+    source = entry.get("source")
+    errors = entry.get("network_errors")
+    fallback_reason = entry.get("fallback_reason")
+    metadata = entry.get("provider_metadata")
+    latest_session = entry.get("latest_session")
+    expected_rows = entry.get("rows")
+    if not isinstance(source, str) or not source:
+        raise RefreshCandidateError(
+            f"Refresh candidate source is invalid for {symbol}"
+        )
+    if not isinstance(errors, list) or not all(
+        isinstance(value, str) for value in errors
+    ):
+        raise RefreshCandidateError(
+            f"Refresh candidate network errors are invalid for {symbol}"
+        )
+    if fallback_reason is not None and not isinstance(fallback_reason, str):
+        raise RefreshCandidateError(
+            f"Refresh candidate fallback reason is invalid for {symbol}"
+        )
+    if not isinstance(metadata, dict) or not all(
+        isinstance(key, str) for key in metadata
+    ):
+        raise RefreshCandidateError(
+            f"Refresh candidate provider metadata is invalid for {symbol}"
+        )
+    bars = load_cached_bars(path)
+    if len(bars) != expected_rows or bars[-1].date.isoformat() != latest_session:
+        raise RefreshCandidateError(
+            f"Refresh candidate bar metadata does not match for {symbol}"
+        )
+    return source, list(errors), fallback_reason, dict(metadata)
 
 
 def download_instrument(
@@ -608,6 +790,14 @@ def _stage_recent_completed_cache(
     destination: Path,
     cutoff: date,
 ) -> None:
+    if not source.is_file():
+        # A never-cached instrument (e.g. a freshly added universe member)
+        # has no local fallback tier at all; fail closed with the same
+        # actionable wording as the staleness guard instead of letting a
+        # raw FileNotFoundError escape the download pipeline.
+        raise RuntimeError(
+            f"Network refresh failed and no local cache exists for fallback: {source}"
+        )
     source_bars = load_cached_bars(source)
     bars = [bar for bar in source_bars if bar.date <= cutoff]
     if not bars or (cutoff - bars[-1].date).days > 7:
