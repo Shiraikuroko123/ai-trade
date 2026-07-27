@@ -5,6 +5,28 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Added the nested walk-forward confirmatory tuning protocol
+  (`nested-walk-forward`, `nested-walk-forwards`,
+  `nested-walk-forward-show`): every outer fold selects at most one
+  parameter candidate strictly inside its own training region (deterministic
+  argmax over inner validation windows with a one-standard-error fallback to
+  the baseline) and measures it once on an untouched, embargo-separated test
+  fold. The candidate grid reuses the exploratory sweep's allowlisted
+  neighborhood, budgets are laptop-sized and fail closed (≤400 window
+  backtests per record, bounded folds/windows/embargo, minimum region
+  lengths), and the immutable owner-isolated record reports per-fold
+  out-of-fold deltas plus a `selection_regret_share` overfitting signal.
+  Like the sweep it upgrades, the record grants no authority - hypothesis
+  registration, the experiment runner, and human materialization gates are
+  unchanged.
+- Extended the custom-factor expression allowlist with five time-series
+  operators in the style of the public Alpha101/Qlib sets: `ts_sum`,
+  `ts_rank` (midrank percentile of the latest value in its window),
+  `ts_argmax`/`ts_argmin` (sessions since the window's most recent extreme),
+  and `delta(x, n) = x[t] - x[t-n]`. All keep the single-series
+  `name(series, integer_window)` grammar, so canonical stored forms and
+  every existing expression compile unchanged; minimum-history accounting
+  stays additive and point-in-time honest.
 - Added the model-evidence bridge (`hypothesis-from-model`): one
   fingerprint-verified model evaluation can register a hypothesis draft under
   pre-registered fail-closed gates (positive out-of-sample IC over ≥24 dates,

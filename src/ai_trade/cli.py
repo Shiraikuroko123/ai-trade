@@ -27,6 +27,7 @@ from .data.market import MarketData
 from .diagnostics import diagnose
 from .factor_lab import CustomFactorStore, FactorLabEngine
 from .hypothesis_lab import HypothesisExperimentRunner, HypothesisLabEngine
+from .hypothesis_lab.nested import NestedWalkForwardEngine
 from .hypothesis_lab.sweep import ParameterSweepEngine
 from .model_lab import ModelLabEngine
 from .research_report import write_research_report
@@ -393,6 +394,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show and verify one immutable parameter sweep record",
     )
     parameter_sweep_show.add_argument("sweep_id")
+    nested_walk_forward = subparsers.add_parser(
+        "nested-walk-forward",
+        help=(
+            "Run the nested walk-forward confirmatory tuning protocol: "
+            "per-fold selection on inner validation windows, out-of-fold "
+            "measurement on embargo-separated test folds"
+        ),
+    )
+    nested_walk_forward.add_argument(
+        "--objective", default="sharpe", choices=["sharpe", "max_drawdown", "turnover"]
+    )
+    nested_walk_forward.add_argument(
+        "--parameters",
+        default=None,
+        help="Comma-separated scope.name keys (default: every numeric parameter)",
+    )
+    nested_walk_forward.add_argument("--points", type=int, default=2)
+    nested_walk_forward.add_argument("--outer-folds", type=int, default=4)
+    nested_walk_forward.add_argument("--inner-folds", type=int, default=2)
+    nested_walk_forward.add_argument("--embargo", type=int, default=5)
+    nested_walk_forwards = subparsers.add_parser(
+        "nested-walk-forwards",
+        help="List owner-isolated nested walk-forward tuning records",
+    )
+    nested_walk_forwards.add_argument("--limit", type=int, default=50)
+    nested_walk_forward_show = subparsers.add_parser(
+        "nested-walk-forward-show",
+        help="Show and verify one immutable nested walk-forward record",
+    )
+    nested_walk_forward_show.add_argument("nested_id")
     sentiment_compose = subparsers.add_parser(
         "sentiment-compose",
         help=(
@@ -1206,6 +1237,41 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "parameter-sweep-show":
             result = ParameterSweepEngine(config).get("local-owner", args.sweep_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "nested-walk-forward":
+            market = MarketData(config, recover_snapshot=False)
+            selected = (
+                None
+                if args.parameters is None
+                else [
+                    part.strip()
+                    for part in str(args.parameters).split(",")
+                    if part.strip()
+                ]
+            )
+            result = NestedWalkForwardEngine(config).execute(
+                "local-owner",
+                market,
+                objective=args.objective,
+                parameters=selected,
+                points=args.points,
+                outer_folds=args.outer_folds,
+                inner_folds=args.inner_folds,
+                embargo_sessions=args.embargo,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "nested-walk-forwards":
+            result = NestedWalkForwardEngine(config).list(
+                "local-owner", limit=args.limit
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "nested-walk-forward-show":
+            result = NestedWalkForwardEngine(config).get(
+                "local-owner", args.nested_id
+            )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "sentiment-compose":

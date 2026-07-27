@@ -24,14 +24,27 @@ MAX_WINDOW = 500
 
 SERIES_IDENTIFIERS = ("open", "close", "high", "low", "volume", "amount")
 FUNCTIONS = {
-    # name: (window is second argument, minimum window, extra lookback need)
+    # name: (minimum window, extra lookback need beyond the argument's)
     "sma": (2, "n - 1"),
     "std": (2, "n - 1"),
     "ts_max": (1, "n - 1"),
     "ts_min": (1, "n - 1"),
     "delay": (1, "n"),
     "ret": (1, "n"),
+    # Additive allowlist extension: time-series operators in the style of
+    # the public Alpha101/Qlib expression sets. All stay single-series with
+    # an integer window, so the grammar, canonical form, and every existing
+    # stored expression are unchanged.
+    "ts_sum": (1, "n - 1"),
+    "ts_rank": (2, "n - 1"),
+    "ts_argmax": (2, "n - 1"),
+    "ts_argmin": (2, "n - 1"),
+    "delta": (1, "n"),
 }
+
+# Functions whose extra lookback is the full window (they reach back to the
+# value n sessions ago) rather than window - 1 (rolling aggregations).
+_FULL_WINDOW_LOOKBACK = frozenset({"delay", "ret", "delta"})
 
 _ALLOWED_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_+-*/(), .")
 
@@ -260,7 +273,7 @@ def _required_history(node) -> int:
     if kind == "call":
         _name, name, argument, window = "call", node[1], node[2], node[3]
         base = _required_history(argument)
-        if name in {"delay", "ret"}:
+        if name in _FULL_WINDOW_LOOKBACK:
             return base + window
         return base + window - 1
     _operator, left, right = node
@@ -284,7 +297,7 @@ def _evaluate(node, series: dict[str, list[float]]):
         if not isinstance(value, list):
             raise ExpressionError(f"{name} 的第一个参数必须是序列")
         if len(value) < (
-            window + 1 if name in {"delay", "ret"} else window
+            window + 1 if name in _FULL_WINDOW_LOOKBACK else window
         ):
             raise _Unavailable()
         if name == "sma":
@@ -307,6 +320,39 @@ def _evaluate(node, series: dict[str, list[float]]):
             current = value[window:]
             return [
                 _divide(current[index], shifted[index]) - 1.0
+                for index in range(len(shifted))
+            ]
+        if name == "ts_sum":
+            return _rolling(value, window, sum)
+        if name == "ts_rank":
+            def _rank(chunk: list[float]) -> float:
+                last = chunk[-1]
+                below = sum(1 for item in chunk if item < last)
+                equal = sum(1 for item in chunk if item == last)
+                midrank = below + (equal + 1) / 2
+                return (midrank - 1.0) / (window - 1)
+            return _rolling(value, window, _rank)
+        if name == "ts_argmax":
+            def _argmax(chunk: list[float]) -> float:
+                peak = max(chunk)
+                for offset in range(len(chunk)):
+                    if chunk[-1 - offset] == peak:
+                        return float(offset)
+                return float(len(chunk) - 1)
+            return _rolling(value, window, _argmax)
+        if name == "ts_argmin":
+            def _argmin(chunk: list[float]) -> float:
+                trough = min(chunk)
+                for offset in range(len(chunk)):
+                    if chunk[-1 - offset] == trough:
+                        return float(offset)
+                return float(len(chunk) - 1)
+            return _rolling(value, window, _argmin)
+        if name == "delta":
+            shifted = value[:-window]
+            current = value[window:]
+            return [
+                current[index] - shifted[index]
                 for index in range(len(shifted))
             ]
         raise ExpressionError(f"未知函数: {name}")

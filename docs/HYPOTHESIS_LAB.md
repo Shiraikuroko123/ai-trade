@@ -141,6 +141,49 @@ later-snapshot replication before any human materialization. Sweep records
 are create-once, owner-isolated (`sweeps/sweep_<hex>.json`, 100 per owner),
 idempotent per sweep fingerprint, and fingerprint-verified on read.
 
+## Nested walk-forward confirmatory tuning
+
+`nested-walk-forward` upgrades the exploratory sweep into fold-honest tuning
+evidence. Where the sweep scores every variant on the full sample (and says
+so), the nested protocol separates three roles inside every outer fold: the
+anchored training region, inner validation windows on that region's tail
+which select at most one candidate, and an untouched test fold - separated
+from the training region by an embargo gap - that measures the choice
+out-of-fold:
+
+```powershell
+ai-trade --config config/default.json nested-walk-forward --objective sharpe --points 2
+ai-trade --config config/default.json nested-walk-forward --parameters strategy.lookback_days,strategy.top_n --outer-folds 4 --inner-folds 2 --embargo 5
+ai-trade --config config/default.json nested-walk-forwards --limit 20
+ai-trade --config config/default.json nested-walk-forward-show nwf_<32-lowercase-hex>
+```
+
+The candidate grid is the sweep's own one-at-a-time neighborhood (baseline
+plus `--points` clamped values per allowlisted numeric parameter), so both
+records describe the same parameter space. Selection is a deterministic
+argmax of the mean validation objective with a one-standard-error fallback:
+a non-baseline winner whose margin over the baseline mean is within
+`std/sqrt(inner_folds)` yields back to the baseline, and ties keep the
+earliest candidate (the baseline is always candidate zero). Each fold then
+reports the selected candidate's test metrics next to the baseline's test
+metrics and their objective delta; the aggregate reports the mean
+out-of-fold delta, how many folds left the baseline, the per-value selection
+counts, and `selection_regret_share` - the share of non-baseline selections
+that underperformed the baseline out-of-fold, an honest overfitting signal.
+
+Costs stay personal-computer sized and fail closed: at most 400 window
+backtests per record (folds x candidates x inner windows, checked before
+any run), 2-6 outer folds, 1-4 inner windows, an embargo of 0-21 sessions,
+and minimum region lengths (30-session test folds, 60-session training
+regions, 20-session validation windows) that reject too-short calendars
+with explicit errors. Records are create-once, owner-isolated
+(`nested/nwf_<hex>.json`, 100 per owner), idempotent per protocol
+fingerprint, fingerprint-verified on read, and carry a fixed protocol
+disclosure plus `selection_inside_training_only` safety. The record grants
+no authority: a favorable aggregate still has to be pre-registered as a
+hypothesis and survive the experiment runner and human materialization
+gates, exactly like a sweep ranking.
+
 ## Authority boundary
 
 The hypothesis schema fixes all of these values to false: candidate creation,

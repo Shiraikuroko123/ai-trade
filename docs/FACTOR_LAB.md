@@ -42,9 +42,17 @@ instead of silently absorbed.
 written in a deliberately small expression language instead of arbitrary
 code. The compiler is a recursive-descent parser over an allowlist — the bar
 series `open/high/low/close/volume/amount`, arithmetic, and the windowed
-functions `sma`, `std`, `ts_max`, `ts_min`, `delay`, and `ret` — with hard
-caps on source length (200 characters), token count (80), nesting depth (12),
-and window size (500). There is no `eval`, no attribute access, no name
+functions `sma`, `std`, `ts_max`, `ts_min`, `delay`, `ret`, `ts_sum`,
+`ts_rank`, `ts_argmax`, `ts_argmin`, and `delta` — with hard caps on source
+length (200 characters), token count (80), nesting depth (12), and window
+size (500). The five later names are an additive allowlist extension in the
+style of the public Alpha101/Qlib expression sets: `ts_sum` is the rolling
+sum, `ts_rank` is the midrank-based percentile of the latest value inside
+its window (`[0, 1]`, ties averaged), `ts_argmax`/`ts_argmin` count sessions
+since the window's most recent extreme (`0` = today), and
+`delta(x, n) = x[t] - x[t-n]`. They keep the single-series
+`name(series, integer_window)` shape, so the grammar, the canonical stored
+form, and every previously stored expression are unchanged. There is no `eval`, no attribute access, no name
 lookup outside the allowlist, and no way to reach the filesystem, network, or
 configuration from an expression. The compiler derives the factor's minimum
 bar history from its windows, so point-in-time evaluation applies the same
