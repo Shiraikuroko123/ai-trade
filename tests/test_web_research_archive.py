@@ -225,6 +225,20 @@ class ResearchArchiveHttpTests(unittest.TestCase):
         archive_source = javascript[archive_start:archive_end]
         self.assertNotIn("/api/jobs", archive_source)
         self.assertNotIn("execution_authorized: true", archive_source)
+        self.assertIn("researchAccountUnavailableState", archive_source)
+        issue_start = javascript.index("function researchAccountUnavailableState")
+        issue_end = javascript.index("function researchDigests", issue_start)
+        issue_source = javascript[issue_start:issue_end]
+        self.assertIn(
+            'error.code === "paper_account_requires_new_epoch"', issue_source
+        )
+        self.assertIn("现有模拟账户需要开启新账期", issue_source)
+        self.assertIn("旧账户、账本、行情和既有归档均已保留", issue_source)
+        self.assertIn('href="#portfolio"', issue_source)
+        digest_start = javascript.index("function researchDigests")
+        digest_end = javascript.index("function researchDigestEntry", digest_start)
+        digest_source = javascript[digest_start:digest_end]
+        self.assertIn("researchAccountUnavailableState", digest_source)
         research_start = javascript.index("function renderResearch")
         research_source = javascript[research_start:]
         self.assertLess(

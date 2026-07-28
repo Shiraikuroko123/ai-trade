@@ -439,13 +439,18 @@ class DashboardService:
                 (state or {}).get("config_fingerprint") or ""
             )
             if not account_id:
-                return unavailable_research_archive(
+                error = self._paper_account_unavailable_error(
                     "Paper account is not initialized. Run paper-init before reviewing "
-                    "historical snapshots.",
-                    code="paper_account_unavailable",
-                    recovery_action="paper-init",
+                    "historical snapshots."
+                )
+                result = unavailable_research_archive(
+                    str(error["message"]),
+                    code=str(error["code"]),
+                    recovery_action=error.get("recovery_action"),
                     query=query,
                 )
+                result["errors"][0].update(error)
+                return result
             projection = self._research_archive_projection()
             calendar = None
             try:
@@ -475,13 +480,18 @@ class DashboardService:
         try:
             account_id, _config_fingerprint = self._research_account_context()
             if not account_id:
-                return unavailable_research_digests(
+                error = self._paper_account_unavailable_error(
                     "Paper account is not initialized. Run paper-init before generating "
-                    "persistent research digests.",
-                    code="paper_account_unavailable",
-                    recovery_action="paper-init",
+                    "persistent research digests."
+                )
+                result = unavailable_research_digests(
+                    str(error["message"]),
+                    code=str(error["code"]),
+                    recovery_action=error.get("recovery_action"),
                     query=query,
                 )
+                result["errors"][0].update(error)
+                return result
             return self._research_digest_store().list(owner_id, account_id, query)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return unavailable_research_digests(str(exc), query=query)
@@ -545,16 +555,21 @@ class DashboardService:
         )
         account_id, config_fingerprint = self._research_account_context()
         if not account_id:
-            return unavailable_research_digests(
+            error = self._paper_account_unavailable_error(
                 "Paper account is not initialized. Run paper-init before generating "
-                "persistent research digests.",
-                code="paper_account_unavailable",
-                recovery_action="paper-init",
+                "persistent research digests."
+            )
+            result = unavailable_research_digests(
+                str(error["message"]),
+                code=str(error["code"]),
+                recovery_action=error.get("recovery_action"),
                 query=ResearchDigestQuery(
                     kind=kind if kind in {"all", *DIGEST_KINDS} else "all",
                     period_start=on_date or week_start,
                 ),
             )
+            result["errors"][0].update(error)
+            return result
         projection = self._research_archive_projection()
         calendar = None
         try:
@@ -2080,6 +2095,16 @@ class DashboardService:
                 )
             return issue
         return None
+
+    def _paper_account_unavailable_error(self, message: str) -> dict[str, Any]:
+        issue = self._paper_state_issue()
+        if issue is not None:
+            return issue
+        return {
+            "code": "paper_account_unavailable",
+            "message": message,
+            "recovery_action": "paper-init",
+        }
 
     def _shadow_account(
         self, owner_id: str, state: dict[str, Any] | None

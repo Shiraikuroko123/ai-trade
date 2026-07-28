@@ -371,7 +371,7 @@ def unavailable_research_archive(
     message: str,
     *,
     code: str = "research_archive_unavailable",
-    recovery_action: str = "retry",
+    recovery_action: str | None = "retry",
     query: ResearchArchiveQuery | None = None,
 ) -> dict[str, Any]:
     query = query or ResearchArchiveQuery()
@@ -1097,11 +1097,11 @@ def _fingerprint(value: object) -> str:
     return sha256(encoded).hexdigest()
 
 
-def _error(code: str, message: str, recovery_action: str) -> dict[str, str]:
+def _error(code: str, message: str, recovery_action: str | None) -> dict[str, str]:
     return {
         "code": code,
         "message": message[:1_000],
-        "recovery_action": recovery_action,
+        **({"recovery_action": recovery_action} if recovery_action else {}),
     }
 
 

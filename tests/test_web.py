@@ -332,6 +332,34 @@ class WebTests(unittest.TestCase):
             self.assertTrue(portfolio["errors"][0]["existing_state_preserved"])
             self.assertEqual(state_file.read_bytes(), original)
 
+    def test_research_views_distinguish_config_drift_from_missing_account(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state_file = Path(temporary) / "paper_state.json"
+            original = b'{"preserved":true}'
+            state_file.write_bytes(original)
+            config = SimpleNamespace(paper_state_file=state_file)
+            with patch(
+                "ai_trade.web.service.paper_status",
+                side_effect=RuntimeError(
+                    "Paper configuration changed after account initialization."
+                ),
+            ):
+                service = DashboardService(config)
+                archive = service.research_archive()
+                digests = service.research_digests()
+                generated = service.generate_research_digests()
+
+            for result in (archive, digests, generated):
+                self.assertFalse(result["available"])
+                issue = result["errors"][0]
+                self.assertEqual(
+                    issue["code"], "paper_account_requires_new_epoch"
+                )
+                self.assertNotIn("recovery_action", issue)
+                self.assertIn("--overwrite", issue["recovery_command"])
+                self.assertTrue(issue["existing_state_preserved"])
+            self.assertEqual(state_file.read_bytes(), original)
+
     def test_market_intelligence_job_uses_fixed_command_without_ai_credentials(self):
         config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())
         captured_commands = []

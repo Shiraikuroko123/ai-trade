@@ -3053,6 +3053,27 @@ function researchDigestLedgerStatus(digests) {
   return ["归档可审计", "success"];
 }
 
+function researchAccountUnavailableState(error, fallbackTitle, fallbackMessage) {
+  const requiresNewEpoch = error.code === "paper_account_requires_new_epoch";
+  const invalidExistingAccount = requiresNewEpoch || error.code === "paper_account_invalid";
+  return {
+    invalidExistingAccount,
+    title: requiresNewEpoch
+      ? "现有模拟账户需要开启新账期"
+      : invalidExistingAccount ? "现有模拟账户需要检查" : fallbackTitle,
+    message: requiresNewEpoch
+      ? "策略、风控或证券主数据已变化。旧账户、账本、行情和既有归档均已保留；归档旧账期并建立新账户后，研究归档将从新账期继续累计。"
+      : invalidExistingAccount
+        ? "系统检测到已有账户文件，但完整性校验未通过，因此不会覆盖账户或写入新的研究归档。"
+        : error.message || fallbackMessage,
+    recovery: invalidExistingAccount
+      ? '<a class="button secondary" href="#portfolio">查看模拟组合</a>'
+      : error.recovery_action && state.actions.includes(error.recovery_action)
+        ? actionButton(error.recovery_action, "secondary")
+        : '<button class="button secondary" type="button" data-retry>重新读取</button>',
+  };
+}
+
 function researchDigests(data) {
   const available = Boolean(data?.available);
   const digests = Array.isArray(data?.digests) ? data.digests : [];
@@ -3064,9 +3085,11 @@ function researchDigests(data) {
       ${busy ? "正在写入归档" : "生成收盘归档"}
     </button>`;
   if (!available) {
-    const recovery = error.recovery_action && state.actions.includes(error.recovery_action)
-      ? actionButton(error.recovery_action, "secondary")
-      : '<button class="button secondary" type="button" data-retry>重新读取</button>';
+    const issue = researchAccountUnavailableState(
+      error,
+      "暂时无法读取持久化归档",
+      "模拟账户尚未初始化，或归档证据无法通过完整性校验。",
+    );
     return `
       <section class="digest-panel" aria-labelledby="research-digest-heading">
         <header class="digest-heading">
@@ -3074,9 +3097,10 @@ function researchDigests(data) {
           ${researchArchiveStatusChip("unavailable")}
         </header>
         <div class="empty-state digest-empty" role="alert">
-          <h3>暂时无法读取持久化归档</h3>
-          <p>${escapeHtml(error.message || "模拟账户尚未初始化，或归档证据无法通过完整性校验。")}</p>
-          <div class="action-row">${recovery}</div>
+          <h3>${escapeHtml(issue.title)}</h3>
+          <p>${escapeHtml(issue.message)}</p>
+          ${issue.invalidExistingAccount && error.recovery_command ? `<p class="recovery-command"><code>${escapeHtml(error.recovery_command)}</code></p>` : ""}
+          <div class="action-row">${issue.recovery}</div>
         </div>
       </section>`;
   }
@@ -3162,9 +3186,11 @@ function researchDigestEntry(item) {
 function researchArchives(data) {
   if (!data?.available) {
     const error = data?.errors?.[0] || {};
-    const recovery = error.recovery_action && state.actions.includes(error.recovery_action)
-      ? actionButton(error.recovery_action, "secondary")
-      : '<button class="button secondary" type="button" data-retry>重新读取</button>';
+    const issue = researchAccountUnavailableState(
+      error,
+      "无法建立历史快照",
+      "模拟账户尚未初始化，或其账本暂时无法安全读取。",
+    );
     return `
       <section class="archive-panel" aria-labelledby="research-archive-heading">
         <header class="archive-heading">
@@ -3172,9 +3198,10 @@ function researchArchives(data) {
           ${researchArchiveStatusChip("unavailable")}
         </header>
         <div class="empty-state archive-empty" role="alert">
-          <h3>无法建立历史快照</h3>
-          <p>${escapeHtml(error.message || "模拟账户尚未初始化，或其账本暂时无法安全读取。")}</p>
-          ${recovery}
+          <h3>${escapeHtml(issue.title)}</h3>
+          <p>${escapeHtml(issue.message)}</p>
+          ${issue.invalidExistingAccount && error.recovery_command ? `<p class="recovery-command"><code>${escapeHtml(error.recovery_command)}</code></p>` : ""}
+          ${issue.recovery}
         </div>
       </section>`;
   }
@@ -8210,7 +8237,7 @@ async function pollJobs() {
     } else if (state.route === "intelligence" && intelligenceRefreshCompleted) {
       await loadRoute();
       restoreFocusAfterRender(`[data-job-action="${intelligenceRefreshCompleted}"]`, "intelligence");
-    } else if (paperRefreshCompleted && ["overview", "portfolio", "trading", "risk", "system"].includes(state.route)) {
+    } else if (paperRefreshCompleted && ["overview", "research", "portfolio", "trading", "risk", "system"].includes(state.route)) {
       await loadRoute();
       restoreFocusAfterRender('[data-job-action="paper-run"]');
     } else if (marketEvidenceRefreshCompleted && ["overview", "market", "portfolio", "trading", "risk", "universe", "system"].includes(state.route)) {
