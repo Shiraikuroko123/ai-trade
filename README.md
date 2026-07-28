@@ -375,7 +375,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure_ai.ps1 -Disable
 
 恢复默认写入新的 `local/cloud-digest-restore/<snapshot-id>/`，返回 `active_state_unchanged: true`；它不会覆盖 `state/research_digests/` 或模拟账户。
 
-18:10 模拟盘、18:20 监控和 18:30 全用户归档是三个独立的错峰计划任务，不是带依赖关系的流水线，也不保证前一任务已在后一任务启动前完成。归档任务使用 `--all-profiles --trigger scheduled`，只消费运行时可安全读取的最近已完成证据，不会刷新行情或取得交易权限；`scheduled` 是操作者可传入的审计标签和内置 runner 约定，不是经过认证的任务来源证明。安装、日志复核和卸载方式见 [日报/周报归档](docs/RESEARCH_DIGESTS.md)。
+18:00 前向数据证据、18:10 模拟盘、18:20 监控和 18:30 全用户归档是四个独立的错峰计划任务，不是带依赖关系的流水线，也不保证前一任务已在后一任务启动前完成。前向证据任务只有在行情刷新成功后才创建 Feature/Label 快照；归档任务使用 `--all-profiles --trigger scheduled`，只消费运行时可安全读取的最近已完成证据，不会刷新行情或取得交易权限。`scheduled` 是操作者可传入的审计标签和内置 runner 约定，不是经过认证的任务来源证明。安装、日志复核和卸载方式见 [前向证据手册](docs/FORWARD_EVIDENCE.md) 与 [日报/周报归档](docs/RESEARCH_DIGESTS.md)。
 
 命令行研究流程仍可独立运行：
 
@@ -568,6 +568,19 @@ ai-trade/
 
 账户状态保存策略、风险和成本配置的 SHA-256 指纹。账户创建后若配置发生变化，`paper-run` 会硬停止；审核变化后必须使用 `paper-init --overwrite` 归档旧账期并创建新的 `account_id`，不能让旧信号在新规则下静默成交。
 
+安装每日 18:00 的前向行情与特征证据任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_forward_evidence_task.ps1
+Get-ScheduledTask -TaskName 'AI-Trade Forward Evidence Daily'
+Get-ScheduledTaskInfo -TaskName 'AI-Trade Forward Evidence Daily'
+```
+
+该任务只按顺序执行 `download --force` 和 `feature-forward-run`，日志位于
+`logs/scheduled_forward_evidence.log`，不创建订单或交易权限。电脑必须开机且
+当前 Windows 用户已登录；完整的手动触发、日志复核和卸载方式见
+[前向证据手册](docs/FORWARD_EVIDENCE.md#windows-每日自动任务)。
+
 安装每日 18:10 任务：
 
 ```powershell
@@ -600,7 +613,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_archive_task.ps1
 Get-ScheduledTask -TaskName 'AI-Trade Research Archive Daily'
 ```
 
-该任务调用 `archive-generate --all-profiles --trigger scheduled`，只读取已完成的模拟账本、模拟日报和各用户研究日志，并将结果追加到 `state/research_digests/`。它不刷新行情、不改策略、不写账本、不调用券商；日志位于 `logs/scheduled_archive.log`。三个收盘任务相互独立，固定时间只用于错峰，不构成前后完成保证；应分别检查任务状态和日志。卸载：
+该任务调用 `archive-generate --all-profiles --trigger scheduled`，只读取已完成的模拟账本、模拟日报和各用户研究日志，并将结果追加到 `state/research_digests/`。它不刷新行情、不改策略、不写账本、不调用券商；日志位于 `logs/scheduled_archive.log`。四个收盘任务相互独立，固定时间只用于错峰，不构成前后完成保证；应分别检查任务状态和日志。卸载：
 
 ```powershell
 Unregister-ScheduledTask -TaskName 'AI-Trade Research Archive Daily' -Confirm:$false
@@ -645,6 +658,6 @@ node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m ai_trade.cli live-check
 ```
 
-CI 把质量门禁和平台测试分开执行：独立 Ubuntu/Python 3.12 `quality` job 运行 Ruff、研究核心 Mypy 和分支覆盖率，`pyproject.toml` 当前要求分支覆盖率至少 `75.0%`；测试矩阵覆盖 Ubuntu/Windows 与 Python 3.10/3.12，另有 Windows PowerShell/bootstrap 和发行包安装冒烟。截至 2026-07-28，统一本地验收为：924 项 unittest 单次全绿、分支覆盖率 76.3%、Ruff 通过、Mypy 对 50 个研究核心文件零错误，Compileall、JavaScript/PowerShell 语法、8 项 QMT 适配器定向测试和 `git diff --check` 通过；主包与 QMT 的 wheel/sdist 已在隔离构建环境成功生成，主包发行内容校验通过。Windows 工作区路径断言完成规范化后，提交 `e6862b4` 的 [CI run 30319817678](https://github.com/Shiraikuroko123/ai-trade/actions/runs/30319817678) 已全部通过，包括 Ubuntu/Windows Python 3.10/3.12、质量门禁、PowerShell/bootstrap 和发行包冒烟。更早的失败运行与 22 文件/71 项聚焦测试/77.2% 快照均为历史记录，不能再当作当前质量结果。
+CI 把质量门禁和平台测试分开执行：独立 Ubuntu/Python 3.12 `quality` job 运行 Ruff、研究核心 Mypy 和分支覆盖率，`pyproject.toml` 当前要求分支覆盖率至少 `75.0%`；测试矩阵覆盖 Ubuntu/Windows 与 Python 3.10/3.12，另有 Windows PowerShell/bootstrap 和发行包安装冒烟。截至 2026-07-28，统一本地验收为：925 项 unittest 单次全绿、分支覆盖率 76.3%、Ruff 通过、Mypy 对 50 个研究核心文件零错误，Compileall、JavaScript/PowerShell 语法、8 项 QMT 适配器定向测试和 `git diff --check` 通过；主包与 QMT 的 wheel/sdist 已在隔离构建环境成功生成，主包发行内容校验通过。Windows 工作区路径断言完成规范化后，提交 `e6862b4` 的 [CI run 30319817678](https://github.com/Shiraikuroko123/ai-trade/actions/runs/30319817678) 已全部通过，包括 Ubuntu/Windows Python 3.10/3.12、质量门禁、PowerShell/bootstrap 和发行包冒烟。更早的失败运行与 22 文件/71 项聚焦测试/77.2% 快照均为历史记录，不能再当作当前质量结果。
 
 `live-check` 正常情况下应失败：即使安装 QMT 只读插件并设置风险确认环境变量，系统仍会因为没有可实盘下单的券商适配器而拒绝。

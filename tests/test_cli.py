@@ -782,6 +782,33 @@ class CliTests(unittest.TestCase):
         self.assertIn("-MultipleInstances IgnoreNew", installer)
         self.assertIn("[string]$RunAt = '18:30'", installer)
 
+    def test_forward_evidence_scheduler_runs_refresh_before_snapshot(self):
+        scripts = Path(__file__).resolve().parents[1] / "scripts"
+        runner = (scripts / "run_daily_forward_evidence.ps1").read_text(
+            encoding="utf-8"
+        )
+        installer = (scripts / "install_forward_evidence_task.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        download = (
+            "Invoke-AiTradeCommand -Label 'download --force' "
+            "-CommandArguments @('download', '--force')"
+        )
+        snapshot = (
+            "Invoke-AiTradeCommand -Label 'feature-forward-run' "
+            "-CommandArguments @('feature-forward-run')"
+        )
+        self.assertIn(download, runner)
+        self.assertIn(snapshot, runner)
+        self.assertLess(runner.index(download), runner.index(snapshot))
+        self.assertIn("throw \"AI Trade command '$Label' failed", runner)
+        self.assertIn("scheduled_forward_evidence.log", runner)
+        self.assertIn("[string]$RunAt = '18:00'", installer)
+        self.assertIn("-WindowStyle Hidden", installer)
+        self.assertIn("-MultipleInstances IgnoreNew", installer)
+        self.assertIn("never place orders", installer)
+
     def test_broker_probe_commands_are_read_only_cli_surfaces(self):
         self.assertEqual(build_parser().parse_args(["broker-list"]).command, "broker-list")
         self.assertEqual(

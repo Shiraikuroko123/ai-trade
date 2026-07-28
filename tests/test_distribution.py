@@ -32,6 +32,8 @@ class DistributionVerificationTests(unittest.TestCase):
                 self.assertIn(f"src/ai_trade/data/{module}", SDIST_REQUIRED)
         self.assertIn("docs/CROSS_SOURCE_AUDIT.md", SDIST_REQUIRED)
         self.assertIn("docs/JQDATA.md", SDIST_REQUIRED)
+        self.assertIn("scripts/install_forward_evidence_task.ps1", SDIST_REQUIRED)
+        self.assertIn("scripts/run_daily_forward_evidence.ps1", SDIST_REQUIRED)
 
     def test_docker_deployment_surface_is_required_in_source_artifact(self):
         for name in (

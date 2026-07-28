@@ -458,10 +458,11 @@ An unfiltered materialization reads at most the newest 52 daily and newest 52
 weekly projection rows. Older periods require explicit one-period `--date` or
 `--week` generation; the default command is not a full-history backfill.
 
-The default Windows schedule staggers paper refresh/audit and the local-owner
-digest at 18:10, monitoring at 18:20, and `archive-generate --all-profiles
---trigger scheduled` at 18:30. These are independent tasks with no completion
-dependency; a later task may start while an earlier task is running or retrying.
+The default Windows schedule staggers completed-bar and point-in-time feature
+evidence at 18:00, paper refresh/audit and the local-owner digest at 18:10,
+monitoring at 18:20, and `archive-generate --all-profiles --trigger scheduled`
+at 18:30. These are independent tasks with no completion dependency; a later
+task may start while an earlier task is running or retrying.
 A missed run can be retried safely because the append operation is idempotent.
 Revisions are isolated by the paper `account_id` epoch, so a new
 `paper-init --overwrite` cannot inherit or mutate an old account's digest chain.

@@ -58,6 +58,38 @@ Set-Location .\ai-trade
 
 只有特征日、缓存最新共同会话和运行时已完成会话截止日三者一致，记录才属于 genuine PIT。晚几天再为旧日期补做的快照即使数值相同，也不能进入部署训练。不要用 `--historical-reconstruction` 冒充未来积累证据。
 
+## Windows 每日自动任务
+
+源码安装用户可以注册每天本地时间 18:00 运行的独立任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_forward_evidence_task.ps1
+Get-ScheduledTask -TaskName 'AI-Trade Forward Evidence Daily'
+Get-ScheduledTaskInfo -TaskName 'AI-Trade Forward Evidence Daily'
+```
+
+任务严格先执行 `download --force`；只有下载进程返回零时才执行
+`feature-forward-run`。每次结果追加到 UTF-8 日志
+`logs/scheduled_forward_evidence.log`，日志达到 5 MiB 后轮转并保留最近 5 份。
+任务隐藏运行、禁止自身并发重入，错过时间时在 Windows 恢复可运行后补跑；失败时
+最多间隔 30 分钟重试两次。它不启动工作台、不调用 AI、不创建信号或订单，也不
+取得券商权限。周末或休市日相同输入会幂等复用已有快照，不会伪造新的交易会话。
+
+默认注册使用当前 Windows 用户的交互式登录上下文。电脑必须开机并且该用户已
+登录；关机期间无法联网采集，`StartWhenAvailable` 只能在之后恢复运行时补跑。
+可以手动触发并查看最新日志：
+
+```powershell
+Start-ScheduledTask -TaskName 'AI-Trade Forward Evidence Daily'
+Get-Content .\logs\scheduled_forward_evidence.log -Tail 100
+```
+
+卸载任务不会删除已经积累的行情或 Feature/Label 快照：
+
+```powershell
+Unregister-ScheduledTask -TaskName 'AI-Trade Forward Evidence Daily' -Confirm:$false
+```
+
 ## 常见异常
 
 ### 行情刷新失败

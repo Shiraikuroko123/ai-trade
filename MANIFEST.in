@@ -39,6 +39,8 @@ include scripts/configure_ai.ps1
 include scripts/configure_cloud.ps1
 include scripts/configure_notifications.ps1
 include scripts/docker-entrypoint.sh
+include scripts/install_forward_evidence_task.ps1
+include scripts/run_daily_forward_evidence.ps1
 include scripts/install_paper_task.ps1
 include scripts/run_daily_paper.ps1
 include scripts/install_monitor_task.ps1

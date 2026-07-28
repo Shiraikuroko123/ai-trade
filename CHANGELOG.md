@@ -5,6 +5,11 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Added an independent Windows `18:00` forward-evidence task. Its hidden runner
+  refreshes completed daily bars, creates or reuses a genuine point-in-time
+  FeatureSnapshot only after a successful refresh, matures eligible 5/20/60
+  session labels, rotates UTF-8 logs, and propagates failures without acquiring
+  signal, account, broker, or order authority.
 - Fixed the download pipeline's last-resort local fallback for never-cached
   instruments: when both network providers fail for a universe member that
   has no cache file yet (first 47-symbol rollout), the staging path now

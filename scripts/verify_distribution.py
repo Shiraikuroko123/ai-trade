@@ -159,6 +159,8 @@ SDIST_REQUIRED = {
     "scripts/configure_cloud.ps1",
     "scripts/configure_notifications.ps1",
     "scripts/docker-entrypoint.sh",
+    "scripts/install_forward_evidence_task.ps1",
+    "scripts/run_daily_forward_evidence.ps1",
     "scripts/install_paper_task.ps1",
     "scripts/run_daily_paper.ps1",
     "scripts/install_monitor_task.ps1",

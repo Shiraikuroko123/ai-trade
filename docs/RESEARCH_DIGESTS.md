@@ -156,9 +156,12 @@ incomplete source evidence was archived successfully and remains visible for
 review. A batch write interruption also reports `partial`, but includes an
 error and exits non-zero after disclosing the committed prefix.
 
-The scheduled Windows flow uses three deliberately separate, staggered tasks:
+The scheduled Windows flow uses four deliberately separate, staggered tasks:
 
 ```powershell
+# 18:00 completed-bar refresh and point-in-time Feature/Label evidence
+powershell -ExecutionPolicy Bypass -File .\scripts\install_forward_evidence_task.ps1
+
 # 18:10 paper refresh, audit, and local-owner digest (run_daily_paper.ps1)
 powershell -ExecutionPolicy Bypass -File .\scripts\install_paper_task.ps1
 
@@ -185,12 +188,12 @@ generation after `paper-run` and `paper-audit`. The separate 18:30 task is what
 ensures enabled beta profiles are processed and safely retries current evidence
 after an earlier failure.
 
-The 18:10, 18:20, and 18:30 times are offsets, not dependencies. Windows Task
-Scheduler may still be running or retrying an earlier task when a later task
-starts. Each runner executes its own contract; the archive runner uses the
-latest completed evidence it can safely read. Operators should inspect each
-task result and log rather than infer that the earlier stage completed from the
-wall-clock order.
+The 18:00, 18:10, 18:20, and 18:30 times are offsets, not dependencies.
+Windows Task Scheduler may still be running or retrying an earlier task when a
+later task starts. Each runner executes its own contract; the archive runner
+uses the latest completed evidence it can safely read. Operators should inspect
+each task result and log rather than infer that the earlier stage completed
+from the wall-clock order.
 
 ## HTTP Contract
 

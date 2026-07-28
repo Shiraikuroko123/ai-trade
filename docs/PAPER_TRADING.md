@@ -80,21 +80,24 @@ authorize this paper account.
 
 ## Staggered Close Tasks
 
-The supported Windows schedule separates accounting, monitoring, and archive
-work. These are independent wall-clock tasks, not a dependency chain; a later
-task may start while an earlier task is still running or retrying:
+The supported Windows schedule separates forward evidence, accounting,
+monitoring, and archive work. These are independent wall-clock tasks, not a
+dependency chain; a later task may start while an earlier task is still running
+or retrying:
 
 | Time | Task | Scope and effect |
 |---|---|---|
+| 18:00 | `AI-Trade Forward Evidence Daily` | Refreshes completed daily bars and, only after success, persists point-in-time Feature/Label evidence; it has no signal, account, broker, or order authority. |
 | 18:10 | `AI-Trade Paper Daily` | Refreshes data, advances the local paper account, audits it, and then attempts a local-owner digest generation. |
 | 18:20 | `AI-Trade Research Monitor Daily` | Runs one completed-snapshot research scan; it has no strategy, accounting, broker, or order authority. |
 | 18:30 | `AI-Trade Research Archive Daily` | Runs `archive-generate --all-profiles --trigger scheduled` and appends owner-isolated daily/weekly digests without provider refresh or broker access. |
 
-Each task must be checked through its own result and log. Monitoring follows its
-own refresh/fallback contract, while the archive runner uses the latest completed
-local evidence it can safely read; neither start time proves that the 18:10 task
-completed. The `scheduled` value is an operator-supplied CLI audit label used by
-the bundled runner, not authenticated Task Scheduler provenance.
+Each task must be checked through its own result and log. The forward-evidence
+and paper tasks each perform their own refresh, monitoring follows its own
+refresh/fallback contract, and the archive runner uses the latest completed
+local evidence it can safely read. No start time proves that an earlier task
+completed. The `scheduled` value is an operator-supplied CLI audit label used
+by the bundled runner, not authenticated Task Scheduler provenance.
 
 Install the independent archive task with:
 
