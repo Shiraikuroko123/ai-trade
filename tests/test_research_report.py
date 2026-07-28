@@ -140,7 +140,9 @@ class ResearchReportTests(TestCase):
         output = Path(summary["output"])
         self.assertTrue(output.is_file())
         self.assertEqual(output.name, "research_report.md")
-        self.assertIn(str(self.root), str(output))
+        self.assertTrue(
+            output.resolve().is_relative_to(self.config.project_root.resolve())
+        )
         with self.assertRaisesRegex(ValueError, "inside the workspace"):
             write_research_report(self.config, output="../outside.md")
 
