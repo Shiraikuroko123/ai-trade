@@ -645,6 +645,6 @@ node --check .\src\ai_trade\web\assets\app.js
 .\.venv\Scripts\python.exe -m ai_trade.cli live-check
 ```
 
-CI 把质量门禁和平台测试分开执行：独立 Ubuntu/Python 3.12 `quality` job 运行 Ruff、研究核心 Mypy 和分支覆盖率，`pyproject.toml` 当前要求分支覆盖率至少 `75.0%`；测试矩阵覆盖 Ubuntu/Windows 与 Python 3.10/3.12，另有 Windows PowerShell/bootstrap 和发行包安装冒烟。2026-07-27 当前未提交工作树的统一本地验收为：924 项 unittest 单次全绿、分支覆盖率 76.3%、Ruff 通过、Mypy 对 50 个研究核心文件零错误，Compileall、JavaScript/PowerShell 语法、8 项 QMT 适配器定向测试和 `git diff --check` 通过；主包与 QMT 的 wheel/sdist 已在隔离构建环境成功生成，主包发行内容校验通过。远端 `main` HEAD `adf8456` 的 [CI run 30228478457](https://github.com/Shiraikuroko123/ai-trade/actions/runs/30228478457) 仍为失败：Ubuntu 3.10/3.12 与 package job 通过，Windows 3.10/3.12 测试和 PowerShell bootstrap job 失败；当前工作树尚未提交或推送，所以这些本地结果不能写成远端 CI 已通过。旧的 22 文件/71 项聚焦测试/77.2% 快照早于本轮 pipeline 与 research-loop 增量，不能再当作当前质量结果。
+CI 把质量门禁和平台测试分开执行：独立 Ubuntu/Python 3.12 `quality` job 运行 Ruff、研究核心 Mypy 和分支覆盖率，`pyproject.toml` 当前要求分支覆盖率至少 `75.0%`；测试矩阵覆盖 Ubuntu/Windows 与 Python 3.10/3.12，另有 Windows PowerShell/bootstrap 和发行包安装冒烟。截至 2026-07-28，统一本地验收为：924 项 unittest 单次全绿、分支覆盖率 76.3%、Ruff 通过、Mypy 对 50 个研究核心文件零错误，Compileall、JavaScript/PowerShell 语法、8 项 QMT 适配器定向测试和 `git diff --check` 通过；主包与 QMT 的 wheel/sdist 已在隔离构建环境成功生成，主包发行内容校验通过。Windows 工作区路径断言完成规范化后，提交 `e6862b4` 的 [CI run 30319817678](https://github.com/Shiraikuroko123/ai-trade/actions/runs/30319817678) 已全部通过，包括 Ubuntu/Windows Python 3.10/3.12、质量门禁、PowerShell/bootstrap 和发行包冒烟。更早的失败运行与 22 文件/71 项聚焦测试/77.2% 快照均为历史记录，不能再当作当前质量结果。
 
 `live-check` 正常情况下应失败：即使安装 QMT 只读插件并设置风险确认环境变量，系统仍会因为没有可实盘下单的券商适配器而拒绝。
