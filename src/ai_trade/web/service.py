@@ -754,14 +754,19 @@ class DashboardService:
     def portfolio(self) -> dict[str, Any]:
         state = self._paper_state()
         if not state:
+            account_issue = self._paper_state_issue()
             return {
                 "generated_at": _now(),
                 "initialized": False,
+                "account_status": (
+                    str(account_issue["code"]) if account_issue else "uninitialized"
+                ),
                 "positions": [],
                 "pending_targets": [],
                 "equity_curve": [],
                 "valuation_available": False,
                 "valuation_status": "uninitialized",
+                "errors": [account_issue] if account_issue else [],
             }
         equity = float(state.get("last_equity", 0))
         instrument_by_symbol = {
@@ -891,6 +896,7 @@ class DashboardService:
         return {
             "generated_at": _now(),
             "initialized": True,
+            "account_status": "active",
             "account_id": state.get("account_id"),
             "date": state.get("last_run_date"),
             "equity": equity,
@@ -2044,6 +2050,37 @@ class DashboardService:
         except (FileNotFoundError, RuntimeError, ValueError):
             return None
 
+    def _paper_state_issue(self) -> dict[str, Any] | None:
+        state_file = getattr(self.config, "paper_state_file", None)
+        if state_file is None or not Path(state_file).is_file():
+            return None
+        try:
+            paper_status(self.config)
+        except FileNotFoundError:
+            return None
+        except (RuntimeError, ValueError) as exc:
+            message = str(exc)
+            requires_new_epoch = (
+                "configuration changed" in message.lower()
+                or "unsupported paper state version" in message.lower()
+            )
+            issue: dict[str, Any] = {
+                "code": (
+                    "paper_account_requires_new_epoch"
+                    if requires_new_epoch
+                    else "paper_account_invalid"
+                ),
+                "message": message,
+                "existing_state_preserved": True,
+            }
+            if requires_new_epoch:
+                issue["recovery_command"] = (
+                    ".\\.venv\\Scripts\\python.exe -m ai_trade.cli "
+                    "paper-init --overwrite"
+                )
+            return issue
+        return None
+
     def _shadow_account(
         self, owner_id: str, state: dict[str, Any] | None
     ) -> dict[str, Any]:
@@ -2422,8 +2459,14 @@ class DashboardService:
         state: dict[str, Any] | None,
         audit: dict[str, Any],
     ) -> dict[str, Any]:
+        account_issue = self._paper_state_issue() if state is None else None
         return {
             "initialized": state is not None,
+            "account_status": (
+                str(account_issue["code"])
+                if account_issue
+                else "active" if state is not None else "uninitialized"
+            ),
             "account_id": (state or {}).get("account_id"),
             "date": (state or {}).get("last_run_date"),
             "equity": (state or {}).get("last_equity"),
@@ -2432,6 +2475,7 @@ class DashboardService:
             "pending_targets": (state or {}).get("pending_targets") or {},
             "cooldown_remaining": (state or {}).get("cooldown_remaining", 0),
             "audit": audit,
+            "errors": [account_issue] if account_issue else [],
         }
 
     def _json_report(self, name: str) -> dict[str, Any] | None:

@@ -25,7 +25,7 @@ try {
         $Value = [Environment]::GetEnvironmentVariable($Name, 'User')
         [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
     }
-    & $Python -m ai_trade.cli --config config/default.json paper-run *>> $Log
+    & $Python -m ai_trade.cli --config config/default.json paper-run --refresh-if-needed *>> $Log
     $PythonExitCode = $LASTEXITCODE
     if ($PythonExitCode -eq 0) {
         & $Python -m ai_trade.cli --config config/default.json paper-audit *>> $Log

@@ -4,17 +4,106 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ai_trade.cli import _maybe_automatic_cloud_backup, build_parser, main
+from ai_trade.cli import (
+    _maybe_automatic_cloud_backup,
+    _paper_market_snapshot_is_reusable,
+    _refresh_paper_market_data_if_needed,
+    build_parser,
+    main,
+)
 from ai_trade.config import _validate_auth, load_config
 from ai_trade.research_digest import ResearchDigestCapacityError
 from ai_trade.web.auth import UserStore
 
 
 class CliTests(unittest.TestCase):
+    def test_paper_run_refresh_if_needed_reuses_only_valid_current_or_recent_attempt(self):
+        checked_at = datetime(2026, 7, 28, 9, 30, tzinfo=timezone.utc)
+        cutoff = date(2026, 7, 28)
+        common = date(2026, 7, 27)
+        market = MagicMock()
+        market.completed_through = cutoff
+        market.latest_common_session = common
+        market.manifest = {
+            "completed_session_cutoff": cutoff.isoformat(),
+            "requested_through": cutoff.isoformat(),
+            "completed_through": common.isoformat(),
+            "latest_common_session": common.isoformat(),
+            "downloaded_at": (checked_at - timedelta(minutes=10)).isoformat(),
+        }
+
+        self.assertTrue(_paper_market_snapshot_is_reusable(market, checked_at))
+        market.manifest["downloaded_at"] = (
+            checked_at - timedelta(minutes=31)
+        ).isoformat()
+        self.assertFalse(_paper_market_snapshot_is_reusable(market, checked_at))
+
+        market.latest_common_session = cutoff
+        market.manifest.update(
+            {
+                "completed_through": cutoff.isoformat(),
+                "latest_common_session": cutoff.isoformat(),
+                "downloaded_at": (checked_at - timedelta(days=2)).isoformat(),
+            }
+        )
+        self.assertTrue(_paper_market_snapshot_is_reusable(market, checked_at))
+        market.manifest["completed_session_cutoff"] = "2026-07-27"
+        self.assertFalse(_paper_market_snapshot_is_reusable(market, checked_at))
+
+    def test_paper_run_refresh_if_needed_dispatches_without_forcing_download(self):
+        config = object()
+        market = object()
+        report = {"date": "2026-07-28", "status": "completed"}
+        output = io.StringIO()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli._refresh_paper_market_data_if_needed") as refresh,
+            patch("ai_trade.cli.download_universe") as download,
+            patch("ai_trade.cli.MarketData", return_value=market),
+            patch("ai_trade.cli.run_paper", return_value=report) as run,
+            patch("ai_trade.cli._maybe_automatic_cloud_backup"),
+            redirect_stdout(output),
+        ):
+            status = main(["paper-run", "--refresh-if-needed"])
+
+        self.assertEqual(status, 0)
+        refresh.assert_called_once_with(config)
+        download.assert_not_called()
+        run.assert_called_once_with(config, market)
+        self.assertEqual(json.loads(output.getvalue()), report)
+
+    def test_paper_refresh_policy_downloads_when_cache_validation_fails(self):
+        config = object()
+        checked_at = datetime(2026, 7, 28, 9, 30, tzinfo=timezone.utc)
+        with (
+            patch("ai_trade.cli.MarketData", side_effect=RuntimeError("hash mismatch")),
+            patch("ai_trade.cli.download_universe") as download,
+        ):
+            _refresh_paper_market_data_if_needed(config, now=checked_at)
+
+        download.assert_called_once_with(config, force=True)
+
+    def test_paper_refresh_policy_skips_network_for_reusable_snapshot(self):
+        config = object()
+        checked_at = datetime(2026, 7, 28, 9, 30, tzinfo=timezone.utc)
+        market = MagicMock()
+        with (
+            patch("ai_trade.cli.MarketData", return_value=market),
+            patch(
+                "ai_trade.cli._paper_market_snapshot_is_reusable",
+                return_value=True,
+            ),
+            patch("ai_trade.cli.download_universe") as download,
+        ):
+            _refresh_paper_market_data_if_needed(config, now=checked_at)
+
+        download.assert_not_called()
+
     def test_cloud_digest_commands_dispatch_without_exposing_object_keys(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -774,6 +863,7 @@ class CliTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+        self.assertIn("paper-run --refresh-if-needed", paper)
         self.assertIn("archive-generate --trigger scheduled", paper)
         self.assertIn(
             "archive-generate --all-profiles --trigger scheduled", archive

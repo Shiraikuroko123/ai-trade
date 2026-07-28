@@ -139,6 +139,11 @@ class WebTests(unittest.TestCase):
             self.assertIs(manager.submit("backtest"), first)
             paper_init = manager.submit("paper-init")
             self.assertEqual(COMMANDS[paper_init.action], ("paper-init",))
+            paper_run = manager.submit("paper-run")
+            self.assertEqual(
+                COMMANDS[paper_run.action],
+                ("paper-run", "--refresh-if-needed"),
+            )
             cloud_backup = manager.submit("cloud-backup")
             self.assertEqual(COMMANDS[cloud_backup.action], ("cloud-backup",))
             intelligence = manager.submit("refresh-market-intelligence")
@@ -256,6 +261,76 @@ class WebTests(unittest.TestCase):
                 )
             finally:
                 manager.close()
+
+    def test_running_job_exposes_output_before_process_finishes(self):
+        config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())
+        first_line_consumed = threading.Event()
+        release = threading.Event()
+
+        class LiveStream:
+            def __iter__(self):
+                yield "phase one complete\n"
+                first_line_consumed.set()
+                release.wait(timeout=2)
+                yield "phase two complete\n"
+
+        class LiveProcess:
+            def __init__(self):
+                self.stdout = LiveStream()
+                self.returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self):
+                self.returncode = 0
+                return self.returncode
+
+            def terminate(self):
+                release.set()
+                self.returncode = -15
+
+            def kill(self):
+                release.set()
+                self.returncode = -9
+
+        with patch("ai_trade.web.jobs.subprocess.Popen", return_value=LiveProcess()):
+            manager = JobManager(config)
+            try:
+                job = manager.submit("backtest")
+                self.assertTrue(first_line_consumed.wait(timeout=2))
+                self.assertEqual(job.status, "running")
+                self.assertIn("phase one complete", job.payload()["output"])
+                release.set()
+                _wait_for_job(job)
+                self.assertEqual(job.status, "succeeded")
+                self.assertIn("phase two complete", job.output)
+            finally:
+                release.set()
+                manager.close()
+
+    def test_portfolio_distinguishes_config_drift_from_missing_account(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state_file = Path(temporary) / "paper_state.json"
+            original = b'{"preserved":true}'
+            state_file.write_bytes(original)
+            config = SimpleNamespace(paper_state_file=state_file)
+            with patch(
+                "ai_trade.web.service.paper_status",
+                side_effect=RuntimeError(
+                    "Paper configuration changed after account initialization."
+                ),
+            ):
+                portfolio = DashboardService(config).portfolio()
+
+            self.assertFalse(portfolio["initialized"])
+            self.assertEqual(
+                portfolio["account_status"],
+                "paper_account_requires_new_epoch",
+            )
+            self.assertIn("--overwrite", portfolio["errors"][0]["recovery_command"])
+            self.assertTrue(portfolio["errors"][0]["existing_state_preserved"])
+            self.assertEqual(state_file.read_bytes(), original)
 
     def test_market_intelligence_job_uses_fixed_command_without_ai_credentials(self):
         config = SimpleNamespace(path=Path("config.json"), project_root=Path.cwd())

@@ -10,7 +10,7 @@ python -m ai_trade.cli paper-audit
 python -m ai_trade.cli archive-generate --kind all
 ```
 
-`paper-run` refreshes the complete market snapshot, processes every missing benchmark session in order, simulates pending orders, applies portfolio risk controls, and writes state plus append-only trade, rejection, and equity ledgers. A blocked required sell cancels that session's buy phase. Repeating a completed date is idempotent.
+`paper-run` refreshes the complete market snapshot, processes every missing benchmark session in order, simulates pending orders, applies portfolio risk controls, and writes state plus append-only trade, rejection, and equity ledgers. A blocked required sell cancels that session's buy phase. Repeating a completed date is idempotent. The browser and bundled daily runner use `paper-run --refresh-if-needed`: a hash-validated snapshot that is current is reused, as is a complete refresh attempt for the same cutoff published within the previous 30 minutes. Missing, malformed, mismatched, or older evidence triggers a network refresh. The default CLI command retains its force-refresh behavior.
 
 `paper-audit` checks schema, unique session IDs, strict date ordering, state-to-ledger reconciliation, configuration fingerprints, forward metrics, and promotion gates. `state/paper_rejections.csv` remains available for execution-quality review even when an order never became a trade.
 
@@ -48,7 +48,7 @@ The same operations are available in the loopback-only workstation:
 python -m ai_trade.cli serve
 ```
 
-Use the Portfolio view for account state and pending targets, Trading for fills/rejections and promotion checks, Risk for independent gates, and System for serialized jobs and logs. The one-time `paper-init` job never passes `--overwrite`; an existing account therefore cannot be replaced from the browser.
+Use the Portfolio view for account state and pending targets, Trading for fills/rejections and promotion checks, Risk for independent gates, and System for serialized jobs and logs. Running job output is streamed to an open System detail panel, and market- or paper-dependent views reload after task completion. The one-time `paper-init` job never passes `--overwrite`; an existing account therefore cannot be replaced from the browser. When configuration drift locks an existing account, Portfolio reports that state explicitly and shows the terminal recovery command instead of offering another initialization request that must fail.
 
 ## Configuration Changes
 

@@ -288,6 +288,7 @@ const state = {
   charts: new Map(),
   jobs: [],
   jobStates: new Map(),
+  jobDetailId: "",
   pendingActions: new Set(),
   cloudBackupWarning: null,
   tradingTab: "paper",
@@ -5144,12 +5145,17 @@ async function reloadStrategyLab() {
 
 function renderPortfolio(data) {
   if (!data.initialized) {
+    const accountIssue = Array.isArray(data.errors) ? data.errors[0] : null;
+    const requiresNewEpoch = data.account_status === "paper_account_requires_new_epoch";
+    const invalidExistingAccount = requiresNewEpoch || data.account_status === "paper_account_invalid";
+    const recoveryCommand = accountIssue?.recovery_command || "";
     return `<div class="page-stack">
       ${pageIntro("模拟组合", "账户状态、持仓与待执行目标共享同一份本地账本")}
-      <section class="empty-state" role="status">
-        <h2>模拟账户尚未建立</h2>
-        <p>建立账户后，系统会从首个完整交易日开始累计独立前向证据；已有账户不会被覆盖。</p>
-        <div class="action-row">${actionButton("paper-init", "primary")}${actionButton("refresh-data", "secondary")}</div>
+      <section class="empty-state" role="${invalidExistingAccount ? "alert" : "status"}">
+        <h2>${requiresNewEpoch ? "现有模拟账户需要开启新账期" : invalidExistingAccount ? "现有模拟账户需要检查" : "模拟账户尚未建立"}</h2>
+        <p>${requiresNewEpoch ? "策略或风控配置已变化，旧账期已被安全锁定，行情与旧账本都没有丢失。审核变化后，在本机终端归档旧账期并创建新账户。" : invalidExistingAccount ? "系统检测到已有账户文件，但完整性校验未通过，因此不会覆盖或继续写入。" : "建立账户后，系统会从首个完整交易日开始累计独立前向证据；已有账户不会被覆盖。"}</p>
+        ${recoveryCommand ? `<p class="recovery-command"><code>${escapeHtml(recoveryCommand)}</code></p>` : ""}
+        <div class="action-row">${invalidExistingAccount ? '<a class="button secondary" href="#system">查看任务日志</a>' : actionButton("paper-init", "primary")}${actionButton("refresh-data", "secondary")}</div>
       </section>
     </div>`;
   }
@@ -8121,14 +8127,18 @@ async function cancelJob(jobId) {
   }
 }
 
-async function showJob(jobId) {
+async function showJob(jobId, backgroundRefresh = false) {
+  state.jobDetailId = jobId;
   const detail = document.getElementById("job-detail");
   if (!detail) return;
-  detail.setAttribute("aria-busy", "true");
-  detail.setAttribute("role", "status");
-  detail.innerHTML = `<div class="skeleton-line" aria-label="正在读取任务日志"></div>`;
+  if (!backgroundRefresh) {
+    detail.setAttribute("aria-busy", "true");
+    detail.setAttribute("role", "status");
+    detail.innerHTML = `<div class="skeleton-line" aria-label="正在读取任务日志"></div>`;
+  }
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+    if (state.jobDetailId !== jobId || !detail.isConnected) return;
     detail.innerHTML = `
       <section class="panel" aria-live="polite">
         ${panelHeader(`${JOB_LABELS[job.action] || job.action} · ${STATUS_LABELS[job.status] || job.status}`, job.return_code === null ? "进程尚未结束" : `退出码 ${job.return_code}`, cloudBackupStatusChip(job))}
@@ -8149,6 +8159,7 @@ async function pollJobs() {
     let storageRefreshMode = "";
     let intelligenceRefreshCompleted = "";
     let marketEvidenceRefreshCompleted = false;
+    let paperRefreshCompleted = false;
     for (const job of jobs) {
       const previous = state.jobStates.get(job.id);
       if (previous && ["queued", "running"].includes(previous) && ["succeeded", "failed", "cancelled"].includes(job.status)) {
@@ -8178,6 +8189,9 @@ async function pollJobs() {
         if (["refresh-data", "cross-check-data"].includes(job.action)) {
           marketEvidenceRefreshCompleted = true;
         }
+        if (["paper-init", "paper-run", "paper-audit"].includes(job.action)) {
+          paperRefreshCompleted = true;
+        }
       }
       state.jobStates.set(job.id, job.status);
     }
@@ -8186,6 +8200,9 @@ async function pollJobs() {
     updateJobsUi();
     updateCloudBackupWarningUi();
     setConnection(true);
+    if (state.jobDetailId && document.getElementById("job-detail")) {
+      await showJob(state.jobDetailId, true);
+    }
     if (state.route === "storage" && storageRefreshMode === "inventory") {
       await refreshStorageInventory(true);
     } else if (state.route === "storage" && storageRefreshMode === "local") {
@@ -8193,7 +8210,10 @@ async function pollJobs() {
     } else if (state.route === "intelligence" && intelligenceRefreshCompleted) {
       await loadRoute();
       restoreFocusAfterRender(`[data-job-action="${intelligenceRefreshCompleted}"]`, "intelligence");
-    } else if (marketEvidenceRefreshCompleted && ["overview", "market", "universe", "system"].includes(state.route)) {
+    } else if (paperRefreshCompleted && ["overview", "portfolio", "trading", "risk", "system"].includes(state.route)) {
+      await loadRoute();
+      restoreFocusAfterRender('[data-job-action="paper-run"]');
+    } else if (marketEvidenceRefreshCompleted && ["overview", "market", "portfolio", "trading", "risk", "universe", "system"].includes(state.route)) {
       await loadRoute();
       restoreFocusAfterRender('[data-job-action="cross-check-data"]');
     }

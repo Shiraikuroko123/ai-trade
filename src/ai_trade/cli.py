@@ -40,6 +40,8 @@ from .walk_forward import run_walk_forward, save_walk_forward
 
 _WEB_JOB_PROTOCOL_ENV = "AI_TRADE_WEB_JOB_PROTOCOL"
 _CLOUD_BACKUP_EVENT_PREFIX = "@@AI_TRADE_CLOUD_BACKUP@@"
+_PAPER_REFRESH_REUSE_WINDOW = timedelta(minutes=30)
+_PAPER_REFRESH_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -742,7 +744,16 @@ def build_parser() -> argparse.ArgumentParser:
     paper_run = subparsers.add_parser(
         "paper-run", help="Refresh data and process one paper session"
     )
-    paper_run.add_argument("--no-refresh", action="store_true")
+    paper_refresh = paper_run.add_mutually_exclusive_group()
+    paper_refresh.add_argument("--no-refresh", action="store_true")
+    paper_refresh.add_argument(
+        "--refresh-if-needed",
+        action="store_true",
+        help=(
+            "Reuse a validated current snapshot or a complete refresh attempt "
+            "published within the last 30 minutes"
+        ),
+    )
 
     subparsers.add_parser("paper-status", help="Show paper account state")
     subparsers.add_parser(
@@ -2057,10 +2068,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(state, ensure_ascii=False, indent=2))
             return 0
         if args.command == "paper-run":
-            if not args.no_refresh:
-                download_universe(config, force=True)
-            else:
+            if args.no_refresh:
                 _ensure_cache(config)
+            elif args.refresh_if_needed:
+                _refresh_paper_market_data_if_needed(config)
+            else:
+                download_universe(config, force=True)
             report = run_paper(config, MarketData(config))
             _maybe_automatic_cloud_backup(config)
             print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
@@ -2368,6 +2381,59 @@ def _ensure_cache(config: AppConfig) -> None:
     ]
     if missing:
         download_universe(config, force=False)
+
+
+def _refresh_paper_market_data_if_needed(
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+) -> None:
+    checked_at = now or datetime.now(timezone.utc)
+    try:
+        market = MarketData(config, as_of=checked_at)
+    except (OSError, RuntimeError, ValueError):
+        download_universe(config, force=True)
+        return
+    if _paper_market_snapshot_is_reusable(market, checked_at):
+        logging.getLogger(__name__).info(
+            "Reusing validated market snapshot through %s for paper run",
+            market.latest_common_session.isoformat(),
+        )
+        return
+    download_universe(config, force=True)
+
+
+def _paper_market_snapshot_is_reusable(
+    market: MarketData,
+    checked_at: datetime,
+) -> bool:
+    manifest = market.manifest
+    if not isinstance(manifest, dict):
+        return False
+    expected_cutoff = market.completed_through.isoformat()
+    latest_common = market.latest_common_session.isoformat()
+    if (
+        manifest.get("completed_session_cutoff") != expected_cutoff
+        or manifest.get("requested_through") != expected_cutoff
+        or manifest.get("completed_through") != latest_common
+        or manifest.get("latest_common_session") != latest_common
+    ):
+        return False
+    if market.latest_common_session >= market.completed_through:
+        return True
+    downloaded_at = manifest.get("downloaded_at")
+    if not isinstance(downloaded_at, str):
+        return False
+    try:
+        published_at = datetime.fromisoformat(downloaded_at)
+    except ValueError:
+        return False
+    if published_at.tzinfo is None or published_at.utcoffset() is None:
+        return False
+    if checked_at.tzinfo is None or checked_at.utcoffset() is None:
+        return False
+    age = checked_at.astimezone(timezone.utc) - published_at.astimezone(timezone.utc)
+    return -_PAPER_REFRESH_CLOCK_SKEW <= age <= _PAPER_REFRESH_REUSE_WINDOW
 
 
 def _resolve_config_path(value: str) -> Path:

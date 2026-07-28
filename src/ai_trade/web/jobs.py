@@ -29,7 +29,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
     "walk-forward": ("walk-forward",),
     "validate": ("validate",),
     "paper-init": ("paper-init",),
-    "paper-run": ("paper-run",),
+    "paper-run": ("paper-run", "--refresh-if-needed"),
     "paper-audit": ("paper-audit",),
     "cloud-backup": ("cloud-backup",),
 }
@@ -39,6 +39,7 @@ _CLOSE_TIMEOUT_SECONDS = 5.0
 _WEB_JOB_PROTOCOL_ENV = "AI_TRADE_WEB_JOB_PROTOCOL"
 _CLOUD_BACKUP_EVENT_PREFIX = "@@AI_TRADE_CLOUD_BACKUP@@"
 _CLOUD_BACKUP_STATUSES = {"succeeded", "failed", "cancelled"}
+_MAX_JOB_OUTPUT_CHARS = 100_000
 
 
 @dataclass
@@ -66,7 +67,7 @@ class Job:
             "return_code": self.return_code,
         }
         if include_output:
-            value["output"] = self.output[-100_000:]
+            value["output"] = self.output[-_MAX_JOB_OUTPUT_CHARS:]
         if self.cloud_backup_status is not None:
             value["cloud_backup"] = {
                 "status": self.cloud_backup_status,
@@ -214,10 +215,8 @@ class JobManager:
                     should_terminate = self._closed or job.cancel_requested
                 if should_terminate:
                     _request_termination(process)
-                output, _ = process.communicate()
-                output, automatic_cloud_status = _extract_cloud_backup_event(output)
+                automatic_cloud_status = self._consume_process_output(job, process)
                 with self._lock:
-                    job.output = output
                     job.return_code = process.returncode
                     job.status = (
                         "cancelled"
@@ -239,6 +238,35 @@ class JobManager:
                     job.finished_at = _now()
                     self._active_process = None
                     self._active_job_id = None
+
+    def _consume_process_output(
+        self,
+        job: Job,
+        process: subprocess.Popen[str],
+    ) -> str | None:
+        stdout = getattr(process, "stdout", None)
+        if stdout is None:
+            output, _ = process.communicate()
+            clean, cloud_status = _extract_cloud_backup_event(output)
+            with self._lock:
+                job.output = clean[-_MAX_JOB_OUTPUT_CHARS:]
+            return cloud_status
+
+        cloud_status: str | None = None
+        try:
+            for line in stdout:
+                clean, event_status = _extract_cloud_backup_event(line)
+                if event_status is not None:
+                    cloud_status = event_status
+                if clean:
+                    with self._lock:
+                        job.output = (job.output + clean)[-_MAX_JOB_OUTPUT_CHARS:]
+            process.wait()
+        finally:
+            close_stdout = getattr(stdout, "close", None)
+            if callable(close_stdout):
+                close_stdout()
+        return cloud_status
 
     def _prune(self) -> None:
         completed = [

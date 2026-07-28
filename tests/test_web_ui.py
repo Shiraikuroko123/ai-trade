@@ -99,6 +99,16 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("任务日志", self.javascript)
         self.assertIn("summary:focus-visible", self.css)
 
+    def test_jobs_stream_detail_and_refresh_market_dependent_routes(self):
+        self.assertIn('jobDetailId: ""', self.javascript)
+        self.assertIn("await showJob(state.jobDetailId, true)", self.javascript)
+        self.assertIn(
+            '["overview", "market", "portfolio", "trading", "risk", "universe", "system"]',
+            self.javascript,
+        )
+        self.assertIn('"paper_account_requires_new_epoch"', self.javascript)
+        self.assertIn("recovery-command", self.css)
+
     def test_system_shows_current_release_capability_matrix(self):
         self.assertIn("const RELEASE_CAPABILITIES = [", self.javascript)
         self.assertIn("function releaseCapabilityMatrix", self.javascript)

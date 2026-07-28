@@ -3431,6 +3431,20 @@ progress {
   margin-bottom: 1rem;
 }
 
+.empty-state .recovery-command {
+  background: var(--surface-strong);
+  border-left: 3px solid var(--warning);
+  box-sizing: border-box;
+  color: var(--ink);
+  max-width: 100%;
+  padding: 0.75rem 0.9rem;
+}
+
+.recovery-command code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .error-state .error-impact {
   margin-top: -0.35rem;
   max-width: 72ch;
