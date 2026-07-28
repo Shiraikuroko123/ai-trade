@@ -62,6 +62,7 @@ class CliTests(unittest.TestCase):
         with (
             patch("ai_trade.cli.load_config", return_value=config),
             patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.paper_status") as preflight,
             patch("ai_trade.cli._refresh_paper_market_data_if_needed") as refresh,
             patch("ai_trade.cli.download_universe") as download,
             patch("ai_trade.cli.MarketData", return_value=market),
@@ -72,10 +73,33 @@ class CliTests(unittest.TestCase):
             status = main(["paper-run", "--refresh-if-needed"])
 
         self.assertEqual(status, 0)
+        preflight.assert_called_once_with(config)
         refresh.assert_called_once_with(config)
         download.assert_not_called()
         run.assert_called_once_with(config, market)
         self.assertEqual(json.loads(output.getvalue()), report)
+
+    def test_paper_run_rejects_configuration_drift_before_refresh(self):
+        config = object()
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch(
+                "ai_trade.cli.paper_status",
+                side_effect=RuntimeError("paper configuration drift"),
+            ) as preflight,
+            patch("ai_trade.cli._refresh_paper_market_data_if_needed") as refresh,
+            patch("ai_trade.cli.download_universe") as download,
+            patch("ai_trade.cli.run_paper") as run,
+            redirect_stderr(io.StringIO()),
+        ):
+            status = main(["paper-run", "--refresh-if-needed"])
+
+        self.assertEqual(status, 1)
+        preflight.assert_called_once_with(config)
+        refresh.assert_not_called()
+        download.assert_not_called()
+        run.assert_not_called()
 
     def test_paper_refresh_policy_downloads_when_cache_validation_fails(self):
         config = object()
@@ -864,6 +888,10 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertIn("paper-run --refresh-if-needed", paper)
+        self.assertIn("paper runner started", paper)
+        self.assertIn("-RedirectStandardOutput", paper)
+        self.assertIn("-RedirectStandardError", paper)
+        self.assertIn("-Wait", paper)
         self.assertIn("archive-generate --trigger scheduled", paper)
         self.assertIn(
             "archive-generate --all-profiles --trigger scheduled", archive
@@ -871,6 +899,15 @@ class CliTests(unittest.TestCase):
         self.assertIn("-WindowStyle Hidden", installer)
         self.assertIn("-MultipleInstances IgnoreNew", installer)
         self.assertIn("[string]$RunAt = '18:30'", installer)
+
+        paper_installer = (scripts / "install_paper_task.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("-WindowStyle Hidden", paper_installer)
+        self.assertIn("-MultipleInstances IgnoreNew", paper_installer)
+        self.assertIn("-AllowStartIfOnBatteries", paper_installer)
+        self.assertIn("-DontStopIfGoingOnBatteries", paper_installer)
+        self.assertIn("New-TimeSpan -Minutes 35", paper_installer)
 
     def test_forward_evidence_scheduler_runs_refresh_before_snapshot(self):
         scripts = Path(__file__).resolve().parents[1] / "scripts"

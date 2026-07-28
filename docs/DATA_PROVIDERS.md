@@ -105,6 +105,13 @@ never enters strategy liquidity calculations. Yahoo supports `none` and
 `forward` adjustment for this reference route; `backward` is rejected at
 configuration load time.
 
+For very liquid ETFs, Yahoo daily share volume may wrap at the unsigned 32-bit
+boundary. The cross-source audit can normalize an exact `2^32 / lot_size`
+multiple only when the residual is within one lot and the result still passes
+the existing volume tolerance. The signed audit stores both values and the wrap
+count; the Yahoo adapter itself remains reference-only and the strategy-visible
+CSV is never changed.
+
 Tushare uses the authenticated Pro API for configured `STOCK` and `ETF`
 instruments. `AI_TRADE_TUSHARE_TOKEN` is read at request time, never copied into
 configuration, manifests, logs, evidence metadata, or release artifacts, and

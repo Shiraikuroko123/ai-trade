@@ -49,6 +49,9 @@ AMOUNT_RELATIVE_TOLERANCE = 0.15
 MAX_BREACHES_PER_SYMBOL = 12
 MAX_ERROR_LENGTH = 320
 COMPARISON_FIELDS = ("open", "high", "low", "close", "volume", "amount")
+UINT32_SHARE_MODULUS = 2**32
+MAX_UINT32_VOLUME_WRAPS = 16
+UINT32_WRAP_TOLERANCE_LOTS = 1.0
 
 
 def cross_check_market_snapshot(
@@ -200,6 +203,12 @@ def _run_locked(
             "comparison_fields": list(COMPARISON_FIELDS),
             "provider_declared_field_subset": True,
             "confirmation_eligibility_enforced": True,
+            "yahoo_volume_uint32_wrap": {
+                "share_modulus": UINT32_SHARE_MODULUS,
+                "maximum_wraps": MAX_UINT32_VOLUME_WRAPS,
+                "absolute_tolerance_lots": UINT32_WRAP_TOLERANCE_LOTS,
+                "requires_existing_volume_tolerance": True,
+            },
         },
     }
     if reference_name in {"", "none"}:
@@ -435,12 +444,27 @@ def _audit_symbols(
                 continue
             breaches: list[dict[str, Any]] = []
             maximums: dict[str, float] = {}
+            normalizations: list[dict[str, Any]] = []
             for on_date in overlap:
                 primary = selected_by_date[on_date]
                 secondary = reference_by_date[on_date]
                 for field in comparison_fields:
                     left = float(getattr(primary, field))
                     right = float(getattr(secondary, field))
+                    right, normalization = _normalized_reference_value(
+                        field,
+                        left,
+                        right,
+                        reference_provider=audit_reference_name,
+                        lot_size=instrument.lot_size,
+                    )
+                    if (
+                        normalization is not None
+                        and len(normalizations) < MAX_BREACHES_PER_SYMBOL
+                    ):
+                        normalizations.append(
+                            {"date": on_date.isoformat(), **normalization}
+                        )
                     absolute = abs(left - right)
                     relative = absolute / max(abs(left), abs(right), 1e-12)
                     maximums[field] = max(maximums.get(field, 0.0), relative)
@@ -458,6 +482,8 @@ def _audit_symbols(
                             )
             item["max_deviation"] = maximums
             item["breaches"] = breaches
+            if normalizations:
+                item["normalizations"] = normalizations
             if breaches:
                 item.update(status="mismatch", reason="value_outside_tolerance")
             elif item["missing_reference_dates"]:
@@ -497,6 +523,44 @@ def _within_tolerance(field: str, left: float, right: float) -> bool:
     if field == "volume":
         return relative <= VOLUME_RELATIVE_TOLERANCE
     return relative <= AMOUNT_RELATIVE_TOLERANCE
+
+
+def _normalized_reference_value(
+    field: str,
+    primary: float,
+    reference: float,
+    *,
+    reference_provider: str,
+    lot_size: int,
+) -> tuple[float, dict[str, Any] | None]:
+    if (
+        field != "volume"
+        or reference_provider != "yahoo"
+        or not (math.isfinite(primary) and math.isfinite(reference))
+        or primary <= reference
+        or reference < 0
+        or isinstance(lot_size, bool)
+        or not isinstance(lot_size, int)
+        or lot_size <= 0
+    ):
+        return reference, None
+    wrap_lots = UINT32_SHARE_MODULUS / lot_size
+    difference = primary - reference
+    wraps = int(round(difference / wrap_lots))
+    if not 1 <= wraps <= MAX_UINT32_VOLUME_WRAPS:
+        return reference, None
+    if abs(difference - wraps * wrap_lots) > UINT32_WRAP_TOLERANCE_LOTS:
+        return reference, None
+    normalized = reference + wraps * wrap_lots
+    if not _within_tolerance("volume", primary, normalized):
+        return reference, None
+    return normalized, {
+        "field": "volume",
+        "method": "yahoo_uint32_share_wrap",
+        "wraps": wraps,
+        "original_reference": reference,
+        "normalized_reference": normalized,
+    }
 
 
 def _actual_provider(entry: object, configured_primary: str) -> str | None:

@@ -59,6 +59,15 @@ comparison fields, maximum relative deviation, and bounded breach details.
 Yahoo records `amount` in `unavailable_fields`; its locally estimated amount is
 never compared or used as liquidity evidence.
 
+Yahoo's Chart response can expose daily share volume modulo `2^32` when a very
+liquid ETF exceeds that integer boundary. The audit recognizes this only for a
+Yahoo `volume` comparison: the primary/reference difference must match an
+integer multiple of `2^32 / lot_size` within one domestic lot, and the
+normalized value must still pass the ordinary 10% volume tolerance. Accepted
+cases retain the original reference value, normalized value, date, and wrap
+count in the signed per-symbol `normalizations` list. This deterministic rule
+does not apply to OHLC, amount, other providers, or ordinary volume conflicts.
+
 | Status | Meaning | Operating response |
 | --- | --- | --- |
 | `passed` | Every checked value from a confirmation-eligible source is within tolerance and dates fully overlap | Independent source confirmation for this snapshot; still not exchange certification |

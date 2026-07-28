@@ -2068,6 +2068,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(state, ensure_ascii=False, indent=2))
             return 0
         if args.command == "paper-run":
+            # Fail before any network work when the frozen paper-account
+            # configuration no longer matches the active configuration.
+            paper_status(config)
             if args.no_refresh:
                 _ensure_cache(config)
             elif args.refresh_if_needed:

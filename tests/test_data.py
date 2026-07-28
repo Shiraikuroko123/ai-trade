@@ -1026,7 +1026,12 @@ class DataTests(unittest.TestCase):
             parts = parse_qs(urlparse(request.full_url).query)["param"][0].split(",")
             rows = [row for row in all_rows if parts[2] <= row[0] <= parts[3]]
             return _tencent_response(
-                request, _tencent_payload(rows, include_quote=False)
+                request,
+                _tencent_payload(
+                    rows,
+                    response_key="day",
+                    include_quote=False,
+                ),
             )
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -1046,12 +1051,23 @@ class DataTests(unittest.TestCase):
             _write_cache_manifest(config, cache, requested_from=dates[0])
             output = root / "checked-320.csv"
             metadata = {}
+            evidence = {
+                "adjustment_equivalence": "sina_qfq_identity_factor",
+                "adjustment_evidence_scope": (
+                    "full_history_ohlc_available_volume"
+                ),
+                "adjustment_evidence_rows": 320,
+            }
             with (
                 patch(
                     "ai_trade.data.tencent.urllib.request.urlopen",
                     side_effect=open_request,
                 ),
                 patch("ai_trade.data.tencent.os.environ.get", return_value=None),
+                patch(
+                    "ai_trade.data.sina.verify_forward_adjustment_identity",
+                    return_value=evidence,
+                ) as verify,
             ):
                 download_tencent_instrument(
                     config,
@@ -1069,6 +1085,18 @@ class DataTests(unittest.TestCase):
             self.assertEqual(metadata["overlap_rows"], 320)
             self.assertEqual(metadata["pages"], 1)
             self.assertEqual(len(load_cached_bars(output)), 321)
+            verify.assert_called_once()
+            verified_bars = verify.call_args.args[1]
+            self.assertEqual(len(verified_bars), 320)
+            self.assertEqual(verified_bars[0].date.isoformat(), dates[-320])
+            self.assertEqual(verify.call_args.kwargs["start"].isoformat(), dates[-320])
+            self.assertEqual(
+                metadata["adjustment_evidence_scope"],
+                "incremental_overlap_ohlc_available_volume",
+            )
+            self.assertEqual(metadata["adjustment_evidence_start"], dates[-320])
+            self.assertEqual(metadata["adjustment_evidence_end"], dates[-1])
+            self.assertTrue(metadata["adjustment_cached_history_reused"])
 
     def test_tencent_year_pages_retry_and_throttle(self):
         requests = []

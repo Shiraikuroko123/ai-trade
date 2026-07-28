@@ -10,7 +10,7 @@ python -m ai_trade.cli paper-audit
 python -m ai_trade.cli archive-generate --kind all
 ```
 
-`paper-run` refreshes the complete market snapshot, processes every missing benchmark session in order, simulates pending orders, applies portfolio risk controls, and writes state plus append-only trade, rejection, and equity ledgers. A blocked required sell cancels that session's buy phase. Repeating a completed date is idempotent. The browser and bundled daily runner use `paper-run --refresh-if-needed`: a hash-validated snapshot that is current is reused, as is a complete refresh attempt for the same cutoff published within the previous 30 minutes. Missing, malformed, mismatched, or older evidence triggers a network refresh. The default CLI command retains its force-refresh behavior.
+`paper-run` validates the frozen paper-account fingerprint before any market refresh, then refreshes the complete market snapshot, processes every missing benchmark session in order, simulates pending orders, applies portfolio risk controls, and writes state plus append-only trade, rejection, and equity ledgers. Configuration drift therefore fails before network work or account mutation. A blocked required sell cancels that session's buy phase. Repeating a completed date is idempotent. The browser and bundled daily runner use `paper-run --refresh-if-needed`: a hash-validated snapshot that is current is reused, as is a complete refresh attempt for the same cutoff published within the previous 30 minutes. Missing, malformed, mismatched, or older evidence triggers a network refresh. The default CLI command retains its force-refresh behavior.
 
 `paper-audit` checks schema, unique session IDs, strict date ordering, state-to-ledger reconciliation, configuration fingerprints, forward metrics, and promotion gates. `state/paper_rejections.csv` remains available for execution-quality review even when an order never became a trade.
 
@@ -91,6 +91,13 @@ or retrying:
 | 18:10 | `AI-Trade Paper Daily` | Refreshes data, advances the local paper account, audits it, and then attempts a local-owner digest generation. |
 | 18:20 | `AI-Trade Research Monitor Daily` | Runs one completed-snapshot research scan; it has no strategy, accounting, broker, or order authority. |
 | 18:30 | `AI-Trade Research Archive Daily` | Runs `archive-generate --all-profiles --trigger scheduled` and appends owner-isolated daily/weekly digests without provider refresh or broker access. |
+
+The paper runner writes a UTF-8 start record before launching Python and records
+each command's stdout, stderr, exit code, and completion. It rotates legacy
+UTF-16 or oversized logs, runs in a hidden single-instance task, continues on
+battery power, and has a 35-minute task-level hard limit. A non-zero paper run
+stops audit and digest generation instead of presenting downstream work as a
+successful account advance.
 
 Each task must be checked through its own result and log. The forward-evidence
 and paper tasks each perform their own refresh, monitoring follows its own

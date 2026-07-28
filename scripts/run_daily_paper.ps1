@@ -1,45 +1,177 @@
+[CmdletBinding()]
+param(
+    [string]$Config = 'config/default.json',
+    [ValidateRange(65536, 1073741824)]
+    [int64]$MaxLogBytes = (5 * 1024 * 1024),
+    [ValidateRange(1, 20)]
+    [int]$KeepLogs = 5
+)
+
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$ProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $Python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
-$Log = Join-Path $ProjectRoot 'logs\scheduled_paper.log'
+$LogDirectory = Join-Path $ProjectRoot 'logs'
+$Log = Join-Path $LogDirectory 'scheduled_paper.log'
+$ConfigPath = if ([IO.Path]::IsPathRooted($Config)) {
+    [IO.Path]::GetFullPath($Config)
+} else {
+    [IO.Path]::GetFullPath((Join-Path $ProjectRoot $Config))
+}
+$Utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+$ExitCode = 1
+$ManagedEnvironmentNames = @(
+    'PYTHONUTF8',
+    'PYTHONIOENCODING',
+    'AI_TRADE_CLOUD_ENABLED',
+    'AI_TRADE_CLOUD_PREFIX',
+    'AI_TRADE_CLOUD_INSTALLATION_ID',
+    'AI_TRADE_R2_ENDPOINT',
+    'AI_TRADE_R2_REGION',
+    'AI_TRADE_R2_BUCKET',
+    'AI_TRADE_R2_ACCESS_KEY_ID',
+    'AI_TRADE_R2_SECRET_ACCESS_KEY',
+    'AI_TRADE_TUSHARE_TOKEN'
+)
+$OriginalEnvironment = @{}
 
-if (-not (Test-Path $Python)) {
-    throw 'Virtual environment is missing. Run scripts\bootstrap.ps1 first.'
+function Add-PaperLogText {
+    param([AllowEmptyString()][string]$Text)
+
+    if ($null -eq $Text -or $Text.Length -eq 0) {
+        return
+    }
+    [IO.File]::AppendAllText($Log, $Text, $Utf8NoBom)
+    if (-not $Text.EndsWith("`n")) {
+        [IO.File]::AppendAllText($Log, [Environment]::NewLine, $Utf8NoBom)
+    }
 }
 
-Push-Location $ProjectRoot
-try {
-    $PreviousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $CloudNames = @(
-        'AI_TRADE_CLOUD_ENABLED',
-        'AI_TRADE_CLOUD_PREFIX',
-        'AI_TRADE_CLOUD_INSTALLATION_ID',
-        'AI_TRADE_R2_ENDPOINT',
-        'AI_TRADE_R2_REGION',
-        'AI_TRADE_R2_BUCKET',
-        'AI_TRADE_R2_ACCESS_KEY_ID',
-        'AI_TRADE_R2_SECRET_ACCESS_KEY'
+function Add-PaperLogLine {
+    param([AllowEmptyString()][string]$Text)
+
+    Add-PaperLogText ($Text + [Environment]::NewLine)
+}
+
+function Rotate-PaperLog {
+    $RotateExisting = $false
+    if (Test-Path -LiteralPath $Log) {
+        $Item = Get-Item -LiteralPath $Log
+        if ($Item.Length -gt 0) {
+            $ExistingBytes = [IO.File]::ReadAllBytes($Log)
+            $RotateExisting = [Array]::IndexOf($ExistingBytes, [byte]0) -ge 0
+        }
+        if ($RotateExisting -or $Item.Length -ge $MaxLogBytes) {
+            $Stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ')
+            $Archive = "$Log.$Stamp"
+            while (Test-Path -LiteralPath $Archive) {
+                $Archive = "$Log.$Stamp.$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+            }
+            Move-Item -LiteralPath $Log -Destination $Archive
+        }
+    }
+
+    $Archives = @(
+        Get-ChildItem -LiteralPath $LogDirectory -Filter 'scheduled_paper.log.*' -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending
     )
-    foreach ($Name in $CloudNames) {
-        $Value = [Environment]::GetEnvironmentVariable($Name, 'User')
-        [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
+    if ($Archives.Count -gt $KeepLogs) {
+        $Archives | Select-Object -Skip $KeepLogs | Remove-Item -Force
     }
-    & $Python -m ai_trade.cli --config config/default.json paper-run --refresh-if-needed *>> $Log
-    $PythonExitCode = $LASTEXITCODE
-    if ($PythonExitCode -eq 0) {
-        & $Python -m ai_trade.cli --config config/default.json paper-audit *>> $Log
-        $PythonExitCode = $LASTEXITCODE
-    }
-    if ($PythonExitCode -eq 0) {
-        & $Python -m ai_trade.cli --config config/default.json archive-generate --trigger scheduled *>> $Log
-        $PythonExitCode = $LASTEXITCODE
-    }
-    $ErrorActionPreference = $PreviousErrorActionPreference
-    if ($PythonExitCode -ne 0) {
-        throw "AI Trade paper run failed with exit code $PythonExitCode. See $Log"
-    }
-} finally {
-    $ErrorActionPreference = 'Stop'
-    Pop-Location
 }
+
+function Append-ProcessOutput {
+    param(
+        [string]$Path,
+        [string]$StreamName
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $Bytes = [IO.File]::ReadAllBytes($Path)
+    if ($Bytes.Length -eq 0) {
+        return
+    }
+    $Text = $Utf8NoBom.GetString($Bytes)
+    if ($Text.Length -gt 0 -and $Text[0] -eq [char]0xFEFF) {
+        $Text = $Text.Substring(1)
+    }
+    Add-PaperLogLine ("[{0}]" -f $StreamName)
+    Add-PaperLogText $Text
+}
+
+function Invoke-AiTradeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+        [Parameter(Mandatory = $true)]
+        [string[]]$CommandArguments
+    )
+
+    $Suffix = [guid]::NewGuid().ToString('N')
+    $StdoutPath = Join-Path ([IO.Path]::GetTempPath()) "ai-trade-paper-$Suffix.stdout"
+    $StderrPath = Join-Path ([IO.Path]::GetTempPath()) "ai-trade-paper-$Suffix.stderr"
+    $QuotedConfig = '"' + $ConfigPath.Replace('"', '\"') + '"'
+    $ProcessArguments = @('-m', 'ai_trade.cli', '--config', $QuotedConfig) + $CommandArguments
+    Add-PaperLogLine ("[{0}] starting {1}" -f (Get-Date).ToUniversalTime().ToString('o'), $Label)
+    try {
+        $Process = Start-Process `
+            -FilePath $Python `
+            -ArgumentList $ProcessArguments `
+            -WorkingDirectory $ProjectRoot `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $StdoutPath `
+            -RedirectStandardError $StderrPath `
+            -Wait `
+            -PassThru
+        Append-ProcessOutput -Path $StdoutPath -StreamName "$Label stdout"
+        Append-ProcessOutput -Path $StderrPath -StreamName "$Label stderr"
+        if ([int]$Process.ExitCode -ne 0) {
+            throw "AI Trade command '$Label' failed with exit code $([int]$Process.ExitCode)."
+        }
+        Add-PaperLogLine ("[{0}] completed {1}" -f (Get-Date).ToUniversalTime().ToString('o'), $Label)
+    } finally {
+        Remove-Item -LiteralPath $StdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $StderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
+Rotate-PaperLog
+Add-PaperLogLine ("[{0}] paper runner started; config={1}" -f (Get-Date).ToUniversalTime().ToString('o'), $ConfigPath)
+
+try {
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        throw 'Virtual environment is missing. Run scripts/bootstrap.ps1 first.'
+    }
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        throw "Configuration file is missing: $ConfigPath"
+    }
+
+    foreach ($Name in $ManagedEnvironmentNames) {
+        $OriginalEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process')
+    }
+    [Environment]::SetEnvironmentVariable('PYTHONUTF8', '1', 'Process')
+    [Environment]::SetEnvironmentVariable('PYTHONIOENCODING', 'utf-8', 'Process')
+    foreach ($Name in $ManagedEnvironmentNames | Where-Object { $_ -notin @('PYTHONUTF8', 'PYTHONIOENCODING') }) {
+        $UserValue = [Environment]::GetEnvironmentVariable($Name, 'User')
+        if ($null -ne $UserValue) {
+            [Environment]::SetEnvironmentVariable($Name, $UserValue, 'Process')
+        }
+    }
+
+    Invoke-AiTradeCommand -Label 'paper-run --refresh-if-needed' -CommandArguments @('paper-run', '--refresh-if-needed')
+    Invoke-AiTradeCommand -Label 'paper-audit' -CommandArguments @('paper-audit')
+    Invoke-AiTradeCommand -Label 'archive-generate --trigger scheduled' -CommandArguments @('archive-generate', '--trigger', 'scheduled')
+    $ExitCode = 0
+} catch {
+    Add-PaperLogLine ("[{0}] paper runner failed: {1}" -f (Get-Date).ToUniversalTime().ToString('o'), $_.Exception.Message)
+    $ExitCode = 1
+} finally {
+    foreach ($Name in $OriginalEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($Name, $OriginalEnvironment[$Name], 'Process')
+    }
+}
+
+Add-PaperLogLine ("[{0}] paper runner finished; exit_code={1}" -f (Get-Date).ToUniversalTime().ToString('o'), $ExitCode)
+exit $ExitCode

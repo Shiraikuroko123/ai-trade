@@ -192,6 +192,7 @@ def _download_range(
     matched_overlap: set[date] = set()
     latest_exact_override = False
     downloaded_dates: set[date] = set()
+    downloaded_bars: dict[date, Bar] = {}
     used_unadjusted_equivalent = False
     for index, (year_start, year_end) in enumerate(ranges):
         rows, exact_override_date, used_unadjusted_page = _download_year(
@@ -218,6 +219,7 @@ def _download_range(
                     f"{bar.date}"
                 )
             downloaded_dates.add(bar.date)
+            downloaded_bars[bar.date] = bar
             existing = merged.get(bar.date)
             if existing is not None:
                 _validate_overlap(existing, bar, instrument.symbol)
@@ -248,10 +250,16 @@ def _download_range(
     if used_unadjusted_equivalent:
         from .sina import verify_forward_adjustment_identity
 
+        verification_start = request_start if cached else start
+        verification_bars = [
+            downloaded_bars[value]
+            for value in sorted(downloaded_bars)
+            if verification_start <= value <= end
+        ]
         adjustment_metadata = verify_forward_adjustment_identity(
             instrument,
-            bars,
-            start=start,
+            verification_bars,
+            start=verification_start,
             end=end,
             cutoff=end,
             timeout=timeout,
@@ -261,6 +269,17 @@ def _download_range(
             retry_max=retry_max,
             retry_jitter=retry_jitter,
         )
+        if cached:
+            adjustment_metadata.update(
+                {
+                    "adjustment_evidence_scope": (
+                        "incremental_overlap_ohlc_available_volume"
+                    ),
+                    "adjustment_evidence_start": verification_start.isoformat(),
+                    "adjustment_evidence_end": end.isoformat(),
+                    "adjustment_cached_history_reused": True,
+                }
+            )
         adjustment_metadata["tencent_response_series"] = "day"
         adjustment_metadata["requested_adjustment_series"] = response_key
     return (

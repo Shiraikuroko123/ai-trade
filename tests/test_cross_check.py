@@ -261,8 +261,45 @@ class CrossCheckTests(unittest.TestCase):
             self.assertEqual(item["unavailable_fields"], ["amount"])
             self.assertNotIn("amount", item["max_deviation"])
 
+    def test_yahoo_uint32_volume_wrap_is_normalized_and_audited(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(_config(root, reference_provider="yahoo"))
+            staged = config.cache_dir / ".test-staged" / "510300.csv"
+            wrap_lots = (2**32) / 100
+            primary_volumes = tuple(wrap_lots + 100.0 + index for index in range(5))
+            _write_primary(staged, volumes=primary_volumes)
+            install_snapshot(config.cache_dir, {"510300.csv": staged}, _manifest(staged))
 
-def _config(root: Path) -> Path:
+            with patch(
+                "ai_trade.data.cross_check.provider_for",
+                return_value=_FakeProvider(),
+            ), patch(
+                "ai_trade.data.cross_check.completed_session_cutoff",
+                return_value=date(2024, 1, 8),
+            ):
+                result = cross_check_market_snapshot(config, force=True)
+
+            self.assertEqual(result["status"], "passed")
+            item = result["symbols"][0]
+            self.assertEqual(item["status"], "matched")
+            self.assertEqual(len(item["normalizations"]), 5)
+            normalization = item["normalizations"][0]
+            self.assertEqual(normalization["field"], "volume")
+            self.assertEqual(normalization["method"], "yahoo_uint32_share_wrap")
+            self.assertEqual(normalization["wraps"], 1)
+            self.assertAlmostEqual(normalization["original_reference"], 100.0)
+            self.assertAlmostEqual(
+                normalization["normalized_reference"],
+                wrap_lots + 100.0,
+            )
+            self.assertAlmostEqual(item["max_deviation"]["volume"], 0.0)
+            methodology = result["methodology"]["yahoo_volume_uint32_wrap"]
+            self.assertEqual(methodology["share_modulus"], 2**32)
+            self.assertTrue(methodology["requires_existing_volume_tolerance"])
+
+
+def _config(root: Path, *, reference_provider: str = "tencent") -> Path:
     path = root / "config" / "default.json"
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -278,7 +315,7 @@ def _config(root: Path) -> Path:
                     "adjustment": "forward",
                     "cross_check": {
                         "enabled": True,
-                        "reference_provider": "tencent",
+                        "reference_provider": reference_provider,
                         "lookback_sessions": 5,
                         "minimum_overlap_sessions": 3,
                     },
@@ -312,7 +349,11 @@ def _config(root: Path) -> Path:
     return path
 
 
-def _write_primary(path: Path) -> None:
+def _write_primary(
+    path: Path,
+    *,
+    volumes: tuple[float, ...] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -325,7 +366,7 @@ def _write_primary(path: Path) -> None:
                     10.0 + index,
                     11.0 + index,
                     8.0 + index,
-                    100.0 + index,
+                    volumes[index] if volumes is not None else 100.0 + index,
                     1000.0 + index,
                 ]
             )
