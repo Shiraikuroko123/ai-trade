@@ -6,6 +6,7 @@ from datetime import date
 
 from .data.market import MarketData
 from .models import Signal, SignalItem, StrategySettings
+from .numeric import sample_standard_deviation
 
 
 class MomentumTrendStrategy:
@@ -56,7 +57,11 @@ class MomentumTrendStrategy:
             momentum = closes[momentum_end] / closes[momentum_start] - 1.0
             trend = statistics.fmean(closes[-settings.trend_sma_days :])
             returns = _simple_returns(closes[-(settings.volatility_days + 1) :])
-            annual_vol = statistics.stdev(returns) * math.sqrt(252) if len(returns) > 1 else 0.0
+            annual_vol = (
+                sample_standard_deviation(returns) * math.sqrt(252)
+                if len(returns) > 1
+                else 0.0
+            )
             average_amount = statistics.fmean(
                 bar.amount for bar in history[-min(20, len(history)) :]
             )

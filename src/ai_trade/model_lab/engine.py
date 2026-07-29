@@ -9,6 +9,7 @@ from uuid import uuid4
 from .. import __version__
 from ..config import AppConfig
 from ..data.market import MarketData
+from ..numeric import sample_standard_deviation
 from ..research_statistics import (
     apply_holm_correction,
     deterministic_seed,
@@ -237,17 +238,23 @@ class ModelLabEngine:
             raise RuntimeError("Market snapshot changed during model evaluation")
 
         mean_ic = statistics.fmean(model_ics)
-        ic_std = statistics.stdev(model_ics) if len(model_ics) > 1 else 0.0
+        ic_std = (
+            sample_standard_deviation(model_ics) if len(model_ics) > 1 else 0.0
+        )
         mean_spread = statistics.fmean(model_spreads)
         spread_std = (
-            statistics.stdev(model_spreads) if len(model_spreads) > 1 else 0.0
+            sample_standard_deviation(model_spreads)
+            if len(model_spreads) > 1
+            else 0.0
         )
         baselines = []
         adjusted: dict[str, float] = {}
         for definition in factors:
             values = factor_ics[definition.factor_id]
             baseline_mean = statistics.fmean(values)
-            baseline_std = statistics.stdev(values) if len(values) > 1 else 0.0
+            baseline_std = (
+                sample_standard_deviation(values) if len(values) > 1 else 0.0
+            )
             adjusted_value = baseline_mean * definition.direction
             adjusted[definition.factor_id] = adjusted_value
             baselines.append(
@@ -530,7 +537,7 @@ def _feature_stats(
     for column in range(columns):
         values = [row[0][column] for row in rows]
         mean = statistics.fmean(values)
-        std = statistics.stdev(values) if len(values) > 1 else 0.0
+        std = sample_standard_deviation(values) if len(values) > 1 else 0.0
         means.append(mean)
         stds.append(std)
     return means, stds

@@ -243,6 +243,38 @@ class ResearchDigestStoreTests(unittest.TestCase):
             )
             self.assertEqual(store.list("owner", ACCOUNT)["status"], "partial")
 
+    def test_list_reuses_records_read_during_integrity_verification(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ResearchDigestStore(temporary)
+            store.append(
+                "owner",
+                ACCOUNT,
+                kind="daily",
+                period_start=DAY,
+                payload=_daily_payload(DAY),
+                source=_source(store, ACCOUNT),
+                config_fingerprint=CONFIG,
+            )
+            store.append(
+                "owner",
+                ACCOUNT,
+                kind="weekly",
+                period_start=WEEK,
+                payload=_weekly_payload(WEEK),
+                source=_source(store, ACCOUNT),
+                config_fingerprint=CONFIG,
+            )
+
+            with patch.object(
+                research_digest_module,
+                "_read_record",
+                wraps=research_digest_module._read_record,
+            ) as read_record:
+                result = store.list("owner", ACCOUNT)
+
+            self.assertEqual(result["summary"]["total_revisions"], 2)
+            self.assertEqual(read_record.call_count, 2)
+
     def test_new_chain_capacity_is_checked_before_account_becomes_unreadable(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = ResearchDigestStore(temporary)

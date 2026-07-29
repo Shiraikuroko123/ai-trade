@@ -56,6 +56,12 @@ class DistributionVerificationTests(unittest.TestCase):
         self.assertIn("ai_trade/json_utils.py", WHEEL_REQUIRED)
         self.assertIn("src/ai_trade/json_utils.py", SDIST_REQUIRED)
 
+    def test_performance_surface_is_required_in_release_artifacts(self):
+        self.assertIn("ai_trade/numeric.py", WHEEL_REQUIRED)
+        self.assertIn("src/ai_trade/numeric.py", SDIST_REQUIRED)
+        self.assertIn("docs/PERFORMANCE.md", SDIST_REQUIRED)
+        self.assertIn("scripts/benchmark_core.py", SDIST_REQUIRED)
+
     def test_market_intelligence_release_surface_is_required(self):
         for module in (
             "market_intelligence.py",

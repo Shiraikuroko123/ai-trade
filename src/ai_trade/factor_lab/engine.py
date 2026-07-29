@@ -9,6 +9,7 @@ from uuid import uuid4
 from .. import __version__
 from ..config import AppConfig
 from ..data.market import MarketData
+from ..numeric import sample_standard_deviation
 from ..research_statistics import (
     apply_holm_correction,
     deterministic_seed,
@@ -172,10 +173,10 @@ class FactorLabEngine:
                     f"Factor evaluation horizon {horizon} has too few valid dates"
                 )
             mean_ic = statistics.fmean(ics)
-            ic_std = statistics.stdev(ics) if len(ics) > 1 else 0.0
+            ic_std = sample_standard_deviation(ics) if len(ics) > 1 else 0.0
             mean_spread = statistics.fmean(spreads)
             spread_std = (
-                statistics.stdev(spreads) if len(spreads) > 1 else 0.0
+                sample_standard_deviation(spreads) if len(spreads) > 1 else 0.0
             )
             results.append(
                 {

@@ -62,6 +62,7 @@ class SecurityMaster:
         self.metadata = metadata or {}
         self.source_path = source_path
         self._validate()
+        self._fingerprint = self._calculate_fingerprint()
 
     @classmethod
     def load(cls, path: Path) -> "SecurityMaster":
@@ -233,6 +234,9 @@ class SecurityMaster:
         }
 
     def fingerprint(self) -> str:
+        return self._fingerprint
+
+    def _calculate_fingerprint(self) -> str:
         payload = {
             "instruments": [
                 _instrument_payload(value) for value in self.instruments.values()

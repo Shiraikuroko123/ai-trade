@@ -5,6 +5,8 @@ import statistics
 from datetime import date
 from typing import Any, Sequence
 
+from ..numeric import sample_standard_deviation
+
 
 ALLOWED_CONCLUSIONS = {
     "NO_ACTION",
@@ -44,7 +46,9 @@ def build_local_analysis(
     return_20d = _period_return(closes, 20)
     return_60d = _period_return(closes, 60)
     volatility20 = (
-        statistics.stdev(returns[-20:]) * math.sqrt(252) if len(returns) >= 2 else None
+        sample_standard_deviation(returns[-20:]) * math.sqrt(252)
+        if len(returns) >= 2
+        else None
     )
     atr14 = _atr(bars, 14)
     atr14_pct = atr14 / closes[-1] if atr14 is not None and closes[-1] else None

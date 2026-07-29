@@ -33,6 +33,7 @@ from ..data.fundamentals import FundamentalQuery, FundamentalStore
 from ..data.market import MarketData
 from ..data.market_breadth import MarketBreadthQuery, MarketBreadthStore
 from ..data.market_intelligence import DragonTigerQuery, DragonTigerStore
+from ..numeric import sample_standard_deviation
 from ..data.intraday import IntradayQuery, IntradayStore
 from ..data.valuation import ValuationQuery, ValuationStore
 from ..data.news import NewsQuery, NewsStore
@@ -1363,7 +1364,7 @@ class DashboardService:
         volatility_closes = closes[-(volatility_days + 1) :]
         returns = _screen_returns(volatility_closes)
         if len(returns) > 1:
-            volatility = statistics.stdev(returns) * math.sqrt(252.0)
+            volatility = sample_standard_deviation(returns) * math.sqrt(252.0)
 
         amount_values = [
             float(value.amount)

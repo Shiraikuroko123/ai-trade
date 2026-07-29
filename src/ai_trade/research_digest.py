@@ -580,12 +580,14 @@ class ResearchDigestStore:
             / period_start.isoformat()
         )
 
-    def _verify_account_unlocked(self, owner_hash: str, account_hash: str) -> None:
+    def _verify_account_unlocked(
+        self, owner_hash: str, account_hash: str
+    ) -> list[list[dict[str, Any]]]:
         account_directory = self._account_directory(owner_hash, account_hash)
         if account_directory.is_symlink():
             raise RuntimeError("Research digest account directory must not be symbolic")
         if not account_directory.exists():
-            return
+            return []
         if not account_directory.is_dir():
             raise RuntimeError("Research digest account path is not a directory")
         for path in account_directory.iterdir():
@@ -597,7 +599,7 @@ class ResearchDigestStore:
                 raise RuntimeError("Unexpected research digest account member")
         entries = account_directory / "digests"
         if not entries.exists():
-            return
+            return []
         if entries.is_symlink() or not entries.is_dir():
             raise RuntimeError("Research digest entries path is invalid")
         kind_directories = {"daily", "weekly"}
@@ -605,6 +607,7 @@ class ResearchDigestStore:
         seen_digest_ids: set[str] = set()
         seen_digest_fingerprints: set[str] = set()
         seen_config_fingerprints: set[str] = set()
+        chains: list[list[dict[str, Any]]] = []
         for path in entries.iterdir():
             if path.is_symlink() or not path.is_dir() or path.name not in kind_directories:
                 raise RuntimeError("Unexpected research digest kind directory")
@@ -622,6 +625,7 @@ class ResearchDigestStore:
                     )
                 period = _parse_chain_period(path.name, chain_path.name)
                 chain = self._chain_unlocked(owner_hash, account_hash, path.name, period)
+                chains.append(chain)
                 for record in chain:
                     digest_id = record["digest_id"]
                     digest_fingerprint = record["digest_fingerprint"]
@@ -639,28 +643,12 @@ class ResearchDigestStore:
                             "Research digest account contains multiple configuration "
                             "fingerprints"
                         )
+        return chains
 
     def _all_chains_unlocked(
         self, owner_hash: str, account_hash: str
     ) -> list[list[dict[str, Any]]]:
-        self._verify_account_unlocked(owner_hash, account_hash)
-        account_directory = self._account_directory(owner_hash, account_hash)
-        entries = account_directory / "digests"
-        if not entries.exists():
-            return []
-        chains: list[list[dict[str, Any]]] = []
-        for kind in ("daily", "weekly"):
-            kind_directory = entries / kind
-            if not kind_directory.exists():
-                continue
-            periods = sorted(
-                (path for path in kind_directory.iterdir() if path.is_dir()),
-                key=lambda path: path.name,
-            )
-            for path in periods:
-                period = _parse_chain_period(kind, path.name)
-                chains.append(self._chain_unlocked(owner_hash, account_hash, kind, period))
-        return chains
+        return self._verify_account_unlocked(owner_hash, account_hash)
 
     def _chain_unlocked(
         self,

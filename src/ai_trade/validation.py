@@ -13,6 +13,7 @@ from .config import AppConfig
 from .data.market import MarketData
 from .metrics import calculate_metrics
 from .models import BacktestResult, EquityPoint
+from .numeric import population_standard_deviation
 
 
 def run_robustness_validation(
@@ -240,7 +241,7 @@ def _parameter_sensitivity(config: AppConfig, market: MarketData) -> dict[str, o
         "median_cagr": statistics.median(cagrs),
         "max_cagr": max(cagrs),
         "median_sharpe": statistics.median(sharpes),
-        "sharpe_std": statistics.pstdev(sharpes),
+        "sharpe_std": population_standard_deviation(sharpes),
         "results": rows,
     }
 
@@ -320,7 +321,7 @@ def _slice_curve(curve: list[EquityPoint], start: date, end: date) -> list[Equit
 def _sharpe(returns: list[float]) -> float:
     if len(returns) < 2:
         return 0.0
-    deviation = statistics.pstdev(returns)
+    deviation = population_standard_deviation(returns)
     return statistics.fmean(returns) / deviation * math.sqrt(252) if deviation > 0 else 0.0
 
 

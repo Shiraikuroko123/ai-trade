@@ -6,6 +6,7 @@ import statistics
 from typing import Any, Callable
 
 from ..models import Bar
+from ..numeric import sample_standard_deviation
 
 
 LIBRARY_VERSION = 1
@@ -84,7 +85,7 @@ def _volatility(window: int) -> Callable[[list[Bar]], float | None]:
         ]
         if len(returns) < 2:
             return None
-        return statistics.stdev(returns) * math.sqrt(252)
+        return sample_standard_deviation(returns) * math.sqrt(252)
 
     return compute
 

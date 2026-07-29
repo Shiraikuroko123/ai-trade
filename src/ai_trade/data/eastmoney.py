@@ -944,8 +944,12 @@ def load_cached_bars(path: Path) -> list[Bar]:
             )
         for line_number, row in enumerate(reader, start=2):
             try:
+                raw_date = row["date"]
+                parsed_date = date.fromisoformat(raw_date)
+                if parsed_date.isoformat() != raw_date:
+                    raise ValueError("date must use canonical YYYY-MM-DD format")
                 bar = Bar(
-                    date=datetime.strptime(row["date"], "%Y-%m-%d").date(),
+                    date=parsed_date,
                     open=float(row["open"]),
                     close=float(row["close"]),
                     high=float(row["high"]),

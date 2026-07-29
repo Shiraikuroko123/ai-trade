@@ -31,6 +31,7 @@ include docs/CAPITAL_FLOW.md
 include docs/RESEARCH_METHODOLOGY.md
 include docs/RESEARCH_JOURNAL.md
 include docs/RESEARCH_DIGESTS.md
+include docs/PERFORMANCE.md
 include docs/UNIVERSE.md
 include docs/UNIVERSE_SCREENING.md
 include docs/assets/workstation-overview.png
@@ -48,6 +49,7 @@ include scripts/run_daily_monitor.ps1
 include scripts/install_archive_task.ps1
 include scripts/run_daily_archive.ps1
 include scripts/verify_distribution.py
+include scripts/benchmark_core.py
 include src/ai_trade/monitoring.py
 include src/ai_trade/data/market_intelligence.py
 include src/ai_trade/data/market_breadth.py

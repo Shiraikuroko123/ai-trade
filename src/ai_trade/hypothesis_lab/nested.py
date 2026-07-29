@@ -20,7 +20,6 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 import math
 import re
-import statistics
 from typing import Any, List, Mapping, Sequence
 from uuid import uuid4
 
@@ -30,6 +29,7 @@ from ..data.evidence_io import atomic_create_json, evidence_store_lock
 from ..data.market import MarketData
 from ..json_utils import load_unique_json
 from ..models import RiskSettings, StrategySettings
+from ..numeric import sample_standard_deviation
 from ..strategy_lab import StrategyLabEngine
 from ..strategy_lab.schema import apply_changes
 from .schema import FINGERPRINT, json_fingerprint
@@ -248,7 +248,7 @@ class NestedWalkForwardEngine:
                 ]
                 mean_score = math.fsum(scores) / len(scores)
                 spread = (
-                    statistics.stdev(scores) if len(scores) > 1 else 0.0
+                    sample_standard_deviation(scores) if len(scores) > 1 else 0.0
                 )
                 scored.append(
                     {

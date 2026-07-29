@@ -32,6 +32,7 @@ from .model_lab.artifact import (
 )
 from .model_lab.inference import predict_snapshot
 from .model_lab.prediction_schema import PredictionSnapshotStore
+from .numeric import sample_standard_deviation
 from .portfolio import (
     PortfolioConstraints,
     PortfolioPlanStore,
@@ -360,7 +361,7 @@ def _instrument_metadata(
             if history[index - 1].close > 0 and history[index].close > 0
         ]
         volatility = (
-            statistics.stdev(returns) * math.sqrt(252.0)
+            sample_standard_deviation(returns) * math.sqrt(252.0)
             if len(returns) > 1
             else 0.0
         )

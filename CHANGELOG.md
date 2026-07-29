@@ -5,6 +5,17 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Reworked the local numerical hot path around compensated float-specific
+  sample/population deviation, removed repeated deviation calculations,
+  cached immutable universe and security-master projections, and switched
+  verified CSV dates to the strict ISO parser. On the bundled 47-symbol
+  snapshot this cuts the rolling walk-forward kernel from about 41 seconds to
+  about 9 seconds and the 1,000-sample robustness validation from about 14
+  seconds to about 4.5 seconds without changing the selected walk-forward
+  aggregate or the current FeatureSnapshot identity. Research digest listing
+  now reuses the records already read during full chain verification instead
+  of reading every immutable revision twice. Added a non-mutating benchmark
+  script and performance methodology documentation.
 - Added an independent Windows `18:00` forward-evidence task. Its hidden runner
   refreshes completed daily bars, creates or reuses a genuine point-in-time
   FeatureSnapshot only after a successful refresh, matures eligible 5/20/60

@@ -40,6 +40,7 @@ class MarketData:
     def _initialize(self, as_of: datetime | None) -> None:
         config = self.config
         self.symbols: dict[str, SymbolData] = {}
+        self._active_symbols_cache: dict[date, tuple[str, ...]] = {}
         self.market_close_time = config.raw["data"].get("market_close_time", "15:30")
         self.completed_through = completed_session_cutoff(as_of, self.market_close_time)
         self.excluded_dates: dict[str, list[date]] = {}
@@ -105,9 +106,14 @@ class MarketData:
         return self.symbols[symbol].instrument
 
     def active_symbols(self, on_date: date) -> tuple[str, ...]:
-        return tuple(
+        cached = self._active_symbols_cache.get(on_date)
+        if cached is not None:
+            return cached
+        active = tuple(
             symbol for symbol in self.config.active_symbols(on_date) if symbol in self.symbols
         )
+        self._active_symbols_cache[on_date] = active
+        return active
 
     def trading_status(self, symbol: str, on_date: date) -> TradingStatus:
         return self.config.security_master.trading_status(symbol, on_date)

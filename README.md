@@ -553,6 +553,14 @@ Yahoo 对最近 5 个完整交易日的独立核验为 47/47 matched、0 mismatc
 - `state/feature_store/`、`state/model_lab/` 与 `state/portfolio/`：未发布研究线的不可变特征/标签、合格线性 artifact、样本外预测和成本约束组合计划；均不进入活动模拟账户。
 - `state/research_loop/users/<owner-sha256>/loops/`：本地计划或受治理模型逐轮产生的 planner、工具、失败、拒绝和停止事件哈希链；不保存审批或交易权限。
 - `state/shadow_ledger/`：与旧成交 CSV 复盘分离的事件化影子账户投影证据；不是正式券商 sandbox 对账。
+
+本地计算性能可用只读基准复核：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\benchmark_core.py --bootstrap-samples 1000
+```
+
+输出同时包含各阶段耗时和结果指纹，不会刷新网络数据、写报告或修改模拟账户。测量口径见 [性能基准](docs/PERFORMANCE.md)。
 - `state/research_journal/users/<owner-sha256>/entries/`：按登录用户隔离的 append-only 研究记录；每条记录绑定证据指纹，修正通过新记录关联旧编号。
 - `state/monitoring/users/<owner-sha256>/`：配置修订、扫描、告警、本地通知及各自的追加式处理动作；不进入 R2 行情备份。
 - `paper_audit.json`、`paper_audit.md`：账本完整性、前向指标和券商沙盒晋级门槛。

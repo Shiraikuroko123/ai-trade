@@ -16,6 +16,7 @@ from ..feature_store.schema import (
     validate_feature_snapshot,
 )
 from ..json_utils import load_unique_json
+from ..numeric import sample_standard_deviation
 from .engine import _feature_stats, _fit_ridge
 from .library import model_definition
 from .schema import validate_evaluation
@@ -306,7 +307,9 @@ def fit_linear_artifact(
             for index in range(len(factor_ids))
         )
         residuals.append(target - prediction)
-    residual_std = statistics.stdev(residuals) if len(residuals) > 1 else 0.0
+    residual_std = (
+        sample_standard_deviation(residuals) if len(residuals) > 1 else 0.0
+    )
     training_evidence = {
         "feature_snapshots": feature_ids,
         "label_snapshots": label_ids,

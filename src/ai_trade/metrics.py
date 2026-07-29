@@ -4,6 +4,7 @@ import math
 import statistics
 
 from .models import EquityPoint, Trade
+from .numeric import sample_standard_deviation
 
 
 def calculate_metrics(curve: list[EquityPoint], trades: list[Trade] | None = None) -> dict[str, float]:
@@ -38,9 +39,10 @@ def calculate_metrics(curve: list[EquityPoint], trades: list[Trade] | None = Non
     years = max((curve[-1].date - curve[0].date).days / 365.25, 1.0 / 252.0)
     total_return = equities[-1] / equities[0] - 1.0
     cagr = (equities[-1] / equities[0]) ** (1.0 / years) - 1.0 if equities[0] > 0 else 0.0
-    volatility = statistics.stdev(returns) * math.sqrt(252) if len(returns) > 1 else 0.0
+    deviation = sample_standard_deviation(returns) if len(returns) > 1 else 0.0
+    volatility = deviation * math.sqrt(252)
     mean_return = statistics.fmean(returns) if returns else 0.0
-    sharpe = mean_return / statistics.stdev(returns) * math.sqrt(252) if len(returns) > 1 and statistics.stdev(returns) > 0 else 0.0
+    sharpe = mean_return / deviation * math.sqrt(252) if deviation > 0 else 0.0
     downside = [min(value, 0.0) for value in returns]
     downside_dev = math.sqrt(statistics.fmean([value * value for value in downside])) if downside else 0.0
     sortino = mean_return / downside_dev * math.sqrt(252) if downside_dev > 0 else 0.0

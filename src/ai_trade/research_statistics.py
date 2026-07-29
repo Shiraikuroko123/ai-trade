@@ -6,6 +6,8 @@ import random
 import statistics
 from typing import Any, Mapping, Sequence
 
+from .numeric import sample_standard_deviation
+
 
 DEFAULT_BOOTSTRAP_RESAMPLES = 999
 DEFAULT_CONFIDENCE_LEVEL = 0.95
@@ -78,7 +80,7 @@ def moving_block_bootstrap_mean(
     ]
     ordered = sorted(bootstrap_means)
     tail = (1.0 - float(confidence_level)) / 2.0
-    standard_error = statistics.stdev(bootstrap_means)
+    standard_error = sample_standard_deviation(bootstrap_means)
     null_exceedances = sum(
         bootstrap_mean - estimate >= estimate
         for bootstrap_mean in bootstrap_means
