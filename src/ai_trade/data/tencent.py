@@ -22,6 +22,7 @@ ENDPOINT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 YEARLY_LIMIT = 320
+DEFAULT_INCREMENTAL_OVERLAP_SESSIONS = 20
 LEGACY_START_TOLERANCE_DAYS = 3
 REQUEST_HEADERS = {
     "Accept": "*/*",
@@ -84,6 +85,12 @@ def download_instrument(
     retry_max = float(config.raw["data"].get("retry_max_seconds", 8.0))
     retry_jitter = float(config.raw["data"].get("retry_jitter_seconds", 0.5))
     request_interval = float(config.raw["data"].get("request_interval_seconds", 2.0))
+    overlap_sessions = int(
+        config.raw["data"].get(
+            "tencent_incremental_overlap_sessions",
+            DEFAULT_INCREMENTAL_OVERLAP_SESSIONS,
+        )
+    )
 
     cache_provenance: dict[str, object] = {}
     cached = _recent_cached_bars(
@@ -117,6 +124,7 @@ def download_instrument(
             retry_max=retry_max,
             retry_jitter=retry_jitter,
             request_interval=request_interval,
+            overlap_sessions=overlap_sessions,
         )
     except TencentOverlapError:
         (
@@ -139,6 +147,7 @@ def download_instrument(
             retry_max=retry_max,
             retry_jitter=retry_jitter,
             request_interval=request_interval,
+            overlap_sessions=overlap_sessions,
         )
         source_mode = "full_rebuild_after_overlap_mismatch"
 
@@ -149,6 +158,13 @@ def download_instrument(
             "source_mode": source_mode,
             "pages": pages,
             "overlap_rows": overlap_rows,
+            "incremental_overlap_sessions": overlap_sessions,
+            "provider_coverage_start": (
+                str(cache_provenance["cached_seed_coverage_start"])
+                if source_mode == "incremental"
+                else start.isoformat()
+            ),
+            "provider_first_session": bars[0].date.isoformat(),
             "tencent_proxy_mode": selected_proxy_mode,
             "amount_quality": "provider_reported_rounded",
             "amount_resolution_cny": 100,
@@ -178,8 +194,9 @@ def _download_range(
     retry_max: float,
     retry_jitter: float,
     request_interval: float,
+    overlap_sessions: int,
 ) -> tuple[list[Bar], bool, int, int, dict[str, object]]:
-    overlap = cached[-min(YEARLY_LIMIT, len(cached)) :] if cached else []
+    overlap = cached[-min(overlap_sessions, len(cached)) :] if cached else []
     request_start = overlap[0].date if overlap else start
     ranges = [
         (max(request_start, date(year, 1, 1), start), min(end, date(year, 12, 31)))
@@ -721,7 +738,30 @@ def _recent_cached_bars(
         )
         if latest_session != all_bars[-1].date:
             return []
-        if all_bars[0].date > start + timedelta(days=LEGACY_START_TOLERANCE_DAYS):
+        first_session = all_bars[0].date
+        coverage_start_value = file_metadata.get("provider_coverage_start")
+        first_session_value = file_metadata.get("provider_first_session")
+        if coverage_start_value is not None or first_session_value is not None:
+            if coverage_start_value is None or first_session_value is None:
+                return []
+            coverage_start = _parse_date(
+                coverage_start_value,
+                f"cache provider coverage start for {instrument.symbol}",
+            )
+            recorded_first_session = _parse_date(
+                first_session_value,
+                f"cache provider first session for {instrument.symbol}",
+            )
+            if coverage_start > start or recorded_first_session != first_session:
+                return []
+        elif _legacy_full_history_seed(file_metadata):
+            # Older manifests did not carry explicit coverage fields. A
+            # Tencent full-history result is sufficient migration evidence;
+            # the next incremental manifest writes the explicit markers.
+            coverage_start = start
+        elif first_session <= start + timedelta(days=LEGACY_START_TOLERANCE_DAYS):
+            coverage_start = start
+        else:
             return []
         bars = [bar for bar in all_bars if start <= bar.date <= cutoff]
         if provenance is not None:
@@ -730,6 +770,8 @@ def _recent_cached_bars(
                     "cached_seed_source": source,
                     "cached_seed_sha256": expected_sha256.lower(),
                     "cached_seed_rows": expected_rows,
+                    "cached_seed_coverage_start": coverage_start.isoformat(),
+                    "cached_seed_first_session": first_session.isoformat(),
                 }
             )
     except (OSError, UnicodeError, ValueError, RuntimeError):
@@ -737,6 +779,19 @@ def _recent_cached_bars(
     if not bars or cutoff - bars[-1].date > timedelta(days=7):
         return []
     return bars
+
+
+def _legacy_full_history_seed(file_metadata: dict[str, object]) -> bool:
+    pages = file_metadata.get("pages")
+    return (
+        file_metadata.get("source_provider") == "tencent_newfqkline"
+        and file_metadata.get("source_mode")
+        in {"full_history", "full_rebuild_after_overlap_mismatch"}
+        and file_metadata.get("overlap_rows") == 0
+        and isinstance(pages, int)
+        and not isinstance(pages, bool)
+        and pages >= 1
+    )
 
 
 def _file_sha256(path: Path) -> str:

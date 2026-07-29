@@ -312,7 +312,7 @@ def _audit_symbols(
     results: list[dict[str, Any]] = []
     instruments = {item.symbol: item for item in config.instruments}
     providers: dict[str, Any] = {}
-    provider_failures: dict[str, str] = {}
+    provider_failures = _refresh_circuit_failures(manifest, primary_name)
     with tempfile.TemporaryDirectory(prefix="ai-trade-cross-check-") as temporary:
         temp_root = Path(temporary)
         for symbol in symbols:
@@ -359,6 +359,14 @@ def _audit_symbols(
                 )
                 results.append(item)
                 continue
+            if audit_reference_name in provider_failures:
+                item.update(
+                    status="reference_unavailable",
+                    reason="reference_provider_circuit_open",
+                    error=provider_failures[audit_reference_name],
+                )
+                results.append(item)
+                continue
             try:
                 reference = providers.get(audit_reference_name)
                 if reference is None:
@@ -387,14 +395,6 @@ def _audit_symbols(
                 item.update(
                     status="reference_unavailable",
                     reason="reference_provider_has_no_comparable_fields",
-                )
-                results.append(item)
-                continue
-            if audit_reference_name in provider_failures:
-                item.update(
-                    status="reference_unavailable",
-                    reason="reference_provider_circuit_open",
-                    error=provider_failures[audit_reference_name],
                 )
                 results.append(item)
                 continue
@@ -492,6 +492,23 @@ def _audit_symbols(
                 item["status"] = "matched"
             results.append(item)
     return results
+
+
+def _refresh_circuit_failures(
+    manifest: Mapping[str, Any], primary_name: str
+) -> dict[str, str]:
+    policy = manifest.get("request_policy")
+    if not isinstance(policy, Mapping):
+        return {}
+    circuit = policy.get("primary_provider_circuit_breaker")
+    if not isinstance(circuit, Mapping) or circuit.get("opened") is not True:
+        return {}
+    reason = _safe_error(circuit.get("reason") or "transport failure")
+    trigger = circuit.get("trigger_symbol")
+    detail = f"Snapshot refresh already opened the provider circuit: {reason}"
+    if isinstance(trigger, str) and trigger:
+        detail = f"{detail} (trigger {trigger})"
+    return {primary_name: detail[:MAX_ERROR_LENGTH]}
 
 
 def _comparison_fields(provider: object) -> tuple[str, ...]:

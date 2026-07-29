@@ -5,6 +5,20 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Reduced the resilient daily market-refresh request plan without weakening
+  cache verification. Tencent fallback now rechecks 20 overlapping sessions
+  instead of a fixed 320-session tail, while retaining the complete verified
+  history and forcing a full rebuild after missing coverage evidence, stale or
+  hash-invalid cache input, or any overlap mismatch. Explicit coverage
+  provenance survives Cloudflare R2 snapshots, including migration from
+  trustworthy legacy Tencent full-history manifests. A refresh-scoped provider
+  circuit is now shared with the cross-source audit, an open circuit no longer
+  incurs the per-symbol failure cooldown, and a paper run that reuses the
+  freshly published snapshot no longer repeats the automatic cloud backup. On
+  an isolated refresh of the 2026-07-29 47-symbol cache, one Eastmoney result
+  and 46 Tencent single-page increments replaced 189 Tencent yearly pages
+  (75.7% fewer fallback pages); the full cloud-disabled refresh completed in
+  257.283 seconds without changing any active-cache file.
 - Reworked the local numerical hot path around compensated float-specific
   sample/population deviation, removed repeated deviation calculations,
   cached immutable universe and security-master projections, and switched

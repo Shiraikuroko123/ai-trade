@@ -63,11 +63,14 @@ class CliTests(unittest.TestCase):
             patch("ai_trade.cli.load_config", return_value=config),
             patch("ai_trade.cli._configure_logging"),
             patch("ai_trade.cli.paper_status") as preflight,
-            patch("ai_trade.cli._refresh_paper_market_data_if_needed") as refresh,
+            patch(
+                "ai_trade.cli._refresh_paper_market_data_if_needed",
+                return_value=False,
+            ) as refresh,
             patch("ai_trade.cli.download_universe") as download,
             patch("ai_trade.cli.MarketData", return_value=market),
             patch("ai_trade.cli.run_paper", return_value=report) as run,
-            patch("ai_trade.cli._maybe_automatic_cloud_backup"),
+            patch("ai_trade.cli._maybe_automatic_cloud_backup") as backup,
             redirect_stdout(output),
         ):
             status = main(["paper-run", "--refresh-if-needed"])
@@ -77,7 +80,30 @@ class CliTests(unittest.TestCase):
         refresh.assert_called_once_with(config)
         download.assert_not_called()
         run.assert_called_once_with(config, market)
+        backup.assert_not_called()
         self.assertEqual(json.loads(output.getvalue()), report)
+
+    def test_paper_run_backs_up_market_only_when_refresh_changed_snapshot(self):
+        config = object()
+        market = object()
+        report = {"date": "2026-07-28", "status": "completed"}
+        with (
+            patch("ai_trade.cli.load_config", return_value=config),
+            patch("ai_trade.cli._configure_logging"),
+            patch("ai_trade.cli.paper_status"),
+            patch(
+                "ai_trade.cli._refresh_paper_market_data_if_needed",
+                return_value=True,
+            ),
+            patch("ai_trade.cli.MarketData", return_value=market),
+            patch("ai_trade.cli.run_paper", return_value=report),
+            patch("ai_trade.cli._maybe_automatic_cloud_backup") as backup,
+            redirect_stdout(io.StringIO()),
+        ):
+            status = main(["paper-run", "--refresh-if-needed"])
+
+        self.assertEqual(status, 0)
+        backup.assert_called_once_with(config)
 
     def test_paper_run_rejects_configuration_drift_before_refresh(self):
         config = object()
@@ -108,8 +134,9 @@ class CliTests(unittest.TestCase):
             patch("ai_trade.cli.MarketData", side_effect=RuntimeError("hash mismatch")),
             patch("ai_trade.cli.download_universe") as download,
         ):
-            _refresh_paper_market_data_if_needed(config, now=checked_at)
+            refreshed = _refresh_paper_market_data_if_needed(config, now=checked_at)
 
+        self.assertTrue(refreshed)
         download.assert_called_once_with(config, force=True)
 
     def test_paper_refresh_policy_skips_network_for_reusable_snapshot(self):
@@ -124,8 +151,9 @@ class CliTests(unittest.TestCase):
             ),
             patch("ai_trade.cli.download_universe") as download,
         ):
-            _refresh_paper_market_data_if_needed(config, now=checked_at)
+            refreshed = _refresh_paper_market_data_if_needed(config, now=checked_at)
 
+        self.assertFalse(refreshed)
         download.assert_not_called()
 
     def test_cloud_digest_commands_dispatch_without_exposing_object_keys(self):

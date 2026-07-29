@@ -998,7 +998,7 @@ class DataTests(unittest.TestCase):
             self.assertEqual(metadata["cached_seed_source"], "network")
             self.assertEqual(metadata["retained_cached_rows"], 0)
 
-    def test_tencent_incremental_rechecks_latest_320_cached_bars(self):
+    def test_tencent_incremental_rechecks_bounded_cached_overlap(self):
         first_date = datetime(2023, 1, 1).date()
         dates = tuple(
             (first_date + timedelta(days=index)).isoformat() for index in range(321)
@@ -1056,7 +1056,7 @@ class DataTests(unittest.TestCase):
                 "adjustment_evidence_scope": (
                     "full_history_ohlc_available_volume"
                 ),
-                "adjustment_evidence_rows": 320,
+                "adjustment_evidence_rows": 20,
             }
             with (
                 patch(
@@ -1080,23 +1080,26 @@ class DataTests(unittest.TestCase):
 
             self.assertEqual(len(requests), 1)
             query = parse_qs(urlparse(requests[0].full_url).query)
-            self.assertEqual(query["param"][0].split(",")[2], dates[-320])
+            self.assertEqual(query["param"][0].split(",")[2], dates[-20])
             self.assertEqual(metadata["source_mode"], "incremental")
-            self.assertEqual(metadata["overlap_rows"], 320)
+            self.assertEqual(metadata["overlap_rows"], 20)
+            self.assertEqual(metadata["incremental_overlap_sessions"], 20)
             self.assertEqual(metadata["pages"], 1)
             self.assertEqual(len(load_cached_bars(output)), 321)
             verify.assert_called_once()
             verified_bars = verify.call_args.args[1]
-            self.assertEqual(len(verified_bars), 320)
-            self.assertEqual(verified_bars[0].date.isoformat(), dates[-320])
-            self.assertEqual(verify.call_args.kwargs["start"].isoformat(), dates[-320])
+            self.assertEqual(len(verified_bars), 20)
+            self.assertEqual(verified_bars[0].date.isoformat(), dates[-20])
+            self.assertEqual(verify.call_args.kwargs["start"].isoformat(), dates[-20])
             self.assertEqual(
                 metadata["adjustment_evidence_scope"],
                 "incremental_overlap_ohlc_available_volume",
             )
-            self.assertEqual(metadata["adjustment_evidence_start"], dates[-320])
+            self.assertEqual(metadata["adjustment_evidence_start"], dates[-20])
             self.assertEqual(metadata["adjustment_evidence_end"], dates[-1])
             self.assertTrue(metadata["adjustment_cached_history_reused"])
+            self.assertEqual(metadata["provider_coverage_start"], dates[0])
+            self.assertEqual(metadata["provider_first_session"], dates[0])
 
     def test_tencent_year_pages_retry_and_throttle(self):
         requests = []
@@ -1279,9 +1282,9 @@ class DataTests(unittest.TestCase):
                 _write_config(
                     root,
                     {
-                        "request_interval_seconds": 0.0,
+                        "request_interval_seconds": 0.25,
                         "request_jitter_seconds": 0.0,
-                        "failure_cooldown_seconds": 0.0,
+                        "failure_cooldown_seconds": 2.0,
                     },
                 )
             )
@@ -1330,13 +1333,14 @@ class DataTests(unittest.TestCase):
                     "ai_trade.data.eastmoney.tencent.download_instrument",
                     side_effect=fallback,
                 ),
-                patch("ai_trade.data.eastmoney.time_module.sleep"),
+                patch("ai_trade.data.eastmoney.time_module.sleep") as sleep,
             ):
                 download_universe(config, force=True)
 
             first, second = config.instruments
             self.assertEqual(eastmoney_calls, [first.symbol])
             self.assertEqual(tencent_calls, [first.symbol, second.symbol])
+            sleep.assert_called_once_with(0.25)
             manifest = json.loads(
                 (config.cache_dir / "manifest.json").read_text(encoding="utf-8")
             )
@@ -1350,6 +1354,12 @@ class DataTests(unittest.TestCase):
             circuit = manifest["request_policy"]["eastmoney_circuit_breaker"]
             self.assertTrue(circuit["opened"])
             self.assertEqual(circuit["trigger_symbol"], first.symbol)
+            self.assertEqual(
+                manifest["request_policy"][
+                    "tencent_incremental_overlap_sessions"
+                ],
+                20,
+            )
 
     def test_both_network_providers_fail_before_validated_local_fallback(self):
         target = datetime(2024, 1, 3).date()
@@ -1744,6 +1754,18 @@ class DataTests(unittest.TestCase):
             ({"max_attempts": 1.5}, "max_attempts"),
             ({"eastmoney_max_attempts": 0}, "eastmoney_max_attempts"),
             ({"eastmoney_max_attempts": True}, "eastmoney_max_attempts"),
+            (
+                {"tencent_incremental_overlap_sessions": 9},
+                "tencent_incremental_overlap_sessions",
+            ),
+            (
+                {"tencent_incremental_overlap_sessions": 321},
+                "tencent_incremental_overlap_sessions",
+            ),
+            (
+                {"tencent_incremental_overlap_sessions": True},
+                "tencent_incremental_overlap_sessions",
+            ),
             ({"request_interval_seconds": float("inf")}, "request_interval"),
             ({"request_jitter_seconds": 11.0}, "request_jitter"),
             ({"failure_cooldown_seconds": -1.0}, "failure_cooldown"),

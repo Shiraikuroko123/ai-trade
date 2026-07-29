@@ -615,6 +615,7 @@ def _validate_data_transport(data: dict[str, Any]) -> None:
         "timeout_seconds": (1, 120, 20),
         "max_attempts": (1, 10, 4),
         "eastmoney_max_attempts": (1, 10, data.get("max_attempts", 4)),
+        "tencent_incremental_overlap_sessions": (10, 320, 20),
     }
     for name, (minimum, maximum, default) in integer_limits.items():
         value = data.get(name, default)

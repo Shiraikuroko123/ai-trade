@@ -313,7 +313,7 @@ def _download_universe_locked(
             )
             if index + 1 < len(config.instruments):
                 delay = request_interval + random.uniform(0.0, request_jitter)
-                if primary_attempted and (
+                if primary_attempted and circuit_reason is None and (
                     primary_error is not None
                     or errors
                     or sources[instrument.symbol] == "validated_local_fallback"
@@ -384,6 +384,12 @@ def _download_universe_locked(
                     config.raw["data"].get(
                         "eastmoney_max_attempts",
                         config.raw["data"].get("max_attempts", 4),
+                    )
+                ),
+                "tencent_incremental_overlap_sessions": int(
+                    config.raw["data"].get(
+                        "tencent_incremental_overlap_sessions",
+                        tencent.DEFAULT_INCREMENTAL_OVERLAP_SESSIONS,
                     )
                 ),
                 "retry_base_seconds": float(
@@ -467,6 +473,12 @@ def _refresh_candidate_identity(
         "primary_provider": primary_provider,
         "fallback_provider": fallback_provider,
         "proxy_mode": proxy_mode,
+        "tencent_incremental_overlap_sessions": int(
+            config.raw["data"].get(
+                "tencent_incremental_overlap_sessions",
+                tencent.DEFAULT_INCREMENTAL_OVERLAP_SESSIONS,
+            )
+        ),
         "instruments": [
             {
                 "symbol": instrument.symbol,

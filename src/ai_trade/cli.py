@@ -2071,14 +2071,17 @@ def main(argv: list[str] | None = None) -> int:
             # Fail before any network work when the frozen paper-account
             # configuration no longer matches the active configuration.
             paper_status(config)
+            market_refreshed = False
             if args.no_refresh:
                 _ensure_cache(config)
             elif args.refresh_if_needed:
-                _refresh_paper_market_data_if_needed(config)
+                market_refreshed = _refresh_paper_market_data_if_needed(config)
             else:
                 download_universe(config, force=True)
+                market_refreshed = True
             report = run_paper(config, MarketData(config))
-            _maybe_automatic_cloud_backup(config)
+            if market_refreshed:
+                _maybe_automatic_cloud_backup(config)
             print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "paper-status":
@@ -2390,20 +2393,21 @@ def _refresh_paper_market_data_if_needed(
     config: AppConfig,
     *,
     now: datetime | None = None,
-) -> None:
+) -> bool:
     checked_at = now or datetime.now(timezone.utc)
     try:
         market = MarketData(config, as_of=checked_at)
     except (OSError, RuntimeError, ValueError):
         download_universe(config, force=True)
-        return
+        return True
     if _paper_market_snapshot_is_reusable(market, checked_at):
         logging.getLogger(__name__).info(
             "Reusing validated market snapshot through %s for paper run",
             market.latest_common_session.isoformat(),
         )
-        return
+        return False
     download_universe(config, force=True)
+    return True
 
 
 def _paper_market_snapshot_is_reusable(

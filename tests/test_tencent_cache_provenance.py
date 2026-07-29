@@ -198,6 +198,72 @@ class TencentCacheProvenanceTests(unittest.TestCase):
 
             self.assertEqual(bars, [])
 
+    def test_legacy_full_history_evidence_migrates_listing_gap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config, instrument, cache = _cache_fixture(
+                root,
+                first_date="2024-02-01",
+            )
+            _write_manifest(
+                config,
+                instrument,
+                cache,
+                file_changes={
+                    "source": "tencent_network_fallback",
+                    "source_provider": "tencent_newfqkline",
+                    "source_mode": "full_history",
+                    "overlap_rows": 0,
+                    "pages": 1,
+                },
+            )
+            provenance: dict[str, object] = {}
+
+            bars = _recent_cached_bars(
+                config,
+                instrument,
+                cache,
+                date(2024, 1, 1),
+                date(2024, 2, 5),
+                "forward",
+                provenance=provenance,
+            )
+
+            self.assertTrue(bars)
+            self.assertEqual(provenance["cached_seed_coverage_start"], "2024-01-01")
+            self.assertEqual(provenance["cached_seed_first_session"], "2024-02-01")
+
+    def test_explicit_coverage_markers_must_be_complete_and_match_cache(self):
+        cases = (
+            ({"provider_coverage_start": "2024-01-01"}, "missing first"),
+            (
+                {
+                    "provider_coverage_start": "2024-01-01",
+                    "provider_first_session": "2024-01-03",
+                },
+                "wrong first",
+            ),
+            (
+                {
+                    "provider_coverage_start": "2024-01-02",
+                    "provider_first_session": "2024-01-02",
+                },
+                "late coverage",
+            ),
+        )
+        for changes, label in cases:
+            with tempfile.TemporaryDirectory() as temporary, self.subTest(label=label):
+                root = Path(temporary)
+                config, instrument, cache = _cache_fixture(root)
+                _write_manifest(
+                    config,
+                    instrument,
+                    cache,
+                    file_changes=changes,
+                )
+
+                self.assertEqual(self._cached_bars(config, instrument, cache), [])
+
     def test_cache_filename_must_match_manifest_symbol(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

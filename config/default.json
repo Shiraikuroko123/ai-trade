@@ -12,6 +12,7 @@
     "failure_cooldown_seconds": 20.0,
     "max_attempts": 4,
     "eastmoney_max_attempts": 8,
+    "tencent_incremental_overlap_sessions": 20,
     "retry_base_seconds": 1.0,
     "retry_max_seconds": 8.0,
     "retry_jitter_seconds": 0.5,

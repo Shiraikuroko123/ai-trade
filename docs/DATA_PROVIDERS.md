@@ -179,6 +179,39 @@ reconstruction and a late capture of a stale cache do not qualify for model
 deployment, even when their numerical values later match. This workflow creates
 research evidence only: it creates no signal, order, or trading permission.
 
+## Incremental refresh and outage behavior
+
+Tencent fallback retains the complete validated CSV but normally requests only
+the configured overlapping tail plus any newer completed sessions. The default
+`data.tencent_incremental_overlap_sessions` is 20 and configuration accepts a
+bounded range of 10 through 320 sessions. This is an integrity window, not a
+history truncation: cached rows before the overlap remain in the published
+snapshot.
+
+Incremental reuse requires a matching CSV SHA-256, row count, latest session,
+freshness cutoff, and explicit evidence that the provider request covered the
+instrument request start (the later of the global start and listing date). It
+also compares every provider row in the overlap with the cached row. Missing or
+inconsistent evidence, a stale or modified cache, or any overlapping value
+mismatch forces a full provider rebuild. Trustworthy
+legacy Tencent `full_history` and `full_rebuild_after_overlap_mismatch`
+manifests are accepted once as migration evidence; the next successful refresh
+writes explicit `provider_coverage_start` and `provider_first_session` fields.
+Incremental manifests also retain the corresponding `cached_seed_*` fields so
+the source chain remains auditable.
+
+These coverage fields and `incremental_overlap_sessions` are copied into a
+cloud snapshot only after strict type, range, and canonical ISO-date checks.
+Consequently an R2 restore can remain incremental when its proof is valid and
+falls back to a full rebuild when it is not.
+
+The primary-provider circuit breaker is scoped to one universe refresh. Once a
+transport failure opens it, later symbols go directly to the configured
+fallback without another primary request or failure cooldown. The subsequent
+cross-source audit consumes the same open-circuit evidence and records the
+primary reference as unavailable instead of retrying the known failed route.
+Request intervals and bounded retries still apply to actual provider calls.
+
 ## Independent cross-check
 
 The optional `data.cross_check` block runs a bounded recent-session audit after

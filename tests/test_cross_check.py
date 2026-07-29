@@ -231,6 +231,47 @@ class CrossCheckTests(unittest.TestCase):
             self.assertEqual(result["symbols"][0]["reference_provider"], "eastmoney")
             self.assertEqual(requested, ["tencent", "eastmoney"])
 
+    def test_fallback_cross_check_reuses_refresh_circuit_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = load_config(_config(root))
+            staged = config.cache_dir / ".test-staged" / "510300.csv"
+            _write_primary(staged)
+            manifest = _manifest(staged)
+            file_entry = manifest["files"]["510300"]
+            file_entry["source"] = "tencent_network_fallback"
+            file_entry["source_provider"] = "tencent_newfqkline"
+            manifest["request_policy"] = {
+                "primary_provider_circuit_breaker": {
+                    "opened": True,
+                    "trigger_symbol": "510300",
+                    "reason": "Eastmoney transport unavailable",
+                }
+            }
+            install_snapshot(config.cache_dir, {"510300.csv": staged}, manifest)
+            requested: list[str] = []
+
+            def provider(name: str):
+                requested.append(name)
+                return _FakeProvider()
+
+            with patch(
+                "ai_trade.data.cross_check.provider_for",
+                side_effect=provider,
+            ), patch(
+                "ai_trade.data.cross_check.completed_session_cutoff",
+                return_value=date(2024, 1, 8),
+            ):
+                result = cross_check_market_snapshot(config, force=True)
+
+            self.assertEqual(requested, ["tencent"])
+            self.assertEqual(result["status"], "warning")
+            self.assertEqual(result["reason"], "reference_provider_unavailable")
+            item = result["symbols"][0]
+            self.assertEqual(item["status"], "reference_unavailable")
+            self.assertEqual(item["reason"], "reference_provider_circuit_open")
+            self.assertIn("already opened", item["error"])
+
     def test_provider_declared_field_subset_does_not_compare_estimated_amount(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

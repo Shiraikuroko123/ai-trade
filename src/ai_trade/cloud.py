@@ -1074,6 +1074,7 @@ def _safe_request_policy(config: AppConfig, value: object) -> dict[str, object]:
                 "request_jitter_seconds": 0.5,
                 "failure_cooldown_seconds": 20.0,
                 "max_attempts": 4,
+                "tencent_incremental_overlap_sessions": 20,
                 "retry_base_seconds": 1.0,
                 "retry_max_seconds": 8.0,
                 "retry_jitter_seconds": 0.5,
@@ -1108,6 +1109,28 @@ def _copy_safe_provider_metadata(
     ):
         value = raw.get(name)
         if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+            destination[name] = value
+    incremental_overlap = raw.get("incremental_overlap_sessions")
+    if (
+        isinstance(incremental_overlap, int)
+        and not isinstance(incremental_overlap, bool)
+        and 10 <= incremental_overlap <= 320
+    ):
+        destination["incremental_overlap_sessions"] = incremental_overlap
+    for name in (
+        "provider_coverage_start",
+        "provider_first_session",
+        "cached_seed_coverage_start",
+        "cached_seed_first_session",
+    ):
+        value = raw.get(name)
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            continue
+        if value == parsed.isoformat():
             destination[name] = value
     cached_seed_source = raw.get("cached_seed_source")
     if cached_seed_source in {

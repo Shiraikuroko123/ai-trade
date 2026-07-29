@@ -278,6 +278,75 @@ class CloudTests(unittest.TestCase):
             ["provider_error: RemoteDisconnected"],
         )
 
+    def test_snapshot_preserves_safe_tencent_incremental_provenance(self):
+        manifest_path = self.config.cache_dir / "manifest.json"
+        source = json.loads(manifest_path.read_text(encoding="utf-8"))
+        source["request_policy"] = {
+            "tencent_incremental_overlap_sessions": 20,
+        }
+        first = next(iter(source["files"].values()))
+        first.update(
+            {
+                "source_provider": "tencent_newfqkline",
+                "source_mode": "incremental",
+                "pages": 1,
+                "overlap_rows": 20,
+                "incremental_overlap_sessions": 20,
+                "provider_coverage_start": "2024-01-01",
+                "provider_first_session": "2024-01-02",
+                "cached_seed_coverage_start": "2024-01-01",
+                "cached_seed_first_session": "2024-01-02",
+            }
+        )
+        manifest_path.write_text(json.dumps(source), encoding="utf-8")
+
+        artifact = create_market_snapshot(self.config, self.root / "snapshot.zip")
+
+        with zipfile.ZipFile(artifact.path) as archive:
+            archived = json.loads(archive.read("data/cache/manifest.json"))
+        self.assertEqual(
+            archived["request_policy"]["tencent_incremental_overlap_sessions"],
+            20,
+        )
+        archived_first = next(iter(archived["files"].values()))
+        self.assertEqual(archived_first["incremental_overlap_sessions"], 20)
+        for name in (
+            "provider_coverage_start",
+            "provider_first_session",
+            "cached_seed_coverage_start",
+            "cached_seed_first_session",
+        ):
+            self.assertEqual(archived_first[name], first[name])
+
+    def test_snapshot_drops_noncanonical_incremental_provenance(self):
+        manifest_path = self.config.cache_dir / "manifest.json"
+        source = json.loads(manifest_path.read_text(encoding="utf-8"))
+        first = next(iter(source["files"].values()))
+        first.update(
+            {
+                "incremental_overlap_sessions": True,
+                "provider_coverage_start": "20240101",
+                "provider_first_session": "20240102",
+                "cached_seed_coverage_start": "20240101",
+                "cached_seed_first_session": "20240102",
+            }
+        )
+        manifest_path.write_text(json.dumps(source), encoding="utf-8")
+
+        artifact = create_market_snapshot(self.config, self.root / "snapshot.zip")
+
+        with zipfile.ZipFile(artifact.path) as archive:
+            archived = json.loads(archive.read("data/cache/manifest.json"))
+        archived_first = next(iter(archived["files"].values()))
+        for name in (
+            "incremental_overlap_sessions",
+            "provider_coverage_start",
+            "provider_first_session",
+            "cached_seed_coverage_start",
+            "cached_seed_first_session",
+        ):
+            self.assertNotIn(name, archived_first)
+
     def test_snapshot_rejects_manifest_date_that_disagrees_with_csv(self):
         manifest_path = self.config.cache_dir / "manifest.json"
         source = json.loads(manifest_path.read_text(encoding="utf-8"))
