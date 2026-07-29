@@ -13,12 +13,27 @@ ai-trade --config config/default.json model-list
 ai-trade --config config/default.json model-evaluate --model ridge_v1 --horizon 20
 ai-trade --config config/default.json model-evaluate --model factor_mean_v1 --factors momentum_120_5,volatility_60
 ai-trade --config config/default.json model-evaluate --model gbdt_v1 --horizon 20
+ai-trade --config config/default.json model-evaluate --model ridge_v1 --horizon 20 --step 1 --snapshot-input
 ai-trade --config config/default.json model-evaluations --limit 20
 ai-trade --config config/default.json model-show mdl_<32-lowercase-hex>
+ai-trade --config config/default.json feature-dataset-show fds_<32-lowercase-hex>
 ```
 
 `model-evaluate` opens the existing verified cache without refreshing any
 provider; the other commands never open market data.
+
+`--snapshot-input` switches to the common immutable FeatureSnapshot dataset
+boundary and never constructs or refreshes `MarketData`. The full ordered
+factor set must match the selected FeatureSnapshot revision; labels must bind
+the exact feature fingerprint and source symbols. An immutable dataset
+manifest under `state/feature_store/datasets/` records every FeatureSnapshot
+and LabelSnapshot id and is referenced by the model evaluation. Historical
+reconstruction, stale capture, changed universe/adjustment identity, and
+conflicting label revisions are rejected. Use `--feature-set-id fset_...` to
+pin a revision when more than one exists.
+Use `--step 1` for daily forward evidence; larger values deliberately
+downsample the available genuine snapshot dates and require a longer calendar
+history before the 24-date gate can pass.
 
 ## Registry contract
 
@@ -52,6 +67,12 @@ using only observations whose forward-return windows have fully completed
 dates and 48 training observations; earlier dates are reported as warm-up,
 never silently backfilled. Standardization statistics come from the training
 window only, and a constant training feature contributes zero.
+
+For snapshot input, the leakage guard uses the label's actual
+`target_session <= evaluation FeatureSnapshot session` and
+`realized_at <= evaluation knowledge_cutoff` relations. It does not infer
+maturity from file order or ordinary calendar days. Missing or pending labels
+are counted as skipped/warm-up evidence and cannot enter training.
 
 Out-of-sample Spearman rank IC is recorded per evaluated date, and every
 input factor is evaluated on exactly the same dates and symbols under the

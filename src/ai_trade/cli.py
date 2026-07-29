@@ -358,6 +358,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated forward horizons in sessions (ascending)",
     )
     factor_evaluate.add_argument("--step", type=int, default=5)
+    factor_evaluate.add_argument(
+        "--snapshot-input",
+        action="store_true",
+        help="Evaluate genuine local FeatureSnapshot/LabelSnapshot evidence only",
+    )
+    factor_evaluate.add_argument(
+        "--feature-set-id",
+        default=None,
+        help="Require one explicit immutable feature-set revision",
+    )
     factor_define = subparsers.add_parser(
         "factor-define",
         help=(
@@ -399,6 +409,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     model_evaluate.add_argument("--horizon", type=int, default=20)
     model_evaluate.add_argument("--step", type=int, default=5)
+    model_evaluate.add_argument(
+        "--snapshot-input",
+        action="store_true",
+        help="Evaluate genuine local FeatureSnapshot/LabelSnapshot evidence only",
+    )
+    model_evaluate.add_argument(
+        "--feature-set-id",
+        default=None,
+        help="Require one explicit immutable feature-set revision",
+    )
     model_evaluations = subparsers.add_parser(
         "model-evaluations",
         help="List owner-isolated model evaluation records",
@@ -482,6 +502,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     feature_show.add_argument("snapshot_id")
     feature_show.add_argument("--date", required=True, help="YYYY-MM-DD")
+    feature_dataset_show = subparsers.add_parser(
+        "feature-dataset-show",
+        help="Read one immutable snapshot-dataset manifest and its source ids",
+    )
+    feature_dataset_show.add_argument("dataset_id")
     feature_label = subparsers.add_parser(
         "feature-label",
         help="Materialize a separate mature LabelSnapshot for one feature snapshot",
@@ -1457,14 +1482,41 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "factor-evaluate":
-            market = MarketData(config, recover_snapshot=False)
-            result = FactorLabEngine(config).evaluate(
-                "local-owner",
-                market,
-                args.factor,
-                horizons=_parse_horizons(args.horizons),
-                step=args.step,
-            )
+            horizons = _parse_horizons(args.horizons)
+            engine = FactorLabEngine(config)
+            if args.snapshot_input:
+                from .feature_store import (
+                    FeatureSnapshotStore,
+                    LabelSnapshotStore,
+                    SnapshotDatasetStore,
+                    load_snapshot_dataset,
+                )
+
+                dataset = load_snapshot_dataset(
+                    FeatureSnapshotStore(config.feature_store_dir),
+                    LabelSnapshotStore(config.feature_store_dir),
+                    horizons=horizons,
+                    required_factor_ids=[args.factor],
+                    feature_set_id=args.feature_set_id,
+                    require_genuine_pit=True,
+                )
+                SnapshotDatasetStore(config.feature_store_dir).publish(dataset)
+                result = engine.evaluate_snapshots(
+                    "local-owner",
+                    dataset,
+                    args.factor,
+                    horizons=horizons,
+                    step=args.step,
+                )
+            else:
+                market = MarketData(config, recover_snapshot=False)
+                result = engine.evaluate(
+                    "local-owner",
+                    market,
+                    args.factor,
+                    horizons=horizons,
+                    step=args.step,
+                )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "factor-evaluations":
@@ -1490,20 +1542,48 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.command == "model-evaluate":
-            market = MarketData(config, recover_snapshot=False)
             factor_ids = (
                 None
                 if args.factors is None
                 else [part.strip() for part in str(args.factors).split(",") if part.strip()]
             )
-            result = ModelLabEngine(config).evaluate(
-                "local-owner",
-                market,
-                args.model,
-                factor_ids=factor_ids,
-                horizon=args.horizon,
-                step=args.step,
-            )
+            engine = ModelLabEngine(config)
+            if args.snapshot_input:
+                from .feature_store import (
+                    FeatureSnapshotStore,
+                    LabelSnapshotStore,
+                    SnapshotDatasetStore,
+                    load_snapshot_dataset,
+                )
+
+                dataset = load_snapshot_dataset(
+                    FeatureSnapshotStore(config.feature_store_dir),
+                    LabelSnapshotStore(config.feature_store_dir),
+                    horizons=(args.horizon,),
+                    required_factor_ids=factor_ids,
+                    exact_factor_set=factor_ids is not None,
+                    feature_set_id=args.feature_set_id,
+                    require_genuine_pit=True,
+                )
+                SnapshotDatasetStore(config.feature_store_dir).publish(dataset)
+                result = engine.evaluate_snapshots(
+                    "local-owner",
+                    dataset,
+                    args.model,
+                    factor_ids=factor_ids,
+                    horizon=args.horizon,
+                    step=args.step,
+                )
+            else:
+                market = MarketData(config, recover_snapshot=False)
+                result = engine.evaluate(
+                    "local-owner",
+                    market,
+                    args.model,
+                    factor_ids=factor_ids,
+                    horizon=args.horizon,
+                    step=args.step,
+                )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0
         if args.command == "model-evaluations":
@@ -1619,6 +1699,14 @@ def main(argv: list[str] | None = None) -> int:
                 config,
                 args.snapshot_id,
                 on_date=_required_cli_date(args.date, "--date"),
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 0
+        if args.command == "feature-dataset-show":
+            from .feature_store import SnapshotDatasetStore
+
+            result = SnapshotDatasetStore(config.feature_store_dir).get(
+                args.dataset_id
             )
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0

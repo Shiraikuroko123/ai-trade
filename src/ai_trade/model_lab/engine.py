@@ -9,6 +9,7 @@ from uuid import uuid4
 from .. import __version__
 from ..config import AppConfig
 from ..data.market import MarketData
+from ..feature_store.dataset import SnapshotDataset
 from ..numeric import sample_standard_deviation
 from ..research_statistics import (
     apply_holm_correction,
@@ -51,6 +52,19 @@ _PROTOCOL = {
         "A training observation requires feature_index + horizon <= "
         "evaluation_index; warm-up dates below the training minimums are "
         "reported, never silently backfilled"
+    ),
+}
+
+_SNAPSHOT_PROTOCOL = {
+    **_PROTOCOL,
+    "training": (
+        "Walk-forward refit at every evaluated FeatureSnapshot using only "
+        "earlier LabelSnapshots whose target session had completed"
+    ),
+    "leakage_guard": (
+        "A training label requires target_session <= the evaluated feature "
+        "session and realized_at <= its knowledge cutoff; historical "
+        "reconstructions and stale captures are rejected"
     ),
 }
 
@@ -111,9 +125,6 @@ class ModelLabEngine:
         last_index = len(calendar) - 1 - horizon
         sample_indexes = list(range(minimum_history, last_index + 1, step))
         observations: list[dict[str, Any]] = []
-        skipped = 0
-        cross_sections: list[int] = []
-        symbol_observations: dict[str, int] = {}
         for index in sample_indexes:
             on_date = calendar[index]
             target_date = calendar[index + horizon]
@@ -142,10 +153,136 @@ class ModelLabEngine:
                         (symbol, features, exit_bar.close / entry_bar.close - 1.0)
                     )
             if len(rows) < MINIMUM_CROSS_SECTION:
-                skipped += 1
                 continue
-            observations.append({"index": index, "date": on_date, "rows": rows})
+            observations.append(
+                {
+                    "date": on_date,
+                    "target_date": target_date,
+                    "knowledge_cutoff": None,
+                    "realized_at": None,
+                    "rows": rows,
+                }
+            )
 
+        return self._evaluate_observations(
+            owner,
+            model=model,
+            factors=factors,
+            observations=observations,
+            horizon=horizon,
+            step=step,
+            calendar=calendar,
+            sampled_dates=len(sample_indexes),
+            snapshot_fingerprint=snapshot_fingerprint,
+            evidence_snapshot={
+                "snapshot_id": "market_" + snapshot_fingerprint[:32],
+                "kind": "market_cache",
+                "as_of": as_of,
+                "provider": str(metadata_before.get("provider") or "local-cache"),
+                "fingerprint": snapshot_fingerprint,
+            },
+            protocol=_PROTOCOL,
+            market=market,
+        )
+
+    def evaluate_snapshots(
+        self,
+        owner: str,
+        dataset: SnapshotDataset,
+        model_id: str,
+        *,
+        factor_ids: Sequence[str] | None = None,
+        horizon: int = DEFAULT_HORIZON,
+        step: int = DEFAULT_STEP,
+    ) -> dict[str, Any]:
+        """Walk forward only over genuine FeatureSnapshot/LabelSnapshot rows."""
+
+        model = model_definition(model_id)
+        if isinstance(horizon, bool) or not isinstance(horizon, int) or not 1 <= horizon <= 250:
+            raise ValueError("Model evaluation horizon must be between 1 and 250")
+        if isinstance(step, bool) or not isinstance(step, int) or not 1 <= step <= 21:
+            raise ValueError("Model evaluation step must be between 1 and 21")
+        _validate_snapshot_context(self.config, dataset)
+        if horizon not in dataset.horizons:
+            raise ValueError("Snapshot dataset does not contain the requested horizon")
+        selected_ids = tuple(factor_ids) if factor_ids is not None else dataset.factor_ids
+        if selected_ids != dataset.factor_ids:
+            raise ValueError(
+                "Model snapshot evaluation requires the dataset's full ordered factor set"
+            )
+        factors = _selected_factors(self.config, owner, selected_ids)
+        for definition, snapshot_factor in zip(factors, dataset.factors):
+            if definition.to_dict() != snapshot_factor.to_dict():
+                raise ValueError(
+                    "Snapshot dataset factor definition differs from the registry"
+                )
+
+        start = date.fromisoformat(str(self.config.raw["backtest"]["start"]))
+        end = date.fromisoformat(str(self.config.raw["backtest"]["end"]))
+        calendar = [day for day in dataset.sessions if start <= day <= end]
+        if not calendar:
+            raise RuntimeError("Model snapshot evaluation has no sessions in range")
+        sampled_sessions = calendar[::step]
+        observations: list[dict[str, Any]] = []
+        for on_date in sampled_sessions:
+            observation = dataset.observation(on_date, horizon)
+            if observation is None:
+                continue
+            rows: list[tuple[str, list[float], float]] = []
+            for row in observation.rows:
+                if row.forward_return is None or any(
+                    value is None for value in row.values
+                ):
+                    continue
+                rows.append(
+                    (
+                        row.symbol,
+                        [float(value) for value in row.values if value is not None],
+                        row.forward_return,
+                    )
+                )
+            if len(rows) < MINIMUM_CROSS_SECTION:
+                continue
+            observations.append(
+                {
+                    "date": on_date,
+                    "target_date": observation.target_session,
+                    "knowledge_cutoff": observation.knowledge_cutoff,
+                    "realized_at": observation.realized_at,
+                    "rows": rows,
+                }
+            )
+        return self._evaluate_observations(
+            owner,
+            model=model,
+            factors=factors,
+            observations=observations,
+            horizon=horizon,
+            step=step,
+            calendar=calendar,
+            sampled_dates=len(sampled_sessions),
+            snapshot_fingerprint=dataset.fingerprint,
+            evidence_snapshot=dataset.evidence(),
+            protocol=_SNAPSHOT_PROTOCOL,
+            market=None,
+        )
+
+    def _evaluate_observations(
+        self,
+        owner: str,
+        *,
+        model: Any,
+        factors: Sequence[Any],
+        observations: list[dict[str, Any]],
+        horizon: int,
+        step: int,
+        calendar: Sequence[date],
+        sampled_dates: int,
+        snapshot_fingerprint: str,
+        evidence_snapshot: Mapping[str, Any],
+        protocol: Mapping[str, str],
+        market: MarketData | None,
+    ) -> dict[str, Any]:
         evaluated = 0
         warmup = 0
         model_ics: list[float] = []
@@ -154,6 +291,8 @@ class ModelLabEngine:
             item.factor_id: [] for item in factors
         }
         coefficient_history: list[list[float]] = []
+        cross_sections: list[int] = []
+        symbol_observations: dict[str, int] = {}
         final_train_observations = 0
         predictor = None
         fit_means: list[float] = []
@@ -164,11 +303,20 @@ class ModelLabEngine:
             train_rows: list[tuple[list[float], float]] = []
             train_dates = 0
             for earlier in observations[:position]:
-                if earlier["index"] + horizon <= observation["index"]:
-                    train_dates += 1
-                    date_mean = statistics.fmean(
-                        row[2] for row in earlier["rows"]
+                realized_at = earlier.get("realized_at")
+                knowledge_cutoff = observation.get("knowledge_cutoff")
+                if (
+                    earlier["target_date"] <= observation["date"]
+                    and (
+                        realized_at is None
+                        or (
+                            knowledge_cutoff is not None
+                            and realized_at <= knowledge_cutoff
+                        )
                     )
+                ):
+                    train_dates += 1
+                    date_mean = statistics.fmean(row[2] for row in earlier["rows"])
                     for _symbol, features, forward in earlier["rows"]:
                         train_rows.append((features, forward - date_mean))
             if (
@@ -196,46 +344,38 @@ class ModelLabEngine:
                 realized.append(forward)
             ic = _spearman(predictions, realized)
             if ic is None:
-                skipped += 1
                 continue
             spread = _half_spread(list(zip(predictions, realized)))
             if spread is None:
-                skipped += 1
                 continue
-            usable = True
             date_factor_ics: dict[str, float] = {}
             for column, definition in enumerate(factors):
-                factor_values = [
-                    row[1][column] for row in observation["rows"]
-                ]
+                factor_values = [row[1][column] for row in observation["rows"]]
                 factor_ic = _spearman(factor_values, realized)
                 if factor_ic is None:
-                    usable = False
                     break
                 date_factor_ics[definition.factor_id] = factor_ic
-            if not usable:
-                skipped += 1
-                continue
-            evaluated += 1
-            model_ics.append(ic)
-            model_spreads.append(spread)
-            for factor_id, factor_ic in date_factor_ics.items():
-                factor_ics[factor_id].append(factor_ic)
-            cross_sections.append(len(observation["rows"]))
-            for symbol, _features, _forward in observation["rows"]:
-                symbol_observations[symbol] = (
-                    symbol_observations.get(symbol, 0) + 1
-                )
+            else:
+                evaluated += 1
+                model_ics.append(ic)
+                model_spreads.append(spread)
+                for factor_id, factor_ic in date_factor_ics.items():
+                    factor_ics[factor_id].append(factor_ic)
+                cross_sections.append(len(observation["rows"]))
+                for symbol, _features, _forward in observation["rows"]:
+                    symbol_observations[symbol] = (
+                        symbol_observations.get(symbol, 0) + 1
+                    )
 
         if evaluated < MINIMUM_EVALUATED_DATES:
             raise RuntimeError(
                 "Model evaluation produced fewer than "
                 f"{MINIMUM_EVALUATED_DATES} out-of-sample dates"
             )
-
-        metadata_after = _metadata(market)
-        if json_fingerprint(metadata_after) != snapshot_fingerprint:
-            raise RuntimeError("Market snapshot changed during model evaluation")
+        if market is not None:
+            metadata_after = _metadata(market)
+            if json_fingerprint(metadata_after) != snapshot_fingerprint:
+                raise RuntimeError("Market snapshot changed during model evaluation")
 
         mean_ic = statistics.fmean(model_ics)
         ic_std = (
@@ -270,9 +410,7 @@ class ModelLabEngine:
             )
         best_factor_id = max(adjusted, key=lambda key: adjusted[key])
         best_value = adjusted[best_factor_id]
-        block_size = min(
-            len(model_ics), max(1, math.ceil(horizon / step))
-        )
+        block_size = min(len(model_ics), max(1, math.ceil(horizon / step)))
         raw_validations = [
             moving_block_bootstrap_mean(
                 model_ics,
@@ -298,10 +436,7 @@ class ModelLabEngine:
                 )
             ]
             comparison_rows.append(
-                {
-                    "factor_id": factor_id,
-                    "mean_delta": statistics.fmean(deltas),
-                }
+                {"factor_id": factor_id, "mean_delta": statistics.fmean(deltas)}
             )
             raw_validations.append(
                 moving_block_bootstrap_mean(
@@ -320,9 +455,7 @@ class ModelLabEngine:
                 )
             )
         corrected_validations = apply_holm_correction(raw_validations)
-        for row, validation in zip(
-            comparison_rows, corrected_validations[1:]
-        ):
+        for row, validation in zip(comparison_rows, corrected_validations[1:]):
             row["validation"] = validation
         statistical_validation = {
             "model_ic": corrected_validations[0],
@@ -380,17 +513,9 @@ class ModelLabEngine:
                 "model": model.to_dict(),
                 "factors": factor_bindings,
                 "parameters": parameters,
-                "protocol": dict(_PROTOCOL),
+                "protocol": dict(protocol),
                 "evidence": {
-                    "snapshot": {
-                        "snapshot_id": "market_" + snapshot_fingerprint[:32],
-                        "kind": "market_cache",
-                        "as_of": as_of,
-                        "provider": str(
-                            metadata_before.get("provider") or "local-cache"
-                        ),
-                        "fingerprint": snapshot_fingerprint,
-                    },
+                    "snapshot": dict(evidence_snapshot),
                     "universe": {
                         "name": self.config.universe_name,
                         "security_master_sha256": (
@@ -401,10 +526,10 @@ class ModelLabEngine:
                 },
                 "coverage": {
                     "calendar_sessions": len(calendar),
-                    "sampled_dates": len(sample_indexes),
+                    "sampled_dates": sampled_dates,
                     "evaluated_dates": evaluated,
                     "warmup_dates": warmup,
-                    "skipped_dates": len(sample_indexes) - evaluated - warmup,
+                    "skipped_dates": sampled_dates - evaluated - warmup,
                     "average_cross_section": (
                         statistics.fmean(cross_sections) if cross_sections else 0.0
                     ),
@@ -481,6 +606,20 @@ def _selected_factors(config, owner: str, factor_ids: Sequence[str] | None):
     return tuple(
         resolve_factor(config, owner, str(item)) for item in factor_ids
     )
+
+
+def _validate_snapshot_context(config: AppConfig, dataset: SnapshotDataset) -> None:
+    if not dataset.genuine_pit_required:
+        raise ValueError("Model Lab requires a genuine PIT snapshot dataset")
+    if (
+        dataset.universe_name != config.universe_name
+        or dataset.minimum_listing_days != config.minimum_listing_days
+        or dataset.security_master_sha256 != config.security_master.fingerprint()
+    ):
+        raise ValueError("Snapshot dataset does not match the configured universe")
+    adjustment = str(config.raw["data"].get("adjustment") or "none")
+    if dataset.adjustment != adjustment:
+        raise ValueError("Snapshot dataset does not match the configured adjustment")
 
 
 def _fit_model(

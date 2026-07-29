@@ -58,6 +58,23 @@ Set-Location .\ai-trade
 
 只有特征日、缓存最新共同会话和运行时已完成会话截止日三者一致，记录才属于 genuine PIT。晚几天再为旧日期补做的快照即使数值相同，也不能进入部署训练。不要用 `--historical-reconstruction` 冒充未来积累证据。
 
+## 用前向快照评估 Factor/Model Lab
+
+标签成熟后，可以显式切换到统一快照输入；这两条命令不构造 `MarketData`，也不联网刷新行情：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli factor-evaluate --factor momentum_120_5 --horizons 20 --step 1 --snapshot-input
+.\.venv\Scripts\python.exe -m ai_trade.cli model-evaluate --model ridge_v1 --horizon 20 --step 1 --snapshot-input
+```
+
+系统只选择同一个有序 `feature_set_id` 下的 genuine FeatureSnapshot，并校验标签指纹、证券列表、复权口径、证券主数据和真实 `target_session`。参与计算的全部 Feature/Label ID 会保存到 `state/feature_store/datasets/fds_....json`；从评估输出取得 `evidence.snapshot.snapshot_id` 后可查看：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-dataset-show fds_<32位小写十六进制>
+```
+
+需要固定版本时增加 `--feature-set-id fset_...`。当前至少需要 24 个有效样本外日期；20 日标签还要先等待 20 个交易会话成熟，因此最初约 44 个连续交易会话内失败关闭是正确结果，不能改用历史重建补齐。
+
 ## Windows 每日自动任务
 
 源码安装用户可以注册每天本地时间 18:00 运行的独立任务：

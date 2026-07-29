@@ -15,14 +15,27 @@ ai-trade --config config/default.json factor-define --name gap_rev --expression 
 ai-trade --config config/default.json factor-evaluate --factor momentum_120_5
 ai-trade --config config/default.json factor-evaluate --factor gap_rev
 ai-trade --config config/default.json factor-evaluate --factor volatility_60 --horizons 5,20,60 --step 5
+ai-trade --config config/default.json factor-evaluate --factor volatility_60 --horizons 20 --step 1 --snapshot-input
 ai-trade --config config/default.json factor-evaluations --limit 20
 ai-trade --config config/default.json factor-show eval_<32-lowercase-hex>
+ai-trade --config config/default.json feature-dataset-show fds_<32-lowercase-hex>
 ```
 
 `factor-evaluate` opens the existing verified cache without refreshing any
 provider. The configured cache must already exist and pass `MarketData`
 validation; `factor-list`, `factor-evaluations`, and `factor-show` never open
 market data at all.
+
+With `--snapshot-input`, evaluation does not construct `MarketData` at all.
+It selects one ordered feature-set revision from genuine point-in-time
+FeatureSnapshots, joins only fingerprint-bound mature LabelSnapshots, and
+persists an immutable `fds_...` manifest containing every source snapshot id.
+Historical reconstruction, stale capture, changed adjustment/security-master
+identity, mismatched symbols, and conflicting label revisions fail closed.
+`--feature-set-id fset_...` can pin the revision explicitly. Fewer than 24
+valid forward dates remains an error; the engine never backfills from the
+historical cache. Daily forward evidence should use `--step 1`; a larger step
+deliberately samples only every nth available genuine snapshot.
 
 ## Registry contract
 
@@ -95,7 +108,7 @@ over three points.
 Evaluations are create-once JSON files under
 `state/factor_lab/users/<owner-sha256>/evaluations/`, capped at 256 KiB per
 record, 500 records per owner, and 50 per factor. Every record binds the
-market snapshot fingerprint, universe name, security-master fingerprint, and a
+market-cache or snapshot-dataset fingerprint, universe name, security-master fingerprint, and a
 configuration-context fingerprint, and carries a deterministic evaluation
 fingerprint over factor definition, parameters, snapshot, and engine versions:
 repeating the same evaluation returns the stored record as `reused` instead of

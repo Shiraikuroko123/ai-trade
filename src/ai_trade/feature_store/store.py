@@ -113,6 +113,11 @@ class FeatureSnapshotStore:
                 )
         return None
 
+    def list_for_session(self, on_date: date) -> list[dict[str, Any]]:
+        """Read every verified immutable revision for one completed session."""
+
+        return [self._read(path) for path in self._session_paths(on_date)]
+
     def sessions(self) -> list[date]:
         root = self.snapshots_root
         if not root.exists():

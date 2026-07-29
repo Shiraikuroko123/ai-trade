@@ -87,6 +87,8 @@ def moving_block_bootstrap_mean(
     )
     p_value = (null_exceedances + 1.0) / (resamples + 1.0)
     period_means = _subperiod_means(series, subperiods)
+    low_quantile = _quantile(ordered, tail)
+    high_quantile = _quantile(ordered, 1.0 - tail)
 
     return {
         "method": "circular_moving_block_bootstrap",
@@ -98,8 +100,9 @@ def moving_block_bootstrap_mean(
         "confidence_level": float(confidence_level),
         "effect_size": estimate,
         "standard_error": standard_error,
-        "ci_low": _quantile(ordered, tail),
-        "ci_high": _quantile(ordered, 1.0 - tail),
+        # Interpolation can reverse nearly identical bounds by one ULP.
+        "ci_low": min(low_quantile, high_quantile),
+        "ci_high": max(low_quantile, high_quantile),
         "p_value": p_value,
         "subperiods": subperiods,
         "subperiod_means": period_means,

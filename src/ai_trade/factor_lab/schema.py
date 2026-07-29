@@ -205,7 +205,7 @@ def validate_evaluation(value: Mapping[str, Any]) -> None:
     evidence = _object(value.get("evidence"), _EVIDENCE_FIELDS, "evidence")
     snapshot = _object(evidence.get("snapshot"), _SNAPSHOT_FIELDS, "snapshot")
     _identifier(snapshot.get("snapshot_id"), _EVIDENCE_ID, "snapshot_id")
-    if snapshot.get("kind") != "market_cache":
+    if snapshot.get("kind") not in {"market_cache", "feature_snapshot_dataset"}:
         raise ValueError("Factor evaluation snapshot kind is invalid")
     _iso_date(snapshot.get("as_of"), "snapshot.as_of")
     _text(snapshot.get("provider"), "snapshot.provider", 120)

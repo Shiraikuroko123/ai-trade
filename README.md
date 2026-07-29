@@ -53,13 +53,13 @@
 
 Factor/Model evaluation v2 还会用证据绑定的确定性种子执行 999 次 circular moving-block bootstrap，保存 95% CI、单侧 p 值和三段时间稳定性，并分别在因子 horizon 家族、模型 IC 与逐输入因子差值家族内执行 Holm FWER 校正。旧 v1 记录保持只读兼容；从模型证据派生假设时，模型 IC 及其相对最佳单因子的增量都必须在校正后通过、CI 下界为正且三个子期间方向一致。Hypothesis runner 对预注册业务阈值的命中/反证判断仍不是 p 值检验，不能把两类结论混写。
 
-当前 `main` 还加入了第一版研究证据链：不可变 `FeatureSnapshot` 与独立 `LabelSnapshot` 按日期创建后不覆盖，记录知识截止、历史重建标记、逐证券输入指纹、缺失原因和证券池排除原因；训练配对只接纳在训练截止前已经成熟的标签。CLI 默认只对最新共同完成会话做真实 capture；历史日期必须显式声明 reconstruction，且这类重建证据不能训练 artifact。统计门禁合格的 v2 模型评估可以物化为包含标准化状态和完整系数的线性 `ModelArtifact`，在严格样本外特征快照上生成持久化 `PredictionSnapshot`；预测必须从特征日后的已知第一交易会话生效，结束日不能超过模型 horizon，日历证据不足时失败关闭而不把普通工作日猜成交易日。确定性的 long-only 组合构造器再把预测、不确定性、当前权重、费用表、行情 manifest/输入指纹和现金/单标的/资产/板块/波动/换手/容量约束绑定成不可变 `PortfolioPlan`，且决策时间不能早于预测生成时间；预期 alpha 不能覆盖费用时允许零交易。显式 CLI 已提供特征构建/读取、独立标签、artifact 拟合、样本外预测和组合计划入口；当前 artifact 只支持 Ridge 与因子均值，不支持 GBDT 树持久化，Factor/Model 评估本身也尚未统一改为消费物化特征仓。这条链仍未接入事件回测、Strategy Lab、模拟账户或订单生成。
+当前 `main` 还加入了第一版研究证据链：不可变 `FeatureSnapshot` 与独立 `LabelSnapshot` 按日期创建后不覆盖，记录知识截止、历史重建标记、逐证券输入指纹、缺失原因和证券池排除原因；训练配对只接纳在训练截止前已经成熟的标签。CLI 默认只对最新共同完成会话做真实 capture；历史日期必须显式声明 reconstruction，且这类重建证据不能训练 artifact。Factor/Model Lab 已可通过显式 `--snapshot-input` 统一消费真实前向积累的快照数据集；数据集要求一个完全一致的有序特征集，拒绝历史重建、过期捕获、复权/证券主数据变化、标签错绑和冲突修订，并把全部 Feature/Label 来源 ID 固化到 `state/feature_store/datasets/` 下的不可变 manifest。模型训练按标签真实 `target_session` 与 `realized_at` 判断是否已在当时知识截止前成熟，不根据文件顺序猜测。统计门禁合格的 v2 模型评估可以物化为包含标准化状态和完整系数的线性 `ModelArtifact`，在严格样本外特征快照上生成持久化 `PredictionSnapshot`；预测必须从特征日后的已知第一交易会话生效，结束日不能超过模型 horizon，日历证据不足时失败关闭而不把普通工作日猜成交易日。确定性的 long-only 组合构造器再把预测、不确定性、当前权重、费用表、行情 manifest/输入指纹和现金/单标的/资产/板块/波动/换手/容量约束绑定成不可变 `PortfolioPlan`，且决策时间不能早于预测生成时间；预期 alpha 不能覆盖费用时允许零交易。当前 artifact 只支持 Ridge 与因子均值，不支持 GBDT 树持久化；这条链仍未接入事件回测、Strategy Lab、模拟账户或订单生成。
 
 ShadowAccount 也新增了与旧成交 CSV 复盘隔离的实验性事件账本：可从期初现金、存取款、成交、费用调整、持仓调整、公司行动、行情标记和账户快照重建现金、持仓、成本与权益，并对独立券商现金/持仓快照做差异检查。CLI 提供事件追加、账户投影和 JSON 快照差异检查；事件使用定点十进制字符串、幂等外部 ID 和追加式哈希链，篡改、冲突 ID、超卖或负现金会失败关闭。对账前还会重验投影的完整 schema、现金/持仓/权益守恒和投影指纹，并用同一事件 schema 规范化券商证券代码与定点十进制数量。它尚未迁移旧成交账本、接入适配器或形成连续 sandbox 证据，记录固定声明 `qualifying_broker_sandbox_evidence=false`、`execution_enabled=false`。
 
 “自我迭代”只表示自动提出和验证研究动作，不表示自动批准。初版 `ResearchLoopEngine` 可以重放一个有界 JSON 计划，也可以让已配置的大模型在现有调用预算、缓存、并发和不可变审计边界内逐轮选择下一步。它只允许定义/评估受限因子、评估注册模型、从本循环模型证据派生假设、执行本循环假设或停止；每项工具有固定成本，预算在调用前检查，重复提案会被拒绝，失败和负结果继续写入按用户隔离的追加式哈希链。模型评估和假设 ID 必须由同一循环产生，不能引用外部记录绕过门禁。
 
-这仍是范围很窄的研究编排内核：Factor/Model Lab 尚未统一消费物化特征仓，预测尚未进入事件回测和活动模拟策略，也没有跨循环候选选择偏差校正或真实未来期自动研究证据。循环安全契约固定禁止候选物化、批准、激活、调整券商配置、降低验证门槛和交易。任何候选进入 Champion、活动模拟策略或更高权限前仍须在循环之外由人工复核和明确批准；`v1.0.0` 不包含上述未发布研究运行时代码。
+这仍是范围很窄的研究编排内核：真实前向快照输入已经贯通 Factor/Model Lab，但预测尚未进入事件回测和活动模拟策略，也没有跨循环候选选择偏差校正或足量真实未来期研究证据。循环安全契约固定禁止候选物化、批准、激活、调整券商配置、降低验证门槛和交易。任何候选进入 Champion、活动模拟策略或更高权限前仍须在循环之外由人工复核和明确批准；`v1.0.0` 不包含上述未发布研究运行时代码。
 
 在已有已校验缓存上可运行以下 `main` 研究命令；它们不会隐式下载数据：
 
@@ -67,6 +67,9 @@ ShadowAccount 也新增了与旧成交 CSV 复盘隔离的实验性事件账本�
 .\.venv\Scripts\python.exe -m ai_trade.cli factor-list
 .\.venv\Scripts\python.exe -m ai_trade.cli factor-evaluate --factor momentum_120_5
 .\.venv\Scripts\python.exe -m ai_trade.cli model-evaluate --model ridge_v1 --horizon 20
+.\.venv\Scripts\python.exe -m ai_trade.cli factor-evaluate --factor momentum_120_5 --horizons 20 --step 1 --snapshot-input
+.\.venv\Scripts\python.exe -m ai_trade.cli model-evaluate --model ridge_v1 --horizon 20 --step 1 --snapshot-input
+.\.venv\Scripts\python.exe -m ai_trade.cli feature-dataset-show <snapshot-dataset-id>
 .\.venv\Scripts\python.exe -m ai_trade.cli parameter-sweep --objective sharpe
 .\.venv\Scripts\python.exe -m ai_trade.cli nested-walk-forward --objective sharpe
 .\.venv\Scripts\python.exe -m ai_trade.cli hypothesis-generate --objective balanced
@@ -96,7 +99,7 @@ ShadowAccount 也新增了与旧成交 CSV 复盘隔离的实验性事件账本�
 .\.venv\Scripts\python.exe -m ai_trade.cli shadow-reconcile --help
 ```
 
-`feature-forward-run` 不联网刷新行情。推荐在每个收盘会话依次执行 `download --force` 和 `feature-forward-run`；只有特征日、缓存最新共同会话与当时的已完成会话截止日三者相等，快照才算 genuine PIT，缓存滞后时命令会失败关闭。相同输入的重复运行会复用同一个快照，并只为已经历完整 5/20/60 个交易会话的 genuine 快照补标签。`feature-build` 默认也是 live capture，只接受最新共同完成会话；`--factors` 应与目标模型评估的因子集合及顺序完全一致。Feature/Label 快照从活动 manifest 的逐文件路由推导真实供数者：全部回退时记录 `tencent`，混合供数时记录稳定的 `mixed:...`，不能识别实际来源时拒绝物化证据，不会把配置首选的 `eastmoney` 冒充实际来源。`--historical-reconstruction` 只用于研究回放，artifact 拟合会排除它。`model-artifact-fit` 还会先执行统计部署门禁；当前 47 标的三个模型都不合格，因此用现有三个 evaluation ID 调用会按设计拒绝，而不是生成预测或组合。`portfolio-plan` 接受的是显式权益与可选当前权重 JSON，不会读取或改写活动模拟账户，并把用于流动性/波动元数据的行情 manifest 与逐证券输入指纹固化进计划。Shadow 命令也只写隔离的影子证据账本；对账 JSON 只接受 `cash` 和 `positions`，不能由调用者放宽现金容差，不构成券商 sandbox 晋级或执行授权。
+`feature-forward-run` 不联网刷新行情。推荐在每个收盘会话依次执行 `download --force` 和 `feature-forward-run`；只有特征日、缓存最新共同会话与当时的已完成会话截止日三者相等，快照才算 genuine PIT，缓存滞后时命令会失败关闭。相同输入的重复运行会复用同一个快照，并只为已经历完整 5/20/60 个交易会话的 genuine 快照补标签。`feature-build` 默认也是 live capture，只接受最新共同完成会话；`--factors` 应与目标模型评估的因子集合及顺序完全一致。Feature/Label 快照从活动 manifest 的逐文件路由推导真实供数者：全部回退时记录 `tencent`，混合供数时记录稳定的 `mixed:...`，不能识别实际来源时拒绝物化证据，不会把配置首选的 `eastmoney` 冒充实际来源。`--historical-reconstruction` 只用于研究回放，artifact 拟合和 `--snapshot-input` 评估都会排除它。快照评估不会构造 `MarketData` 或刷新提供商；它先创建 `fds_...` manifest，再把该 ID 写入 Factor/Model evaluation，可用 `feature-dataset-show` 查看精确来源。当前本机前向仓只有 3 个合格会话且没有成熟标签，尚未达到至少 24 个样本外日期的门槛，运行快照模型评估应按设计失败关闭。`model-artifact-fit` 还会先执行统计部署门禁；当前 47 标的三个模型都不合格，因此用现有三个 evaluation ID 调用会按设计拒绝，而不是生成预测或组合。`portfolio-plan` 接受的是显式权益与可选当前权重 JSON，不会读取或改写活动模拟账户，并把用于流动性/波动元数据的行情 manifest 与逐证券输入指纹固化进计划。Shadow 命令也只写隔离的影子证据账本；对账 JSON 只接受 `cash` 和 `positions`，不能由调用者放宽现金容差，不构成券商 sandbox 晋级或执行授权。
 
 ## 快速开始
 

@@ -5,6 +5,14 @@ AI Trade follows semantic versioning. `v1.0.0` is the current public release;
 
 ## Unreleased
 
+- Added a common immutable FeatureSnapshot dataset boundary for Factor Lab and
+  Model Lab. Explicit `--snapshot-input` evaluations reject historical
+  reconstruction, stale captures, changed feature/universe/adjustment
+  identities, mismatched labels, and conflicting revisions; model walk-forward
+  training now checks each label's actual target session. Every selected
+  FeatureSnapshot and LabelSnapshot id is preserved in a self-validating
+  `fds_...` manifest readable through `feature-dataset-show`. This path never
+  constructs `MarketData` or refreshes a provider and remains `research_only`.
 - Reduced the resilient daily market-refresh request plan without weakening
   cache verification. Tencent fallback now rechecks 20 overlapping sessions
   instead of a fixed 320-session tail, while retaining the complete verified

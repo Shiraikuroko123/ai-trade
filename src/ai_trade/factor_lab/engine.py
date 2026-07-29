@@ -9,6 +9,7 @@ from uuid import uuid4
 from .. import __version__
 from ..config import AppConfig
 from ..data.market import MarketData
+from ..feature_store.dataset import SnapshotDataset
 from ..numeric import sample_standard_deviation
 from ..research_statistics import (
     apply_holm_correction,
@@ -291,6 +292,191 @@ class FactorLabEngine:
         )
         return self.store.publish(owner, record)
 
+    def evaluate_snapshots(
+        self,
+        owner: str,
+        dataset: SnapshotDataset,
+        factor_id: str,
+        *,
+        horizons: tuple[int, ...] | list[int] = DEFAULT_HORIZONS,
+        step: int = DEFAULT_STEP,
+    ) -> dict[str, Any]:
+        """Evaluate already materialized PIT features and realized labels."""
+
+        definition = resolve_factor(self.config, owner, factor_id)
+        horizons = _validated_horizons(horizons)
+        if isinstance(step, bool) or not isinstance(step, int) or not 1 <= step <= 21:
+            raise ValueError("Factor evaluation step must be between 1 and 21")
+        _validate_snapshot_context(self.config, dataset)
+        column = dataset.factor_index(factor_id)
+        if dataset.factors[column].to_dict() != definition.to_dict():
+            raise ValueError(
+                "Snapshot dataset factor definition differs from the registered factor"
+            )
+        if any(horizon not in dataset.horizons for horizon in horizons):
+            raise ValueError("Snapshot dataset does not contain every requested horizon")
+
+        start = date.fromisoformat(str(self.config.raw["backtest"]["start"]))
+        end = date.fromisoformat(str(self.config.raw["backtest"]["end"]))
+        calendar = [day for day in dataset.sessions if start <= day <= end]
+        if not calendar:
+            raise RuntimeError("Factor snapshot evaluation has no sessions in range")
+        sampled_sessions = calendar[::step]
+        evaluated = 0
+        skipped = 0
+        cross_sections: list[int] = []
+        symbol_observations: dict[str, int] = {}
+        per_horizon: dict[int, dict[str, list[float]]] = {
+            horizon: {"ic": [], "spread": []} for horizon in horizons
+        }
+
+        for on_date in sampled_sessions:
+            date_used = False
+            for horizon in horizons:
+                observation = dataset.observation(on_date, horizon)
+                if observation is None:
+                    continue
+                pairs: list[tuple[float, float]] = []
+                observed_symbols: list[str] = []
+                for row in observation.rows:
+                    value = row.values[column]
+                    if value is None or row.forward_return is None:
+                        continue
+                    pairs.append((value, row.forward_return))
+                    observed_symbols.append(row.symbol)
+                if len(pairs) < MINIMUM_CROSS_SECTION:
+                    continue
+                ic = _spearman(
+                    [item[0] for item in pairs], [item[1] for item in pairs]
+                )
+                spread = _half_spread(pairs)
+                if ic is None or spread is None:
+                    continue
+                per_horizon[horizon]["ic"].append(ic)
+                per_horizon[horizon]["spread"].append(spread)
+                if not date_used:
+                    date_used = True
+                    cross_sections.append(len(pairs))
+                    for symbol in observed_symbols:
+                        symbol_observations[symbol] = (
+                            symbol_observations.get(symbol, 0) + 1
+                        )
+            if date_used:
+                evaluated += 1
+            else:
+                skipped += 1
+
+        if evaluated < MINIMUM_EVALUATED_DATES:
+            raise RuntimeError(
+                "Factor snapshot evaluation produced fewer than "
+                f"{MINIMUM_EVALUATED_DATES} valid cross-section dates"
+            )
+
+        results: list[dict[str, Any]] = []
+        validations: list[dict[str, Any]] = []
+        for horizon in horizons:
+            ics = per_horizon[horizon]["ic"]
+            spreads = per_horizon[horizon]["spread"]
+            if len(ics) < MINIMUM_EVALUATED_DATES:
+                raise RuntimeError(
+                    f"Factor snapshot evaluation horizon {horizon} has too few valid dates"
+                )
+            mean_ic = statistics.fmean(ics)
+            ic_std = sample_standard_deviation(ics) if len(ics) > 1 else 0.0
+            mean_spread = statistics.fmean(spreads)
+            spread_std = (
+                sample_standard_deviation(spreads) if len(spreads) > 1 else 0.0
+            )
+            results.append(
+                {
+                    "horizon": horizon,
+                    "dates": len(ics),
+                    "mean_ic": mean_ic,
+                    "ic_std": ic_std,
+                    "ic_ir": (mean_ic / ic_std) if ic_std > 0 else 0.0,
+                    "positive_share": sum(value > 0 for value in ics) / len(ics),
+                    "direction_hit_rate": (
+                        sum(value * definition.direction > 0 for value in ics)
+                        / len(ics)
+                    ),
+                    "mean_spread": mean_spread,
+                    "spread_std": spread_std,
+                    "direction_adjusted_mean_spread": (
+                        mean_spread * definition.direction
+                    ),
+                }
+            )
+            validations.append(
+                moving_block_bootstrap_mean(
+                    [value * definition.direction for value in ics],
+                    block_size=min(len(ics), max(1, math.ceil(horizon / step))),
+                    seed=deterministic_seed(
+                        "factor-ic",
+                        dataset.fingerprint,
+                        definition.factor_id,
+                        horizon,
+                        step,
+                        SCHEMA_VERSION,
+                        ENGINE_VERSION,
+                    ),
+                )
+            )
+        for result, validation in zip(results, apply_holm_correction(validations)):
+            result["statistical_validation"] = validation
+
+        context_fingerprint = self._context_fingerprint()
+        parameters = {
+            "start": calendar[0].isoformat(),
+            "end": calendar[-1].isoformat(),
+            "step": step,
+            "horizons": list(horizons),
+            "minimum_cross_section": MINIMUM_CROSS_SECTION,
+        }
+        evaluation_fingerprint = json_fingerprint(
+            {
+                "factor": definition.to_dict(),
+                "parameters": parameters,
+                "snapshot_fingerprint": dataset.fingerprint,
+                "config_context_fingerprint": context_fingerprint,
+                "schema_version": SCHEMA_VERSION,
+                "engine_version": ENGINE_VERSION,
+                "library_version": LIBRARY_VERSION,
+            }
+        )
+        record = finalize_evaluation(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "engine_version": ENGINE_VERSION,
+                "evaluation_id": f"eval_{uuid4().hex}",
+                "owner": self.store.owner_id(owner),
+                "created_at": _utc_now(),
+                "factor": definition.to_dict(),
+                "parameters": parameters,
+                "evidence": {
+                    "snapshot": dataset.evidence(),
+                    "universe": {
+                        "name": dataset.universe_name,
+                        "security_master_sha256": dataset.security_master_sha256,
+                    },
+                    "config_context_fingerprint": context_fingerprint,
+                },
+                "coverage": {
+                    "calendar_sessions": len(calendar),
+                    "sampled_dates": len(sampled_sessions),
+                    "evaluated_dates": evaluated,
+                    "skipped_dates": skipped,
+                    "average_cross_section": (
+                        statistics.fmean(cross_sections) if cross_sections else 0.0
+                    ),
+                    "symbols": dict(sorted(symbol_observations.items())),
+                },
+                "results": results,
+                "evaluation_fingerprint": evaluation_fingerprint,
+                "safety": dict(SAFETY),
+            }
+        )
+        return self.store.publish(owner, record)
+
     def list(
         self,
         owner: str,
@@ -339,6 +525,20 @@ def _validated_horizons(value: tuple[int, ...] | list[int]) -> tuple[int, ...]:
     if list(value) != ordered:
         raise ValueError("Factor evaluation horizons must be unique and ascending")
     return tuple(ordered)
+
+
+def _validate_snapshot_context(config: AppConfig, dataset: SnapshotDataset) -> None:
+    if not dataset.genuine_pit_required:
+        raise ValueError("Factor Lab requires a genuine PIT snapshot dataset")
+    if (
+        dataset.universe_name != config.universe_name
+        or dataset.minimum_listing_days != config.minimum_listing_days
+        or dataset.security_master_sha256 != config.security_master.fingerprint()
+    ):
+        raise ValueError("Snapshot dataset does not match the configured universe")
+    adjustment = str(config.raw["data"].get("adjustment") or "none")
+    if dataset.adjustment != adjustment:
+        raise ValueError("Snapshot dataset does not match the configured adjustment")
 
 
 def _spearman(xs: list[float], ys: list[float]) -> float | None:

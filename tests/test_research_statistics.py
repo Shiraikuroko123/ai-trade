@@ -43,6 +43,15 @@ class MovingBlockBootstrapTests(TestCase):
         self.assertEqual(corrected["adjusted_p_value"], 1.0)
         self.assertFalse(corrected["reject_null"])
 
+    def test_nearly_equal_quantiles_remain_ordered_after_interpolation(self):
+        validation = moving_block_bootstrap_mean(
+            [0.5999999999999999] * 37 + [0.5999999999999998],
+            block_size=1,
+            seed=9403528296433452669,
+        )
+
+        self.assertLessEqual(validation["ci_low"], validation["ci_high"])
+
     def test_invalid_series_and_protocol_parameters_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "at least two"):
             moving_block_bootstrap_mean([0.1], block_size=1, seed=1)

@@ -20,6 +20,7 @@ from .feature_store import (
     ForwardEvidenceRunner,
     LabelSnapshotBuilder,
     LabelSnapshotStore,
+    SnapshotDatasetStore,
     training_pairs,
 )
 from .feature_store.schema import is_genuine_pit_snapshot, json_fingerprint
@@ -129,26 +130,52 @@ def fit_model_artifact(
         str(evaluation["evidence"]["snapshot"]["as_of"])
     )
     evaluation_start = date.fromisoformat(str(evaluation["parameters"]["start"]))
-    expected_provider = str(evaluation["evidence"]["snapshot"]["provider"])
+    evaluation_snapshot = evaluation["evidence"]["snapshot"]
+    expected_provider = str(evaluation_snapshot["provider"])
     expected_universe = str(evaluation["evidence"]["universe"]["name"])
     expected_security_master = str(
         evaluation["evidence"]["universe"]["security_master_sha256"]
     )
+    expected_feature_ids: set[str] | None = None
+    expected_label_ids: set[str] | None = None
+    expected_providers = {expected_provider}
+    if evaluation_snapshot["kind"] == "feature_snapshot_dataset":
+        manifest = SnapshotDatasetStore(config.feature_store_dir).get(
+            str(evaluation_snapshot["snapshot_id"])
+        )
+        if manifest["dataset_fingerprint"] != evaluation_snapshot["fingerprint"]:
+            raise ValueError(
+                "Model evaluation snapshot-dataset fingerprint is inconsistent"
+            )
+        if (
+            [item["factor_id"] for item in manifest["feature_set"]["factors"]]
+            != expected_factors
+            or horizon not in manifest["horizons"]
+            or manifest["source"]["universe_name"] != expected_universe
+            or manifest["source"]["security_master_sha256"]
+            != expected_security_master
+        ):
+            raise ValueError(
+                "Model evaluation snapshot-dataset contract is inconsistent"
+            )
+        expected_feature_ids = set(manifest["source_snapshots"]["features"])
+        expected_label_ids = set(manifest["source_snapshots"]["labels"])
+        expected_providers = set(manifest["source"]["feature_providers"])
 
     feature_store = FeatureSnapshotStore(config.feature_store_dir)
     label_store = LabelSnapshotStore(config.feature_store_dir)
     features: list[dict[str, Any]] = []
     labels: list[dict[str, Any]] = []
-    for session in feature_store.sessions():
-        if session < evaluation_start or session > evaluation_as_of:
-            continue
-        feature = feature_store.latest(on_or_before=session)
-        if feature is None or date.fromisoformat(str(feature["as_of_session"])) != session:
-            continue
+    for feature in _evaluation_training_features(
+        feature_store,
+        start=evaluation_start,
+        end=evaluation_as_of,
+        expected_snapshot_ids=expected_feature_ids,
+    ):
         if not is_genuine_pit_snapshot(feature):
             continue
         if (
-            str(feature["source"]["provider"]) != expected_provider
+            str(feature["source"]["provider"]) not in expected_providers
             or str(feature["universe"]["name"]) != expected_universe
             or str(feature["source"]["security_master_sha256"])
             != expected_security_master
@@ -172,6 +199,10 @@ def fit_model_artifact(
             item
             for item in label_store.list_for_feature(str(feature["snapshot_id"]))
             if int(item["horizon"]) == horizon
+            and (
+                expected_label_ids is None
+                or str(item["label_snapshot_id"]) in expected_label_ids
+            )
             and date.fromisoformat(str(item["target_session"]))
             <= evaluation_as_of
             and _record_timestamp(item["created_at"], "label.created_at") <= cutoff
@@ -204,6 +235,36 @@ def fit_model_artifact(
         evaluation=evaluation,
         store=ModelArtifactStore(root),
     )
+
+
+def _evaluation_training_features(
+    store: FeatureSnapshotStore,
+    *,
+    start: date,
+    end: date,
+    expected_snapshot_ids: set[str] | None,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for session in store.sessions():
+        if session < start or session > end:
+            continue
+        if expected_snapshot_ids is None:
+            feature = store.latest(on_or_before=session)
+            if (
+                feature is not None
+                and date.fromisoformat(str(feature["as_of_session"])) == session
+            ):
+                records.append(feature)
+            continue
+        records.extend(
+            item
+            for item in store.list_for_session(session)
+            if str(item["snapshot_id"]) in expected_snapshot_ids
+        )
+    records.sort(
+        key=lambda item: (str(item["as_of_session"]), str(item["snapshot_id"]))
+    )
+    return records
 
 
 def create_prediction_snapshot(
